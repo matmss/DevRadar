@@ -1,5 +1,5 @@
 /**
- * Boots the REAL DevRadar backend (backend/src/routes + backend/src/websocket, backed by
+ * Boots the REAL DevRadar backend (dev/backend/src/routes + dev/backend/src/websocket, backed by
  * an ephemeral mongodb-memory-server) in-process, so the @integration web scenarios drive
  * the actual HTTP contract end to end instead of Playwright `page.route` mocks. Mirrors the
  * pattern already established in qa/backend-tests/features/support/testApp.js + hooks.js.
@@ -8,7 +8,7 @@
  * web mocks":
  *  - GitHub's API is stubbed with `nock` — it's third-party and out of this repo's control,
  *    same call qa/backend-tests makes (see its features/support/github-mock.js).
- *  - `/__test__/*` routes below exist only in this harness (never touch backend/src) so
+ *  - `/__test__/*` routes below exist only in this harness (never touch dev/backend/src) so
  *    scenarios can reset/seed data over HTTP instead of opening a second, cross-process
  *    Mongo connection from the Playwright worker that runs the step definitions.
  */
@@ -18,14 +18,14 @@ const http = require('http');
 const nock = require('nock');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 
-// Must be the SAME mongoose instance backend/src/models/Dev.js uses — mongoose's connection
+// Must be the SAME mongoose instance dev/backend/src/models/Dev.js uses — mongoose's connection
 // is a module-level singleton, so connecting a different copy leaves the app's models
 // pointed at an unconnected instance and every query hangs. See
 // qa/backend-tests/features/support/hooks.js for the identical constraint.
-const mongoose = require('../../../../backend/node_modules/mongoose');
-const routes = require('../../../../backend/src/routes');
-const { setupWebsocket } = require('../../../../backend/src/websocket');
-const Dev = require('../../../../backend/src/models/Dev');
+const mongoose = require('../../../../dev/backend/node_modules/mongoose');
+const routes = require('../../../../dev/backend/src/routes');
+const { setupWebsocket } = require('../../../../dev/backend/src/websocket');
+const Dev = require('../../../../dev/backend/src/models/Dev');
 
 let mongod;
 let server;

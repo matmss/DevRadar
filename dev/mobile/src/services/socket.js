@@ -1,6 +1,6 @@
 import socketio from 'socket.io-client';
 
-const socket = socketio('http://localhost:3333', {
+const socket = socketio(process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3333', {
   autoConnect: false,
 });
 

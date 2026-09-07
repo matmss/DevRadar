@@ -1,8 +1,8 @@
 const { Before, After, BeforeAll, AfterAll } = require('@cucumber/cucumber');
-// Must be the SAME mongoose instance backend/src/models/Dev.js uses (backend/node_modules/mongoose),
+// Must be the SAME mongoose instance dev/backend/src/models/Dev.js uses (dev/backend/node_modules/mongoose),
 // not this package's own copy — mongoose's connection is a module-level singleton, so connecting a
 // different copy here leaves the app's models pointed at an unconnected instance and every query hangs.
-const mongoose = require('../../../../backend/node_modules/mongoose');
+const mongoose = require('../../../../dev/backend/node_modules/mongoose');
 const nock = require('nock');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const { createTestApp } = require('./testApp');
@@ -22,7 +22,7 @@ AfterAll(async function () {
 
 Before(async function () {
   // Fresh app + server per scenario so websocket in-memory `connections` state
-  // (see backend/src/websocket.js) never leaks between scenarios.
+  // (see dev/backend/src/websocket.js) never leaks between scenarios.
   const { app, server } = createTestApp();
   this.app = app;
   this.server = server;

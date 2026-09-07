@@ -3,7 +3,7 @@
  *
  * The mobile app itself has no seeding mechanism — it only talks to whatever backend
  * MOBILE_API_URL / MOBILE_SOCKET_URL point at (see BUG-001: these are currently hardcoded
- * in mobile/src/services/api.js and socket.js rather than env-configurable; fixing that is
+ * in dev/mobile/src/services/api.js and socket.js rather than env-configurable; fixing that is
  * a prerequisite for pointing E2E runs at a disposable CI backend instance). Once fixed,
  * this helper calls that backend's real POST /devs endpoint directly — no mocking — so
  * mobile E2E runs are true integration tests against the real API contract.

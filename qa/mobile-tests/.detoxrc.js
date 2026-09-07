@@ -7,15 +7,15 @@ module.exports = {
   apps: {
     'android.debug': {
       type: 'android.apk',
-      binaryPath: '../../mobile/android/app/build/outputs/apk/debug/app-debug.apk',
+      binaryPath: '../../dev/mobile/android/app/build/outputs/apk/debug/app-debug.apk',
       build:
-        'cd ../../mobile/android && ./gradlew assembleDebug assembleAndroidTest -DtestBuildType=debug',
+        'cd ../../dev/mobile/android && ./gradlew assembleDebug assembleAndroidTest -DtestBuildType=debug',
     },
     'ios.debug': {
       type: 'ios.app',
-      binaryPath: '../../mobile/ios/build/Build/Products/Debug-iphonesimulator/mobile.app',
+      binaryPath: '../../dev/mobile/ios/build/Build/Products/Debug-iphonesimulator/mobile.app',
       build:
-        "xcodebuild -workspace ../../mobile/ios/mobile.xcworkspace -scheme mobile -configuration Debug -sdk iphonesimulator -derivedDataPath ../../mobile/ios/build",
+        "xcodebuild -workspace ../../dev/mobile/ios/mobile.xcworkspace -scheme mobile -configuration Debug -sdk iphonesimulator -derivedDataPath ../../dev/mobile/ios/build",
     },
   },
   devices: {

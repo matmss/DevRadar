@@ -3,20 +3,20 @@
 ## Prerequisite: this app's Expo SDK is very old (36, from 2019)
 
 Detox targets current React Native/Expo toolchains. Before `detox build` will work against
-`mobile/`, one of the following is required (see BUG-007 in `docs/05-bug-tracker.md`):
+`dev/mobile/`, one of the following is required (see BUG-007 in `docs/05-bug-tracker.md`):
 
-1. **Recommended:** upgrade `mobile/` to a current Expo SDK (50+) and a Detox-compatible dev
+1. **Recommended:** upgrade `dev/mobile/` to a current Expo SDK (50+) and a Detox-compatible dev
    client. This is a real app change, tracked as its own ticket — not something a test
    scaffold should do silently.
 2. **Interim, no app changes needed:** use the Maestro flows in `maestro/*.yaml` instead.
    Maestro drives the app black-box (via Expo Go or any installed build) and matches by
-   visible text, so it works today without touching `mobile/`'s dependencies or adding
+   visible text, so it works today without touching `dev/mobile/`'s dependencies or adding
    `testID`s.
 
 ## Prerequisite: add `testID`s to mobile source (for the Detox suite only)
 
 Detox's `by.id(...)` selectors need `testID` props that don't currently exist in
-`mobile/src/pages/Main.js` / `Profile.js`. Suggested minimal additions (not applied to the
+`dev/mobile/src/pages/Main.js` / `Profile.js`. Suggested minimal additions (not applied to the
 app automatically by this scaffold — a developer should add these alongside the Expo
 upgrade):
 

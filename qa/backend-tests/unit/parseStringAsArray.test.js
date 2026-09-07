@@ -1,4 +1,4 @@
-const parseStringAsArray = require('../../../backend/src/utils/parseStringAsArray');
+const parseStringAsArray = require('../../../dev/backend/src/utils/parseStringAsArray');
 
 describe('parseStringAsArray', () => {
   it('splits a comma-separated string and trims whitespace', () => {
