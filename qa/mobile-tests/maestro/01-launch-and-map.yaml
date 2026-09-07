@@ -28,5 +28,5 @@ appId: com.matmss.mobile
 # clearState forces a fresh cold Metro bundle every run (BUG-009); extendedWaitUntil
 # tolerates that instead of asserting before the bundle finishes loading.
 - extendedWaitUntil:
-    visible: "DevRadar" # header title from mobile/src/routes.js navigationOptions
+    visible: "DevRadar" # header title from dev/mobile/src/routes.js navigationOptions
     timeout: 20000

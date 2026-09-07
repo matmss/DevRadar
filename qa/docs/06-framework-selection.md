@@ -54,7 +54,8 @@ Goals: one command runs everything; one merged human-readable report; CI-friendl
 
 ```
 DevRadar/                      (repo root)
-├── backend/ web/ mobile/         (existing app code)
+├── dev/
+│   └── backend/ web/ mobile/     (existing app code)
 ├── .github/workflows/            (GitHub requires this exact path — lives at repo root, not under qa/)
 │   └── unified-tests.yml
 └── qa/                           (everything QA-related, as one unit)

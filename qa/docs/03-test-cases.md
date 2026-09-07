@@ -150,7 +150,7 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 - **Type:** Regression (infra) | **P1**
 - **Steps:** Attempt to point the mobile app at a CI-hosted backend without editing source.
 - **Expected result (desired):** Configurable via env var like web's `REACT_APP_API_URL`.
-- **Actual result:** Hardcoded `192.168.15.11` in both `mobile/src/services/api.js` and `socket.js` — blocks CI automation until fixed. Tracked as BUG-001 (blocker for mobile CI).
+- **Actual result:** Hardcoded `192.168.15.11` in both `dev/mobile/src/services/api.js` and `socket.js` — blocks CI automation until fixed. Tracked as BUG-001 (blocker for mobile CI).
 
 ---
 

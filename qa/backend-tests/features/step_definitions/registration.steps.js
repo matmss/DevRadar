@@ -2,8 +2,8 @@ const { Given, When, Then } = require('@cucumber/cucumber');
 const { expect } = require('chai');
 const request = require('supertest');
 // Same-instance requirement as hooks.js — see comment there.
-const mongoose = require('../../../../backend/node_modules/mongoose');
-const Dev = require('../../../../backend/src/models/Dev');
+const mongoose = require('../../../../dev/backend/node_modules/mongoose');
+const Dev = require('../../../../dev/backend/src/models/Dev');
 const { mockGithubUser, mockGithubUserNotFound } = require('../support/github-mock');
 
 Given('the developer database is empty', async function () {

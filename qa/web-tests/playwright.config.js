@@ -8,7 +8,8 @@ const testDir = defineBddConfig({
 });
 
 // Assumes this package lives at repo-root/qa/web-tests, i.e. two levels below
-// repo-root (qa/ then web-tests/), alongside repo-root/web (Create React App).
+// repo-root (qa/ then web-tests/); the app it drives lives at repo-root/dev/web
+// (Create React App).
 // The dev server is started automatically for local/CI runs; set
 // WEB_BASE_URL to point at an already-running instance instead (e.g. staging).
 //
@@ -33,7 +34,7 @@ module.exports = defineConfig({
     ? undefined
     : {
         command: 'npm start',
-        cwd: '../../web',
+        cwd: '../../dev/web',
         url: 'http://localhost:3000',
         reuseExistingServer: !process.env.CI,
         timeout: 120000,

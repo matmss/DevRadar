@@ -1,7 +1,7 @@
 const { Given, When, Then } = require('@cucumber/cucumber');
 const { expect } = require('chai');
 const request = require('supertest');
-const Dev = require('../../../../backend/src/models/Dev');
+const Dev = require('../../../../dev/backend/src/models/Dev');
 const { mockGithubUser } = require('../support/github-mock');
 
 Given('the following developers exist:', async function (dataTable) {

@@ -3,3 +3,4 @@
 **/.env
 qa/reports/
 **/package-lock.json
+.DS_Store

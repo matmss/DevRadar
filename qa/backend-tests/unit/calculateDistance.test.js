@@ -1,4 +1,4 @@
-const calculateDistance = require('../../../backend/src/utils/calculateDistance');
+const calculateDistance = require('../../../dev/backend/src/utils/calculateDistance');
 
 describe('calculateDistance (Haversine)', () => {
   it('returns ~0 for identical coordinates', () => {
