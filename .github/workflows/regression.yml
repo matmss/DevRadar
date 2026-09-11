@@ -1,0 +1,101 @@
+name: Regression
+
+# Full @regression-tagged suite across backend + web, per
+# qa/docs/04-qa-process.md §4: runs nightly on main and on-demand before a
+# release tag (release.yml calls this as a gate via workflow_call). A
+# release cannot ship with a failing regression run.
+#
+# Mobile stays out of the automated run — see the note in pr.yml and
+# BUG-009 in qa/docs/05-bug-tracker.md; run `cd qa && npm run test:mobile`
+# manually against a simulator/emulator instead.
+
+on:
+  schedule:
+    - cron: '0 3 * * *' # 03:00 UTC nightly
+  workflow_dispatch: {}
+  workflow_call: {}
+
+env:
+  NODE_VERSION: lts/*
+
+jobs:
+  backend:
+    name: Backend regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache mongodb-memory-server binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mongodb-binaries
+          key: ${{ runner.os }}-mongodb-binaries-v10
+
+      - name: Install backend app dependencies
+        working-directory: dev/backend
+        run: npm install
+
+      - name: Install QA workspace dependencies
+        working-directory: qa
+        run: npm install
+
+      - name: Run backend @regression suite
+        working-directory: qa
+        run: npm run test:regression --workspace=backend-tests
+
+  web:
+    name: Web regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache mongodb-memory-server binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mongodb-binaries
+          key: ${{ runner.os }}-mongodb-binaries-v10
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-1.48
+
+      - name: Install backend app dependencies
+        working-directory: dev/backend
+        run: npm install
+
+      - name: Install web app dependencies
+        working-directory: dev/web
+        run: npm install
+
+      - name: Install QA workspace dependencies
+        working-directory: qa
+        run: npm install
+
+      - name: Install Playwright browsers
+        working-directory: qa/web-tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Run web @regression suite
+        working-directory: qa
+        run: npm run test:regression --workspace=web-tests
+
+      - name: Upload web regression report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-regression-report
+          path: |
+            qa/reports/web-html
+            qa/reports/web.json
+          if-no-files-found: ignore
+          retention-days: 30

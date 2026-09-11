@@ -1,0 +1,94 @@
+name: Bug Report
+description: Report a defect in the backend, web, or mobile app.
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Mirrors the template in [`qa/docs/05-bug-tracker.md`](../../qa/docs/05-bug-tracker.md).
+        Check known open issues (BUG-002 through BUG-009) there before filing — you may be
+        looking at one already tracked.
+
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Layer
+      options:
+        - Backend
+        - Web
+        - Mobile
+        - Cross-layer
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: See the severity × priority matrix in qa/docs/05-bug-tracker.md.
+      options:
+        - S1 (Critical — blocks release / data loss / crash)
+        - S2 (Major — core feature broken, workaround may exist)
+        - S3 (Minor — edge case / rare path)
+        - S4 (Cosmetic)
+    validations:
+      required: true
+
+  - type: input
+    id: traceability
+    attributes:
+      label: Requirement / test case (optional)
+      description: e.g. FR-2.1 / TC-011, if known — see qa/docs/01-requirements.md and 03-test-cases.md.
+      placeholder: FR-x.x / TC-xxx
+    validations:
+      required: false
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: test / staging / production, plus commit SHA, OS/browser, or device/emulator.
+      placeholder: e.g. main@<sha>, Chrome 128 / macOS, Pixel 6a API 34
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Logs, screenshots, or request/response payloads.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and the bug tracker for a duplicate.
+          required: true

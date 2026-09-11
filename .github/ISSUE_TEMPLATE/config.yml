@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: QA Bug Tracker (known open issues)
+    url: https://github.com/matmss/DevRadar/blob/main/qa/docs/05-bug-tracker.md
+    about: Check BUG-002 through BUG-009 before filing — it may already be tracked.
+  - name: QA Process & Requirements docs
+    url: https://github.com/matmss/DevRadar/tree/main/qa/docs
+    about: Requirements, test scenarios, test cases, and framework rationale.

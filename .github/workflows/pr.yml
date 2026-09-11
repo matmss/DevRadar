@@ -1,0 +1,123 @@
+name: PR Checks
+
+# Fast-feedback gate for every pull request into main: unit tests, then the
+# functional/integration BDD suites for the layers a PR can touch (backend,
+# web). See qa/docs/04-qa-process.md §1/§7 for the level definitions and the
+# "PR merge" entry/exit criteria this workflow enforces.
+#
+# Mobile is intentionally not run here — it needs a simulator/emulator and is
+# opt-in even locally (`RUN_MOBILE=true`), and BUG-009 (qa/docs/05-bug-tracker.md)
+# flags the automated mobile run as environment-suspect. It stays manual.
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: pr-${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  # No lockfiles are committed (see .gitignore), so every install below uses
+  # `npm install`, never `npm ci`.
+  NODE_VERSION: lts/*
+
+jobs:
+  backend:
+    name: Backend (unit + functional + integration)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # mongodb-memory-server downloads a real mongod binary on first use;
+      # cache it so PRs don't re-pay that download every run.
+      - name: Cache mongodb-memory-server binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mongodb-binaries
+          key: ${{ runner.os }}-mongodb-binaries-v10
+
+      - name: Install backend app dependencies
+        working-directory: dev/backend
+        run: npm install
+
+      - name: Install QA workspace dependencies
+        working-directory: qa
+        run: npm install
+
+      - name: Run backend unit tests (calculateDistance, parseStringAsArray)
+        working-directory: qa
+        run: npm run unit --workspace=backend-tests
+
+      - name: Run backend functional + integration suite
+        working-directory: qa
+        run: npm run test:backend
+
+      - name: Upload backend test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-report
+          path: qa/reports/backend.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  web:
+    name: Web (functional, real backend + real Mongo)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache mongodb-memory-server binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mongodb-binaries
+          key: ${{ runner.os }}-mongodb-binaries-v10
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-1.48
+
+      # web-tests boots the real backend in-process (features/support/backend-server.js)
+      # and the real CRA dev server (features/support/global-setup.js), so both
+      # dev/backend and dev/web need their own node_modules present.
+      - name: Install backend app dependencies
+        working-directory: dev/backend
+        run: npm install
+
+      - name: Install web app dependencies
+        working-directory: dev/web
+        run: npm install
+
+      - name: Install QA workspace dependencies
+        working-directory: qa
+        run: npm install
+
+      - name: Install Playwright browsers
+        working-directory: qa/web-tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Run web functional suite
+        working-directory: qa
+        run: npm run test:web
+
+      - name: Upload web test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-report
+          path: |
+            qa/reports/web-html
+            qa/reports/web.json
+          if-no-files-found: ignore
+          retention-days: 14
