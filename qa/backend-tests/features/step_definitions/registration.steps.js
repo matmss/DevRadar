@@ -61,6 +61,20 @@ When(
   }
 );
 
+// Places a point due north of the origin on MongoDB's 2dsphere sphere (radius 6378.1 km),
+// so the distance MongoDB computes for it is exactly `km`.
+When(
+  'I register {string} with techs {string} {float} km north of latitude {string} and longitude {string}',
+  async function (github_username, techs, km, latitude, longitude) {
+    const MONGO_EARTH_RADIUS_KM = 6378.1;
+    const northLatitude = Number(latitude) + (km / MONGO_EARTH_RADIUS_KM) * (180 / Math.PI);
+    this.response = await request(this.app)
+      .post('/devs')
+      .send({ github_username, techs, latitude: String(northLatitude), longitude });
+    expect(this.response.status).to.equal(200);
+  }
+);
+
 Then('the response status should be {int}', function (statusCode) {
   expect(this.response.status).to.equal(statusCode);
 });

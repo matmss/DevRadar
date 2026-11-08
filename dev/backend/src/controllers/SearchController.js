@@ -1,5 +1,6 @@
 const Dev = require('../models/Dev');
 const parseStringAsArray = require('../utils/parseStringAsArray');
+const { NEARBY_RADIUS_METERS } = require('../utils/nearby');
 
 module.exports = {
     async index(req, res) {
@@ -17,7 +18,7 @@ module.exports = {
                         type: 'Point',
                         coordinates: [Number(longitude), Number(latitude)],
                     },
-                    $maxDistance: 10000,
+                    $maxDistance: NEARBY_RADIUS_METERS,
                 },
             },
         });

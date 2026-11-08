@@ -19,7 +19,7 @@ WHEN YOU ARE INVOKED:
 
 HOW TO HUNT:
 - Test each acceptance criterion, then go past it: boundary values, empty/missing/malformed input, wrong types, very large input, duplicates, and concurrent requests.
-- Look at what the diff did NOT change but should have. In this repo the classic case is the "nearby" radius: it lives both in `/search` (`$maxDistance: 10000`) and in `websocket.js` (`calculateDistance(...) < 10`). A change to one without the other is a bug (BUG-002).
+- Look at what the diff did NOT change but should have. In this repo the classic case is the "nearby" radius: `/search` (MongoDB `$maxDistance`) and the websocket push (`isNearby`) must agree, so both read `dev/backend/src/utils/nearby.js`. A change that hardcodes a radius, switches `<=` to `<`, or changes the Earth radius in `calculateDistance` (must stay 6378.1 km, MongoDB's) reintroduces BUG-002; `features/radius.feature` guards it.
 - Check the `techs` format end to end: `parseStringAsArray` is shared by the controller and the websocket handshake.
 - Check failure paths: the GitHub API call in `POST /devs` (rate limit, 404, network error), Mongo errors, and socket disconnects while the in-memory `connections` array is being used.
 - Check `qa/docs/05-bug-tracker.md` first. Do not re-report a known open bug as new; do report it if the change makes it worse or claims to fix it but doesn't.
