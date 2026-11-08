@@ -62,7 +62,7 @@ Cross-cutting integration: the backend calls the public **GitHub Users API** (`G
 ## 3. Non-functional requirements
 
 - **NFR-1 (Data integrity):** `location.type` must always be `"Point"`; `coordinates` must always be `[longitude, latitude]` order (GeoJSON standard) — reversal is a high-severity class of bug given three independent clients construct this payload.
-- **NFR-2 (Consistency of "nearby"):** The 10 km radius constant is duplicated in two places (`SearchController`'s `$maxDistance: 10000` meters, and `websocket.js`'s `calculateDistance(...) < 10` km) — both must stay in sync; a regression test should assert they agree.
+- **NFR-2 (Consistency of "nearby"):** Search and the real-time push must agree on the 10 km radius. Originally duplicated (`$maxDistance: 10000` vs `calculateDistance(...) < 10`); since BUG-002 both use `utils/nearby.js`, and `features/radius.feature` asserts they agree at the boundary.
 - **NFR-3 (Real-time latency):** A `new-dev` event should reach a matching connected client within a short, testable bound (suggested target: < 2s in an integration test using an in-process server) after the triggering `POST /devs`.
 - **NFR-4 (Resource cleanup):** In-memory WebSocket connection state should not grow unbounded across disconnect/reconnect cycles.
 - **NFR-5 (Security):** No authentication currently exists on `POST /devs`, `GET /devs`, or `GET /search`. CORS is fully open (`origin: '*'`). These are explicit, documented risk acceptances for a learning project — flagged in the Bug Tracker as known issues rather than defects, unless the project's threat model changes.

@@ -74,19 +74,22 @@ mounted. Two routes only (`dev/backend/src/routes.js`):
   the **real GitHub Users API** (`GET https://api.github.com/users/:username`, unauthenticated,
   60 req/hr) to populate `name`/`avatar_url`/`bio`, persists a GeoJSON `Point`, then calls
   `websocket.findConnections()` + `sendMessage()` to push a `new-dev` event to nearby,
-  tech-matching connected sockets. **No input validation and no try/catch around the GitHub
-  call** — see BUG-003/004/005 in `qa/docs/05-bug-tracker.md` before assuming bad input fails
-  gracefully.
+  tech-matching connected sockets. Input is validated first by `utils/validateDevInput.js`
+  (400 with `{ error, details[] }`), and GitHub failures are mapped to 404 / 503 (rate limit) /
+  502 (BUG-003/004/005, fixed). Usernames are matched case-insensitively (Mongo collation).
+  There is still no global Express error middleware, so other thrown errors get Express's default 500.
 - `GET /search` (`SearchController.index`) — Mongo `$near` geo query on the `Dev.location`
-  `2dsphere` index (`dev/backend/src/models/Dev.js`), `$maxDistance: 10000` meters, filtered by
+  `2dsphere` index (`dev/backend/src/models/Dev.js`), `$maxDistance: NEARBY_RADIUS_METERS`, filtered by
   `techs: { $in: techsArray }`.
 - `dev/backend/src/websocket.js` holds an in-memory `connections` array (id, coordinates, techs)
-  populated on socket `connection` handshake query params, and does its own independent
-  10km proximity check (`calculateDistance(...) < 10`) — **this radius logic is duplicated
-  and inconsistent with `/search`'s `$maxDistance: 10000`** (BUG-002: one is likely inclusive
-  meters, the other is strict-less-than km). If you touch the "nearby" radius, fix both.
+  populated on socket `connection` handshake query params, and filters them with `isNearby()`.
+  **The "nearby" radius lives in one place, `dev/backend/src/utils/nearby.js`**
+  (`NEARBY_RADIUS_METERS`, `isNearby`), used by both `/search` and the websocket. `isNearby`
+  mirrors MongoDB's `$maxDistance` exactly: inclusive (`<=`), and `calculateDistance` uses
+  MongoDB's 2dsphere Earth radius (6378.1 km, not 6371). Keep it that way, or the live push
+  and the search disagree at the edge (BUG-002, fixed; guarded by `qa/backend-tests/features/radius.feature`).
 - `techs` arrives everywhere as a comma-separated string and is normalized via
-  `parseStringAsArray` (trims each entry) — the same function is reused in the controller and
+  `parseStringAsArray` (trims each entry, drops empty ones) — the same function is reused in the controller and
   the websocket handshake parsing; keep them consistent if you change the format.
 
 ### Client responsibilities
@@ -127,9 +130,8 @@ rather than a single cross-language framework:
   tracker → framework rationale → live report chain, in that reading order; `01-requirements.md`
   was reverse-engineered from the code (there's no separate product spec), so treat it as
   descriptive, not aspirational.
-- Known **open** issues worth checking before you "fix" related behavior yourself: BUG-002
-  (radius mismatch, above), BUG-003/004/005 (`POST /devs` has no validation and no error
-  handling around the GitHub call), BUG-006 (no auth, CORS fully open — accepted risk for
+- Known **open** issues worth checking before you "fix" related behavior yourself:
+  BUG-006 (no auth, CORS fully open — accepted risk for
   this project), BUG-008 (`update`/`destroy` are stubbed/commented out in `SearchController`,
   not implemented), BUG-009 (Detox timeout, above). Full detail and status in
   `qa/docs/05-bug-tracker.md`.

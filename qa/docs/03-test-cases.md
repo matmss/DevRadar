@@ -75,6 +75,7 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 - **Type:** Regression | **P2**
 - **Steps:** Seed a developer computed to be exactly 10.000km away (via Haversine) from the search origin. Run the search.
 - **Expected result:** Document actual MongoDB `$maxDistance` inclusive/exclusive behavior; assert it matches. Flag as a defect if it silently diverges from the websocket layer's `< 10` (strict-less-than) comparison — see NFR-2 and BUG-002.
+- **Actual result (2026-11-08):** `$maxDistance` is inclusive and measures on a 6378.1 km sphere. Automated in `qa/backend-tests/features/radius.feature`: a dev 9.995 km away is both pushed and found; one 10.005 km away is neither.
 
 ## TC-011 — Missing github_username is rejected
 - **Requirement:** FR-1.1 (validation gap — see OI of requirements doc)
