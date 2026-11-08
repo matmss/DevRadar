@@ -34,4 +34,24 @@ function mockGithubUserNotFound(username) {
   nock('https://api.github.com').get(`/users/${username}`).reply(404, { message: 'Not Found' });
 }
 
-module.exports = { mockGithubUser, mockGithubUserNotFound, FIXTURES };
+/** Stubs GitHub's unauthenticated rate-limit response (403). */
+function mockGithubRateLimited(username) {
+  nock('https://api.github.com')
+    .get(`/users/${username}`)
+    .reply(403, { message: 'API rate limit exceeded' }, { 'x-ratelimit-remaining': '0' });
+}
+
+/** Simulates a network-level failure (DNS/connection error) reaching GitHub. */
+function mockGithubUnreachable(username) {
+  nock('https://api.github.com')
+    .get(`/users/${username}`)
+    .replyWithError({ code: 'ECONNREFUSED', message: 'connect ECONNREFUSED' });
+}
+
+module.exports = {
+  mockGithubUser,
+  mockGithubUserNotFound,
+  mockGithubRateLimited,
+  mockGithubUnreachable,
+  FIXTURES,
+};
