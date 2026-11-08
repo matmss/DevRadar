@@ -2,6 +2,11 @@
 // Enforcing this also keeps user input from altering the GitHub API URL path.
 const GITHUB_USERNAME_PATTERN = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i;
 
+// Plain decimal only: rejects hex ("0x10"), exponents ("1e1") and other forms Number() accepts.
+const DECIMAL_PATTERN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
+
+const parseStringAsArray = require('./parseStringAsArray');
+
 /**
  * Parses a coordinate that may arrive as a number or a numeric string.
  * @param {unknown} raw
@@ -9,7 +14,7 @@ const GITHUB_USERNAME_PATTERN = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i;
  */
 function toCoordinate(raw) {
   if (typeof raw === 'number') return raw;
-  if (typeof raw === 'string' && raw.trim() !== '') return Number(raw);
+  if (typeof raw === 'string' && DECIMAL_PATTERN.test(raw.trim())) return Number(raw);
   return NaN;
 }
 
@@ -29,7 +34,7 @@ function validateDevInput(body = {}) {
     errors.push('github_username is not a valid GitHub username');
   }
 
-  if (typeof techs !== 'string' || techs.split(',').every((tech) => tech.trim() === '')) {
+  if (typeof techs !== 'string' || parseStringAsArray(techs).length === 0) {
     errors.push('techs is required (comma-separated string)');
   }
 

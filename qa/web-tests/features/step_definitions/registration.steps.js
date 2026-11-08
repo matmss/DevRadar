@@ -79,3 +79,11 @@ Then('reloading the page should still show {string} in the developer list', asyn
   await page.reload();
   await expect(page.locator('.dev-item', { hasText: username })).toBeVisible();
 });
+
+Then('I should see the error {string}', async function ({ page }, message) {
+  await expect(page.getByRole('alert')).toContainText(message);
+});
+
+Then('the github username field should contain {string}', async function ({ page }, value) {
+  await expect(page.getByLabel('Usuário GitHub')).toHaveValue(value);
+});

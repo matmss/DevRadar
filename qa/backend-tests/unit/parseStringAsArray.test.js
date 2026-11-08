@@ -9,9 +9,11 @@ describe('parseStringAsArray', () => {
     expect(parseStringAsArray('ReactJS')).toEqual(['ReactJS']);
   });
 
-  // @edge — documents current behavior; an empty string produces [''] rather than [],
-  // which is arguably a defect worth raising with the team (see docs/05-bug-tracker.md).
-  it('returns an array with one empty string for an empty input (documents current behavior)', () => {
-    expect(parseStringAsArray('')).toEqual(['']);
+  it('returns an empty array for an empty input', () => {
+    expect(parseStringAsArray('')).toEqual([]);
+  });
+
+  it('drops empty and whitespace-only entries', () => {
+    expect(parseStringAsArray('ReactJS,, ,Redux,')).toEqual(['ReactJS', 'Redux']);
   });
 });

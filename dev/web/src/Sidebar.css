@@ -65,3 +65,9 @@ aside form button[type=submit] {
 aside form button[type=submit]:hover {
     background: #6931CA;
 }
+aside .form-error {
+  margin-top: 15px;
+  color: #c0392b;
+  font-size: 14px;
+  line-height: 20px;
+}

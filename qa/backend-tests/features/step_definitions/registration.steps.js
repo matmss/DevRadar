@@ -8,6 +8,7 @@ const {
   mockGithubUser,
   mockGithubUserNotFound,
   mockGithubRateLimited,
+  mockGithubForbidden,
   mockGithubUnreachable,
 } = require('../support/github-mock');
 
@@ -23,8 +24,16 @@ Given('{string} is not a valid GitHub username', function (username) {
   mockGithubUserNotFound(username);
 });
 
-Given('the GitHub API is rate limiting requests for {string}', function (username) {
-  mockGithubRateLimited(username);
+Given('{string} is a valid GitHub username with no display name', function (username) {
+  mockGithubUser(username, { name: null });
+});
+
+Given('the GitHub API is rate limiting requests for {string} with status {int}', function (username, status) {
+  mockGithubRateLimited(username, status);
+});
+
+Given('the GitHub API forbids requests for {string} without a rate limit', function (username) {
+  mockGithubForbidden(username);
 });
 
 Given('the GitHub API is unreachable for {string}', function (username) {
@@ -90,4 +99,17 @@ Then('no developer with github_username {string} should be persisted', async fun
 Then('no developer should be persisted', async function () {
   const found = await Dev.countDocuments({});
   expect(found).to.equal(0);
+});
+
+Then('the response should be an error with details', function () {
+  expect(this.response.body.error).to.be.a('string').that.is.not.empty;
+  expect(this.response.body.details).to.be.an('array');
+});
+
+Then('the database should contain exactly {int} developer(s)', async function (count) {
+  expect(await Dev.countDocuments({})).to.equal(count);
+});
+
+Then("the developer's name should be {string}", function (name) {
+  expect(this.response.body.name).to.equal(name);
 });

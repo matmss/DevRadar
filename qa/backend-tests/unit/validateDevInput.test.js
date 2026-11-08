@@ -14,6 +14,10 @@ describe('validateDevInput', () => {
     expect(validateDevInput({ ...valid, latitude: 0, longitude: 0 }).errors).toEqual([]);
   });
 
+  it.each(['+12.5', '-.5', '7.', ' 45 '])('accepts decimal string latitude %p', (latitude) => {
+    expect(validateDevInput({ ...valid, latitude }).errors).toEqual([]);
+  });
+
   it('trims github_username', () => {
     expect(validateDevInput({ ...valid, github_username: '  gaearon ' }).value.github_username).toBe('gaearon');
   });
@@ -49,6 +53,8 @@ describe('validateDevInput', () => {
     ['empty string', ''],
     ['non-numeric', 'abc'],
     ['NaN', NaN],
+    ['hex string', '0x10'],
+    ['exponent string', '1e1'],
     ['Infinity', Infinity],
     ['null', null],
     ['out of range', 90.0001],
