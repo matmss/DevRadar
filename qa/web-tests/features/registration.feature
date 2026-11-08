@@ -43,3 +43,13 @@ Feature: Register a developer from the web app
     When I open the DevRadar web app
     And I fill in github username "gaearon", techs "ReactJS,Redux" and submit
     Then reloading the page should still show "gaearon" in the developer list
+
+  @edge @regression @P1
+  Scenario: A rejected registration shows the server's error and keeps the input
+    Given the browser grants geolocation permission at latitude "-23.5505" and longitude "-46.6333"
+    And the backend has no registered developers
+    When I open the DevRadar web app
+    And I fill in github username "-bad-name-", techs "ReactJS" and submit
+    Then I should see the error "github_username is not a valid GitHub username"
+    And the github username field should contain "-bad-name-"
+    And the developer list should show 0 entries

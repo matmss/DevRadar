@@ -27,12 +27,17 @@ function DevForm({onSubmit}) {
   async function handleSubmit(e) {
     e.preventDefault();
     
-    await onSubmit({
-      github_username,
-      techs,
-      latitude,
-      longitude,
-    });
+    try {
+      await onSubmit({
+        github_username,
+        techs,
+        latitude,
+        longitude,
+      });
+    } catch {
+      // The parent already shows the error; keep the fields so the user can correct them.
+      return;
+    }
 
     setGithubUsername('');
     setTechs('');

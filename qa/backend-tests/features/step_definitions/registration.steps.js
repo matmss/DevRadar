@@ -4,7 +4,13 @@ const request = require('supertest');
 // Same-instance requirement as hooks.js — see comment there.
 const mongoose = require('../../../../dev/backend/node_modules/mongoose');
 const Dev = require('../../../../dev/backend/src/models/Dev');
-const { mockGithubUser, mockGithubUserNotFound } = require('../support/github-mock');
+const {
+  mockGithubUser,
+  mockGithubUserNotFound,
+  mockGithubRateLimited,
+  mockGithubForbidden,
+  mockGithubUnreachable,
+} = require('../support/github-mock');
 
 Given('the developer database is empty', async function () {
   await Dev.deleteMany({});
@@ -16,6 +22,22 @@ Given('{string} is a valid GitHub username', function (username) {
 
 Given('{string} is not a valid GitHub username', function (username) {
   mockGithubUserNotFound(username);
+});
+
+Given('{string} is a valid GitHub username with no display name', function (username) {
+  mockGithubUser(username, { name: null });
+});
+
+Given('the GitHub API is rate limiting requests for {string} with status {int}', function (username, status) {
+  mockGithubRateLimited(username, status);
+});
+
+Given('the GitHub API forbids requests for {string} without a rate limit', function (username) {
+  mockGithubForbidden(username);
+});
+
+Given('the GitHub API is unreachable for {string}', function (username) {
+  mockGithubUnreachable(username);
 });
 
 Given('a developer already exists with github_username {string} and techs {string}', async function (username, techs) {
@@ -44,10 +66,6 @@ Then('the response status should be {int}', function (statusCode) {
 });
 
 Then('the response status should indicate a client error', function () {
-  // Documents the DESIRED contract (see docs/03-test-cases.md TC-011/TC-012).
-  // As of this audit, DevController.store has no validation/error handling for these
-  // paths, so this step is expected to FAIL until BUG-003/BUG-004 are fixed —
-  // that failure is the point: it's the automated proof the gap exists.
   expect(this.response.status).to.be.within(400, 499);
 });
 
@@ -76,4 +94,22 @@ Then('exactly {int} developer with github_username {string} should exist in the 
 Then('no developer with github_username {string} should be persisted', async function (username) {
   const found = await Dev.countDocuments({ github_username: username });
   expect(found).to.equal(0);
+});
+
+Then('no developer should be persisted', async function () {
+  const found = await Dev.countDocuments({});
+  expect(found).to.equal(0);
+});
+
+Then('the response should be an error with details', function () {
+  expect(this.response.body.error).to.be.a('string').that.is.not.empty;
+  expect(this.response.body.details).to.be.an('array');
+});
+
+Then('the database should contain exactly {int} developer(s)', async function (count) {
+  expect(await Dev.countDocuments({})).to.equal(count);
+});
+
+Then("the developer's name should be {string}", function (name) {
+  expect(this.response.body.name).to.equal(name);
 });

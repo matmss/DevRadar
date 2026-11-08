@@ -11,6 +11,7 @@ import DevForm from './components/DevForm';
 
 function App() {
 const [devs, setDevs] = useState([]);
+  const [formError, setFormError] = useState(null);
 
   useEffect(() => {
     async function loadDevs(){
@@ -23,9 +24,27 @@ const [devs, setDevs] = useState([]);
   }, []);
 
   async function handleAddDev(data) {
-    const response = await api.post('/devs', data)
+    setFormError(null);
 
-    setDevs([...devs, response.data]);
+    try {
+      const response = await api.post('/devs', data);
+
+      // The backend returns the existing record when the dev is already registered.
+      if (!devs.some(dev => dev._id === response.data._id)) {
+        setDevs([...devs, response.data]);
+      }
+    } catch (err) {
+      const body = err.response && err.response.data;
+      const details = body && Array.isArray(body.details) && body.details.length > 0
+        ? `: ${body.details.join('; ')}`
+        : '';
+      setFormError(body && body.error
+        ? `${body.error}${details}`
+        : 'Could not reach the server, try again later');
+
+      // Rethrow so DevForm keeps the user's input instead of clearing it.
+      throw err;
+    }
   }
 
   return (
@@ -33,6 +52,7 @@ const [devs, setDevs] = useState([]);
       <aside>
         <strong>Cadastro</strong>
         <DevForm onSubmit={handleAddDev} />
+        {formError && <p className="form-error" role="alert">{formError}</p>}
       </aside>
 
       <main>
