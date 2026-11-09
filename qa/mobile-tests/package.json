@@ -9,7 +9,8 @@
     "test:ios": "detox test --configuration ios.sim.debug",
     "test:android": "detox test --configuration android.emu.debug",
     "test:ci": "detox test --configuration android.emu.debug --headless --record-logs all --artifacts-location ../reports/mobile",
-    "maestro": "maestro test maestro/"
+    "maestro": "maestro test maestro/",
+    "unit": "../../dev/mobile/node_modules/.bin/jest --config unit/jest.config.js"
   },
   "devDependencies": {
     "axios": "^1.19.0",

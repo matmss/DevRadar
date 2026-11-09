@@ -46,7 +46,16 @@ npm run build:android && npm run test:android
 # Maestro (works today, no app changes)
 brew install maestro   # or: curl -Ls "https://get.maestro.mobile.dev" | bash
 npm run maestro
+
+# QA unit tests (Jest, no device; needs `npm install` in dev/mobile first)
+npm run unit
 ```
+
+`unit/` holds QA-owned Jest tests for the mobile app (e.g. race conditions found in review). They
+run with dev/mobile's own Jest and `jest-expo` preset through `unit/jest.config.js`, which also
+pins `axios`, `socket.io-client`, `react` and `react-test-renderer` to dev/mobile's copies (the qa
+workspace has its own `axios`/`socket.io-client`, and a `jest.mock` of the wrong copy would not
+mock the app's). DEV's own mobile unit tests are in `dev/tests/mobile/` (`npm test` in dev/mobile).
 
 ## Sign-in (auth slice 4)
 
