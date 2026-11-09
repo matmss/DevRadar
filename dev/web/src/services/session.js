@@ -26,12 +26,23 @@ export function saveToken(token) {
   window.localStorage.setItem(TOKEN_KEY, token);
 }
 
-export function clearToken() {
+/**
+ * Removes the stored token. With `expectedToken` (a 401's handling), only if the stored token is
+ * still that one: another tab may have saved a new session since the failing request was sent,
+ * and that session must survive. The check and the removal run back to back in one task, which
+ * is as close to atomic as localStorage allows (browsers do not lock it across tabs).
+ * @param {string | null} [expectedToken] - omit to clear unconditionally ("Sair")
+ * @returns {boolean} true if no other token is stored afterwards (removed, or nothing stored)
+ */
+export function clearToken(expectedToken) {
   try {
+    const stored = window.localStorage.getItem(TOKEN_KEY);
+    if (expectedToken !== undefined && stored !== null && stored !== expectedToken) return false;
     window.localStorage.removeItem(TOKEN_KEY);
   } catch (err) {
     console.warn('Session storage unavailable:', err.message);
   }
+  return true;
 }
 
 export const SESSION_TOKEN_KEY = TOKEN_KEY;

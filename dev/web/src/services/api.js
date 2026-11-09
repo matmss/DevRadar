@@ -4,8 +4,14 @@ import { getToken } from './session';
 
 export const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3333';
 
+// A request with no answer after this long fails like an unreachable server (no `response`), so
+// a hung GET /auth/me shows the "unavailable" view with "Tentar novamente" instead of
+// "Carregando..." forever.
+export const REQUEST_TIMEOUT_MS = 10000;
+
 const api = axios.create({
-    baseURL: API_URL
+    baseURL: API_URL,
+    timeout: REQUEST_TIMEOUT_MS,
 });
 
 let onUnauthorized = null;

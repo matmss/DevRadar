@@ -73,11 +73,11 @@ function App() {
     setNotice(message);
   }, []);
 
-  // Signed out by the user (no message), or by any 401 (QA-AUTH2-4): "token_expired" shows the
-  // expired message, any other or missing code the plain signed-out view.
-  const endSession = useCallback((code) => {
+  // Signed out by the user ("Sair": always clears the stored token, which also signs out the
+  // other tabs).
+  const endSession = useCallback(() => {
     clearToken();
-    showSignedOut(code === 'token_expired' ? MESSAGES.sessionExpired : null);
+    showSignedOut(null);
   }, [showSignedOut]);
 
   // Validates whatever token is stored now (GET /auth/me) and shows its user.
@@ -107,16 +107,17 @@ function App() {
     }
   }, [showSignedOut]);
 
+  // Any 401 (QA-AUTH2-4) ends the session it was sent with: "token_expired" shows the expired
+  // message, any other or missing code the plain signed-out view. The stored token is cleared only
+  // if it is still the one the failing request carried: if another tab saved a new session since,
+  // that one is kept and re-validated instead.
   const handleUnauthorized = useCallback((code, sentToken) => {
-    const stored = getToken();
-    // A 401 for a token that is no longer the stored one (another tab signed in since) must not
-    // end the new session: re-validate it instead.
-    if (stored && stored !== sentToken) {
+    if (!clearToken(sentToken)) {
       restoreStoredSession();
       return;
     }
-    endSession(code);
-  }, [endSession, restoreStoredSession]);
+    showSignedOut(code === 'token_expired' ? MESSAGES.sessionExpired : null);
+  }, [restoreStoredSession, showSignedOut]);
 
   useEffect(() => {
     setUnauthorizedHandler(handleUnauthorized);
@@ -241,7 +242,7 @@ function App() {
   if (session.status === 'unavailable') {
     return (
       <div id="app">
-        <SessionUnavailable notice={notice} onRetry={restoreStoredSession} onSignOut={() => endSession(null)} />
+        <SessionUnavailable notice={notice} onRetry={restoreStoredSession} onSignOut={endSession} />
       </div>
     );
   }
@@ -257,7 +258,7 @@ function App() {
   return (
     <div id="app">
       <aside>
-        <SessionUser user={session.user} onSignOut={() => endSession(null)} />
+        <SessionUser user={session.user} onSignOut={endSession} />
         <strong>Cadastro</strong>
         <DevForm onSubmit={handleAddDev} />
         {formError && <p className="form-error" role="alert">{formError}</p>}
