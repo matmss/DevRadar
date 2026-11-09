@@ -53,6 +53,10 @@ When('I exchange the one-time code with PKCE verifier {string}', async function 
   this.response = await request(this.app).post('/auth/token').send(body);
 });
 
+When('I send a {word} request to {string}', async function (method, path) {
+  this.response = await request(this.app)[method.toLowerCase()](path);
+});
+
 When('I send the raw token request body {string}', async function (body) {
   this.response = await request(this.app).post('/auth/token').set('Content-Type', 'application/json').send(body);
 });

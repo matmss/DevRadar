@@ -80,9 +80,31 @@ Feature: QA review of GitHub sign-in slice 1 (defects and coverage gaps)
     And I exchange the one-time code for a session token
     Then the response status should be 200
 
+  # Since the re-check of a953bea there are two limiters (sign-in and session checks); both are
+  # exhausted here so the scenario keeps its intent for each of them.
   @edge @regression @P2
-  Scenario: Exhausting the auth rate limit does not affect the existing routes
+  Scenario: Exhausting the auth rate limits does not affect the existing routes
     Given the auth rate limit is 2 requests per window
+    When I start GitHub sign-in 3 times
+    Then the response status should be 429
     When I call GET /auth/me without a token 3 times
-    And I request the list of all developers
+    Then the response status should be 429
+    When I request the list of all developers
     Then the response status should be 200
+
+  # --- QA-AUTH-4 (re-check of a953bea): unknown routes still get Express's HTML 404 ----------
+  # BUG-012's errors.feature says "Every route answers errors as JSON", but the error middleware
+  # only sees errors; a request no route matches falls through to Express's default
+  # "Cannot GET /x" HTML page. The spec asks that all errors use { error, details }.
+
+  @edge @regression @P3
+  Scenario Outline: A request to an unknown route gets a JSON 404
+    When I send a <method> request to "<path>"
+    Then the response status should be 404
+    And the response should be a JSON error with details and no stack trace
+
+    Examples:
+      | method | path              |
+      | GET    | /nope             |
+      | POST   | /auth/tokens      |
+      | GET    | /auth/%E0%A4%A    |
