@@ -34,9 +34,9 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 ## TC-004 — New registration notifies matching nearby connected client
 - **Requirement:** FR-1.6, FR-4.3
 - **Type:** Integration | **P1**
-- **Preconditions:** A WebSocket client connected with `latitude/longitude` within 10km and `techs` overlapping the soon-to-be-registered dev.
+- **Preconditions:** A signed-in WebSocket client connected with `latitude/longitude` within 10km and `techs` overlapping the soon-to-be-registered dev.
 - **Steps:**
-  1. Open WebSocket connection with handshake query `{ latitude, longitude, techs: "ReactJS" }`.
+  1. Open WebSocket connection with handshake query `{ latitude, longitude, techs: "ReactJS" }` and handshake `auth: { token }` (since auth slice 4).
   2. `POST /devs` a new developer with techs including `"ReactJS"` within 10km of the socket's coordinates.
   3. Listen for a `new-dev` event on the socket.
 - **Expected result:** `new-dev` event received within 2s, payload matches the created developer.
@@ -56,13 +56,13 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 ## TC-007 — List all developers, unfiltered
 - **Requirement:** FR-2.1
 - **Type:** Functional | **P2**
-- **Steps:** Seed 3 developers in different cities. `GET /devs`.
+- **Steps:** Seed 3 developers in different cities. `GET /devs` with a session token (required since auth slice 4, TC-027).
 - **Expected result:** Status 200, array of 3, regardless of any location.
 
 ## TC-008 — Search returns only nearby + matching-tech developers
 - **Requirement:** FR-3.1–FR-3.3
 - **Type:** Functional | **P1**
-- **Steps:** Seed developers per the scenario background in `02-test-scenarios.md`. `GET /search?latitude=-23.5505&longitude=-46.6333&techs=ReactJS`.
+- **Steps:** Seed developers per the scenario background in `02-test-scenarios.md`. `GET /search?latitude=-23.5505&longitude=-46.6333&techs=ReactJS` with a session token (required since auth slice 4).
 - **Expected result:** Only `near-match` returned; `near-no-tech` and `far-match` excluded.
 
 ## TC-009 — Search with no matching tech returns empty array
@@ -159,6 +159,42 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
   - A `/auth/callback` link opened while signed in: the stored session stays and is shown; the view always matches what is stored.
 - **Automated:** `qa/web-tests/features/auth-review.feature`, `auth.feature`.
 
+## TC-027 — Reads require a session token
+- **Requirement:** FR-2.1, FR-3.1, NFR-5, US-5 (Q1)
+- **Type:** Security / Regression | **P1**
+- **Steps:** `GET /devs` and `GET /search?latitude=-23.5505&longitude=-46.6333&techs=ReactJS` with no token, an expired token, each invalid kind (tampered, foreign-signed, alg-none, malformed, profile-less, forged profile), a token in the query string, and a valid token. Also `GET /search` without token or params, and `GET /devs` from origin `http://localhost:3000` without a token.
+- **Expected result:** 401 `{ error, code, details }` with `token_missing` / `token_expired` / `token_invalid` and a `WWW-Authenticate` challenge, no developer in the body; the query-string token counts as missing; `/search` without anything is 401, not 400; the 401 to the web origin still has `Access-Control-Allow-Origin`; a valid token gets 200. `/auth/*` stays public.
+- **Automated:** `qa/backend-tests/features/read-auth.feature`, `auth.feature` ("Reads are protected, sign-in is not").
+
+## TC-028 — The socket handshake requires a session token (US-5, Q6)
+- **Requirement:** FR-4.1, NFR-4, US-5
+- **Type:** Security / Integration | **P1**
+- **Steps:** Connect socket.io-client with `auth: { token }` + valid query; then without a token, with an expired one, with each invalid kind, with a valid token only in the query string or only in an `Authorization` header, and without token or params. Then 20 refused handshakes followed by a valid client and a registration. Finally connect validly, move the clock 8 days, register a dev, and reconnect with the same token.
+- **Expected result:** The valid client is subscribed and gets `new-dev`. Every other handshake gets `connect_error` with `data.code` `token_missing` / `token_expired` / `token_invalid` (the token is checked before the params), is not connected, is not in the server's subscriptions, gets no pushes, and the refusal carries no token. The server keeps serving. After 8 days the open socket still receives `new-dev` and stays connected, while the reconnect is refused `token_expired`.
+- **Automated:** `qa/backend-tests/features/realtime-auth.feature`, `unit/socketHandshake.test.js`; `realtime.feature` (BUG-011, now `subscription_invalid`).
+
+## TC-029 (Web) — Protected list, 401 races and hung session checks
+- **Requirement:** FR-5.3, US-6 (QA follow-ups from slice 3)
+- **Type:** Edge | **P2**
+- **Steps / expected result:**
+  - Signed in: `GET /devs` carries `Authorization: Bearer <stored token>` (not in the URL).
+  - `GET /devs` answers 401 `token_expired`: signed-out view, "Sessão expirada, entre novamente", token cleared.
+  - Another tab stores a new session while this tab's `GET /devs` is in flight, then that request answers 401: the new session is kept and shown (cleared only if the stored token is still the one the request carried).
+  - `GET /auth/me` never answers: after the 10 s timeout, "Não foi possível falar com o servidor, tente novamente mais tarde" with "Tentar novamente" and "Sair", token kept; retry signs in.
+- **Automated:** `qa/web-tests/features/auth-slice4.feature`; `dev/web/src/services/{session,api}.test.js`.
+
+## TC-030 (Mobile) — Sign in with GitHub, session, sign out (US-7)
+- **Requirement:** FR-6.0, US-7
+- **Type:** Functional / Security | **P1**
+- **Steps / expected result:**
+  - Fresh install: "Entrar com GitHub" screen, no map, no search, no location prompt.
+  - Tap it, close the auth session: "Login cancelado".
+  - Sign in with GitHub: lands on the map with the username and "Sair"; `/search` and the socket carry the token (header / handshake `auth`).
+  - Relaunch: map again without signing in; the token is in `expo-secure-store`, not AsyncStorage.
+  - Expired or invalid token at launch, on `/search` or at the socket handshake: back to the sign-in screen with "Sessão expirada, entre novamente" (expired) or "Sua sessão não é mais válida, entre novamente", not an empty map.
+  - "Sair": sign-in screen, token removed, socket closed; a relaunch stays signed out.
+- **Automated:** `dev/tests/mobile/**` (Jest: PKCE, secure storage, error mapping, api/socket wiring, sign-in flow, scheme consistency, `SessionProvider`); Maestro `qa/mobile-tests/maestro/00`, `04` (no backend/GitHub needed), `01`, `02`, `03`, `05` (sign in with a real GitHub test account). Expiry on device is manual (see `qa/mobile-tests/README.md`).
+
 ## TC-017 (Mobile) — Map centers on current location
 - **Requirement:** FR-6.1
 - **Type:** Functional | **P2**
@@ -204,12 +240,14 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 |---|---|
 | FR-1 | TC-001, TC-002, TC-003, TC-004, TC-011, TC-012, TC-013 |
 | US-3 (auth) | TC-001, TC-002, TC-011, TC-012, TC-025 |
-| US-6 (auth) | TC-015, TC-016, TC-023, TC-024, TC-025, TC-026 |
-| FR-2 | TC-007 |
-| FR-3 | TC-008, TC-009, TC-010 |
-| FR-4 | TC-004, TC-005, TC-006, TC-019 |
-| FR-5 | TC-014, TC-015, TC-016 |
-| FR-6 | TC-017, TC-018, TC-019, TC-020, TC-021 |
+| US-6 (auth) | TC-015, TC-016, TC-023, TC-024, TC-025, TC-026, TC-029 |
+| US-5 (auth) | TC-027, TC-028 |
+| US-7 (auth) | TC-030 |
+| FR-2 | TC-007, TC-027 |
+| FR-3 | TC-008, TC-009, TC-010, TC-027 |
+| FR-4 | TC-004, TC-005, TC-006, TC-019, TC-028 |
+| FR-5 | TC-014, TC-015, TC-016, TC-029 |
+| FR-6 | TC-017, TC-018, TC-019, TC-020, TC-021, TC-030 |
 | FR-7 | TC-012 |
 | NFR-1/2 | TC-010 |
 | NFR-7 | TC-022 |

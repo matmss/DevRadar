@@ -30,15 +30,15 @@ Cross-cutting integration: the backend calls the public **GitHub Users API** (`G
 - **FR-1.6** On successful registration, the system shall notify (via WebSocket) any currently-connected client whose search radius (10 km) and tech filter match the new developer.
 
 ### FR-2 — Developer listing
-- **FR-2.1** The system shall expose an endpoint returning all registered developers, unfiltered.
+- **FR-2.1** The system shall expose an endpoint returning all registered developers, unfiltered. *Since auth slice 4 (US-5, Q1): only to signed-in callers; without a valid session token `GET /devs` answers 401 `token_missing`/`token_expired`/`token_invalid`.*
 
 ### FR-3 — Geospatial / tech search
-- **FR-3.1** The system shall expose a search endpoint accepting `latitude`, `longitude`, and `techs` (comma-separated) as query parameters.
+- **FR-3.1** The system shall expose a search endpoint accepting `latitude`, `longitude`, and `techs` (comma-separated) as query parameters. *Since auth slice 4: `GET /search` requires a session token (401 as FR-2.1), checked before the parameters.*
 - **FR-3.2** The system shall return only developers whose `techs` array intersects the requested `techs` list.
 - **FR-3.3** The system shall return only developers within a 10,000-meter (10 km) radius of the given coordinates, using MongoDB's `$near`/`$geometry` geospatial query.
 
 ### FR-4 — Real-time updates (WebSocket)
-- **FR-4.1** On WebSocket connect, the client shall supply `latitude`, `longitude`, and `techs` via the handshake query.
+- **FR-4.1** On WebSocket connect, the client shall supply `latitude`, `longitude`, and `techs` via the handshake query. *Since auth slice 4 (US-5): plus its session token in the handshake `auth` payload (`{ token }`, never the query string). A missing, invalid or expired token, or invalid params, refuses the handshake with `connect_error` `data.code` (`token_missing`/`token_expired`/`token_invalid`/`subscription_invalid`) and the socket is never subscribed. The token is checked on connect only (Q6).*
 - **FR-4.2** The server shall track each open connection's coordinates and tech interests in memory.
 - **FR-4.3** When a new developer is created, the server shall compute the Haversine distance (km) between the new developer and each open connection and emit a `new-dev` event to connections within 10 km whose tech list intersects the new developer's techs.
 - **FR-4.4** The server shall support disconnect/reconnect without leaking stale in-memory connection entries indefinitely (see NFR-4).
@@ -49,7 +49,8 @@ Cross-cutting integration: the backend calls the public **GitHub Users API** (`G
 - **FR-5.3** The web app shall load and display the full developer list (`GET /devs`) on mount, showing avatar, name, techs, bio, and a link to the developer's GitHub profile.
 
 ### FR-6 — Mobile client
-- **FR-6.1** The mobile app shall request device location permission and center the map on the current position once granted.
+- **FR-6.0** *Since auth slice 4 (US-7):* without a session the mobile app shall show an "Entrar com GitHub" screen instead of the map; sign-in uses the backend's PKCE flow in the system auth session with redirect `com.matmss.mobile://auth/callback`; the token is kept in `expo-secure-store` (not AsyncStorage) until it expires; `GET /search` and the socket send it; any auth failure returns to the sign-in screen with a message ("Sessão expirada, entre novamente" when expired); "Sair" clears the token and closes the socket.
+- **FR-6.1** The mobile app shall request device location permission and center the map on the current position once granted. *Since auth slice 4: once signed in (the map is not shown before).*
 - **FR-6.2** The mobile app shall render each nearby developer as a map marker with avatar; tapping the marker shall show a callout with name, bio, and techs.
 - **FR-6.3** The mobile app shall let the user filter by `techs` (free text) and trigger a search (`GET /search`) via a search button.
 - **FR-6.4** Triggering a search shall (re)connect the WebSocket with the current region and techs so new matching developers appear live without re-searching.
@@ -65,13 +66,13 @@ Cross-cutting integration: the backend calls the public **GitHub Users API** (`G
 - **NFR-2 (Consistency of "nearby"):** Search and the real-time push must agree on the 10 km radius. Originally duplicated (`$maxDistance: 10000` vs `calculateDistance(...) < 10`); since BUG-002 both use `utils/nearby.js`, and `features/radius.feature` asserts they agree at the boundary.
 - **NFR-3 (Real-time latency):** A `new-dev` event should reach a matching connected client within a short, testable bound (suggested target: < 2s in an integration test using an in-process server) after the triggering `POST /devs`.
 - **NFR-4 (Resource cleanup):** In-memory WebSocket connection state should not grow unbounded across disconnect/reconnect cycles.
-- **NFR-5 (Security):** No authentication currently exists on `POST /devs`, `GET /devs`, or `GET /search`. CORS was fully open (`origin: '*'`); since 2026-11-08 it is restricted to the `CORS_ORIGINS` allow-list (Express and Socket.io). The missing authentication is an explicit, documented risk acceptance for a learning project — flagged in the Bug Tracker as known issues rather than defects, unless the project's threat model changes.
+- **NFR-5 (Security):** *Since auth slice 4 every route that shows or changes developers (`GET /devs`, `POST /devs`, `GET /search`) and the Socket.io subscription require a GitHub sign-in session token; only `/auth/*` is public (`dev/docs/03-auth-spec.md`, access matrix). The text below describes the original code.* No authentication currently exists on `POST /devs`, `GET /devs`, or `GET /search`. CORS was fully open (`origin: '*'`); since 2026-11-08 it is restricted to the `CORS_ORIGINS` allow-list (Express and Socket.io). The missing authentication is an explicit, documented risk acceptance for a learning project — flagged in the Bug Tracker as known issues rather than defects, unless the project's threat model changes.
 - **NFR-6 (Compatibility):** Mobile targets an unmaintained Expo SDK (36, released 2019) and `react-native-maps` 0.26.1 — environment/tooling compatibility is itself a testable NFR (does the app still build and run on currently available Xcode/Android SDK toolchains?).
 - **NFR-7 (Config portability):** Mobile's API/socket base URL is hardcoded to a LAN IP (`192.168.15.11`) rather than an environment variable, unlike web (`REACT_APP_API_URL`). This blocks automated mobile testing against a configurable backend and is tracked as a defect (see Bug Tracker BUG-001).
 
 ## 4. Out of scope / not implemented (confirmed by code reading)
 - No update or delete endpoints for developers (`SearchController.update`/`destroy` are stubbed and commented out).
-- No authentication, authorization, or rate limiting.
+- No authentication, authorization, or rate limiting. *(Since the auth slices: GitHub sign-in with session tokens, every read/write and the socket protected as of slice 4, `/auth/*` rate limited; no roles or authorization beyond "it is your own profile".)*
 - No input validation layer (e.g., no check that `latitude`/`longitude` are numeric, in range, or that `github_username` is non-empty) — see Open Issues.
 - No automated test suite currently exists in the repo (this project builds one).
 

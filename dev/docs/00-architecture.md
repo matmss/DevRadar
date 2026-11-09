@@ -34,18 +34,20 @@ Three layers, one shared backend:
   GeoJSON `location` field with a `2dsphere` index for radius queries, plus a
   unique case-insensitive index on `github_username` (one dev per GitHub login,
   see Authentication, "Registration identity and profile").
-- **Routes** (`backend/src/routes.js`):
-  - `GET /devs` — list all devs (`DevController.index`)
+- **Routes** (`backend/src/routes.js`). Everything that shows or changes devs needs a session
+  token (see Authentication); only `/auth/*` is public.
+  - `GET /devs` — list all devs (`DevController.index`, session token required)
   - `POST /devs` — register the signed-in dev (session token required, see
     Authentication); on first registration creates the dev from the profile
     captured at sign-in, then broadcasts it over the socket to any connected
     client whose search radius/techs match (`DevController.store`)
   - `GET /search` — geo + tech-filtered search using `$near` +
-    `$maxDistance` (`SearchController.index`)
+    `$maxDistance` (`SearchController.index`, session token required)
 - **Realtime:** `backend/src/websocket.js` tracks connected sockets by
-  their query params (lat/long/techs) and pushes `new-dev` events to
+  their handshake query params (lat/long/techs) and pushes `new-dev` events to
   matching clients — this is what makes the map update live without a
-  page refresh.
+  page refresh. Only signed-in clients can subscribe (see Authentication,
+  "Socket.io handshake").
 - **External dependency:** GitHub is only called during sign-in (OAuth token
   exchange, then `GET https://api.github.com/user` with the user's access
   token). Registration makes no GitHub call, so the unauthenticated 60 req/hr
@@ -73,17 +75,25 @@ Three layers, one shared backend:
 
 ## Authentication
 
-GitHub sign-in, per `dev/docs/03-auth-spec.md`. **Status (slices 1-3):** the auth endpoints,
-the `requireAuth` middleware, protected `POST /devs` (US-3) and web sign-in (US-6, without
-update/delete) exist. `GET /devs`, `GET /search` and the socket stay public until slice 4;
-mobile sign-in also comes with slice 4.
+GitHub sign-in, per `dev/docs/03-auth-spec.md`. **Status (slices 1-4):** the auth endpoints,
+the `requireAuth` middleware, web sign-in (US-6, without update/delete) and mobile sign-in
+(US-7, without `dev-updated`) exist, and the spec's access matrix is enforced:
+
+| Surface | Auth | Where |
+|---|---|---|
+| `GET /auth/github`, `GET /auth/github/callback`, `POST /auth/token` | Public, rate limited | `routes.js` |
+| `GET /auth/me` | Bearer token, rate limited | `routes.js` (`requireAuth`) |
+| `GET /devs`, `POST /devs`, `GET /search` | Bearer token | `routes.js` (`requireAuth`) |
+| Socket.io handshake (`new-dev`) | Token in the handshake `auth` payload | `websocket.js` (`io.use`) |
+
+`PUT`/`DELETE /devs/me` and `dev-updated` come with slice 5.
 
 - **Flow** (`backend/src/controllers/AuthController.js`, routes in `routes.js`). Every
   client (web and mobile) uses PKCE (RFC 7636, `utils/pkce.js`) with the backend: it makes a
   random `code_verifier` (43-128 unreserved characters), keeps it, and sends only
   `code_challenge = BASE64URL(SHA256(code_verifier))`. This binds the one-time code to the
   client that started sign-in, so a forwarded callback URL (login CSRF) or an intercepted
-  `devradar://` redirect is useless without the verifier.
+  `com.matmss.mobile://` redirect is useless without the verifier.
   1. `GET /auth/github?redirect=<client url>&code_challenge=<challenge>&code_challenge_method=S256`:
      checks `redirect` against the allow-list (`utils/redirectAllowList.js`: any path on a
      `CORS_ORIGINS` origin, or the `MOBILE_APP_SCHEME` custom scheme), requires a base64url
@@ -119,6 +129,35 @@ mobile sign-in also comes with slice 4.
   `{ error, code, details }`. Clients switch on `code`:
   `token_missing`, `token_expired` (show "Session expired, sign in again"), `token_invalid`.
   The signature is checked before expiry, so a forged expired token is `token_invalid`.
+  A token in the query string is ignored (`token_missing`). `GET /search` checks the token
+  before its parameters, so an anonymous caller gets 401, not 400. CORS runs first, so a 401 to
+  an allowed browser origin still carries `Access-Control-Allow-Origin` and the web app can read
+  the `code`.
+- **Socket.io handshake** (`websocket.js`, US-5). An `io.use` middleware runs before the
+  `connection` event:
+  1. Token: read **only** from `socket.handshake.auth.token` (socket.io-client's `auth` option,
+     sent in the Socket.io CONNECT packet), verified with `verifySessionToken`. Not from the
+     query string, which ends up in URLs and access logs, and not from an `Authorization`
+     header: browsers cannot set headers on a WebSocket (`extraHeaders` only works for
+     long-polling and in Node/React Native), so accepting it would make the behavior depend on
+     the transport. One place, the same everywhere.
+  2. Subscription: `latitude`, `longitude`, `techs` from the handshake query, validated as before
+     (BUG-011).
+  Any failure calls `next(err)` with `err.message` (human readable) and
+  `err.data = { code, details }`; the client gets a `connect_error` with that `data`. Codes:
+  `token_missing`, `token_expired`, `token_invalid` (same as the HTTP 401s), then
+  `subscription_invalid`, and `internal_error` if verification itself throws (e.g. no usable
+  `JWT_SECRET`; logged without the token). This replaces the old `subscription-error` event plus
+  server-side disconnect: one mechanism for every refusal, and since the socket never reaches
+  `connection`, a refused client is never added to `connections` (BUG-010) and never receives a
+  push. socket.io-client does not auto-reconnect after a middleware refusal, so clients do not
+  loop. `socket.data.user` holds the identity for later use.
+  - **Checked on connect only (Q6):** an open socket is not closed when its token expires. If
+    it reconnects later (network drop, backend restart), the handshake runs again and an
+    expired token is refused as `token_expired`.
+  - **CORS:** `allowRequest` (browser `Origin` allow-list, `config/cors.js`) runs at the
+    Engine.IO level before the middleware, so a disallowed origin is refused even with a valid
+    token; requests without an `Origin` (native mobile) are unaffected.
 - **Registration identity and profile** (US-3, `DevController.store`, `utils/githubProfile.js`).
   `POST /devs` uses `requireAuth`. The dev is `req.user.github_username`; a `github_username` in
   the body is ignored (Q9) and not validated, and techs/latitude/longitude are validated as
@@ -147,7 +186,7 @@ mobile sign-in also comes with slice 4.
   - **Token size:** with those caps the largest possible session token is about 1.5 KB (about
     1,480 bytes at most, measured with a 39-character login and every field filled with the most expensive
     characters; a typical one is about 340), well under the 2048-byte value limit of
-    `expo-secure-store` the mobile app relies on in slice 4. `unit/sessionToken.test.js` pins
+    `expo-secure-store` the mobile app stores it in. `unit/sessionToken.test.js` pins
     it under 1600 bytes. Verification rejects a `profile` claim that is not exactly
     this shape, so it cannot carry anything the backend did not produce. A `null` name falls
     back to the login when the dev is created.
@@ -187,7 +226,7 @@ mobile sign-in also comes with slice 4.
 - **Config** (`config/auth.js`, read from env on each use): `GITHUB_CLIENT_ID`,
   `GITHUB_CLIENT_SECRET`, `GITHUB_CALLBACK_URL` (default
   `http://localhost:3333/auth/github/callback`), `JWT_SECRET`, `MOBILE_APP_SCHEME` (default
-  `devradar`). With `NODE_ENV=production`, `index.js` refuses to start unless the client id,
+  `com.matmss.mobile`, the mobile app's scheme). With `NODE_ENV=production`, `index.js` refuses to start unless the client id,
   client secret and a `JWT_SECRET` of at least 32 characters are set. Outside production a
   missing `JWT_SECRET` falls back to a random per-process secret (sessions reset on restart),
   and `GET /auth/github` answers 503 until the GitHub credentials are set. Secrets and tokens
@@ -197,7 +236,8 @@ mobile sign-in also comes with slice 4.
   `javascript`, `data`, `file`, `ftp`, `ws`, `wss`, `about`, `blob`, `content`, `vbscript`,
   `chrome` are refused (they resolve to web pages, scripts or other apps, e.g. Android's
   `intent://` opens arbitrary https URLs). A refused or invalid value disables mobile
-  redirects, and startup logs a warning that does not print the value.
+  redirects, and startup logs a warning that does not print the value. It must equal the
+  mobile app's scheme (see Mobile, "App scheme").
 - **Single-instance limitation:** the `state` store, the one-time code store
   (`utils/oneTimeStore.js`) and the rate-limit counters live in process memory. Running more
   than one backend instance needs sticky sessions or a shared store (e.g. Redis) first.
@@ -211,9 +251,17 @@ mobile sign-in also comes with slice 4.
   session exists and remembers which token each request carried. Every 401,
   whatever its body (QA-AUTH2-4), ends the session: token cleared, signed-out
   view, with "Sessão expirada, entre novamente" for `token_expired` and no
-  message for any other or missing `code` (e.g. a proxy's 401). The one
-  exception: a 401 for a token another tab has already replaced re-validates
-  the new token instead of clearing it.
+  message for any other or missing `code` (e.g. a proxy's 401). The stored
+  token is cleared only if it is still the one the failing request carried
+  (`session.clearToken(expectedToken)`, compare and remove in one task): a 401
+  for a token another tab has already replaced re-validates the new token
+  instead of clearing it. localStorage has no cross-tab lock, so a write from
+  another tab that this tab has not seen yet can in theory still be lost in
+  that instant; the other tab then gets a 401 on its next request and shows
+  the signed-out view (no security impact). Every request times out after
+  10 s (`REQUEST_TIMEOUT_MS`) and then fails like an unreachable server, so a
+  hung `GET /auth/me` shows the "unavailable" view (below), not "Carregando..."
+  forever. `GET /devs` needs the token since slice 4.
 - Talks to the same `/devs` and `/search` endpoints as mobile, plus the
   `/auth/*` endpoints; no web-specific backend routes exist. Nothing secret is
   in the bundle: only `REACT_APP_API_URL`.
@@ -251,7 +299,7 @@ mobile sign-in also comes with slice 4.
   and avatar (from `POST /auth/token`, then `GET /auth/me` on every load), "Sair", the
   registration form without a username field, and the dev list. "Salvar" is disabled while a
   registration is in flight (QA-AUTH2-1). If the stored session cannot be checked (server
-  unreachable, or `GET /auth/me` answers 429), the token is kept and the app shows why ("Muitas
+  unreachable or timed out, or `GET /auth/me` answers 429), the token is kept and the app shows why ("Muitas
   tentativas em pouco tempo, tente novamente mais tarde" for 429) with "Tentar novamente" and
   "Sair", never a misleading "expired" or signed-out view.
 - **"Sair" only ends the session in this browser.** It removes the token from `localStorage`
@@ -276,19 +324,73 @@ mobile sign-in also comes with slice 4.
 
 - **Framework:** Expo SDK 57 / React Native.
 - **API access:** `mobile/src/services/api.js` and `services/socket.js`,
-  read `EXPO_PUBLIC_API_URL` (Expo's build-time-inlined env var prefix,
-  supported SDK 49+) with a `localhost:3333` fallback.
+  read `EXPO_PUBLIC_API_URL` via `src/config.js` (Expo's build-time-inlined env var prefix,
+  supported SDK 49+) with a `localhost:3333` fallback. Requests time out after 15 s.
   - This was previously hardcoded to a developer's LAN IP (BUG-001), which
     blocked CI entirely. Fixed — see `mobile/.env.example`.
 - **Location:** uses `expo-location` for the device's current position,
   which becomes the center point for both the map view and the
   `latitude`/`longitude` query params sent to `/search` and the socket
-  connection.
+  connection. Asked for only once signed in (the map screen is not mounted before).
+- **Screens** (US-7, `src/routes.js`, `src/SessionContext.js`, `services/sessionState.js`). A
+  `SessionProvider` holds the session; the navigator only contains the screens allowed in the
+  current state (React Navigation's auth-flow pattern), so the map cannot be reached signed out:
+  - loading: "Carregando..." while the stored session is checked;
+  - signed out: `pages/SignIn.js`, "Entrar com GitHub", plus a message after "Login cancelado",
+    a failed sign-in, or an ended session;
+  - signed in: the map (`pages/Main.js`) with the GitHub username and "Sair" in the header, and
+    `pages/Profile.js`;
+  - unavailable: `pages/SessionUnavailable.js`, when the stored session cannot be checked
+    (unreachable, timeout, 429): the token is kept, with "Tentar novamente" and "Sair".
+- **Sign-in flow** (`services/auth.js`, `services/pkce.js`), the same backend PKCE flow as the
+  web:
+  1. "Entrar com GitHub" makes a 32-byte verifier from `expo-crypto`'s `getRandomBytes` (the
+     platform's cryptographically secure generator), base64url (43 characters), and its S256
+     challenge (`digestStringAsync`). The verifier stays in memory for this one sign-in.
+  2. It opens `<API_URL>/auth/github?redirect=com.matmss.mobile://auth/callback&code_challenge=...&code_challenge_method=S256`
+     with `expo-web-browser`'s `openAuthSessionAsync` (ASWebAuthenticationSession on iOS,
+     Custom Tabs on Android), which returns when the browser reaches the redirect URI.
+  3. The callback is parsed by hand (React Native's `URL` is unreliable for custom schemes) and
+     only accepted if it is exactly the redirect URI plus a query. Closing the browser or
+     `error=sign_in_cancelled` shows "Login cancelado"; `sign_in_failed` a message by `reason`
+     (a lookup key, never rendered).
+  4. `POST /auth/token` `{ code, code_verifier }` returns the token and the user.
+  Expo Go cannot finish sign-in: its `exp://` redirect is refused by the backend on purpose
+  (QA-AUTH-3). Use a development build (`npm run android` / `ios`).
+- **App scheme: `com.matmss.mobile`**, the app's own applicationId / bundle identifier. RFC
+  8252 7.1 recommends reverse-domain schemes for native OAuth redirects, and using the store
+  identifier ties the scheme to a name the stores keep unique to this app, which makes an
+  accidental or malicious clash (another app registering the same scheme to catch the redirect,
+  which Android would resolve with a chooser) less likely than with a short word such as
+  `devradar`. PKCE already makes an intercepted code useless; this is defense in depth.
+  `com.devradar.app` would be reverse-domain too, but of a domain the project does not control
+  and tied to nothing. The scheme must be the same in `app.json` (`scheme`), `src/config.js`
+  (`APP_SCHEME`), the Android intent filter in `android/app/src/main/AndroidManifest.xml`
+  (generated by `expo prebuild`) and the backend's `MOBILE_APP_SCHEME` (its default);
+  `dev/tests/mobile/config.test.js` checks all four. If the package or bundle id ever changes,
+  change the scheme with it.
+- **Token storage** (`services/session.js`): `expo-secure-store` (iOS Keychain, Android
+  Keystore-encrypted storage), key `devradar.session_token`, `WHEN_UNLOCKED_THIS_DEVICE_ONLY`
+  (never migrated to another device), excluded from Android Auto Backup by the
+  `expo-secure-store` config plugin. Never AsyncStorage. The session survives relaunches until
+  the token expires (7 days, Q3). The token is also cached in memory so requests can attach it
+  synchronously.
+- **Using the session:** `GET /search` sends `Authorization: Bearer <token>`; the socket sends
+  it in the handshake `auth` payload (`socket.auth = { token }`), never in the query. Any 401
+  (whatever its body) or a socket `connect_error` with a token code ends the session and shows
+  the sign-in screen with "Sessão expirada, entre novamente" (`token_expired`) or "Sua sessão não
+  é mais válida, entre novamente" (anything else), never an empty map. As on the web, the token
+  is cleared only if it is still the one the failing request or handshake used, so a late 401
+  for an older session does not end a newer one. Other socket refusals
+  (`subscription_invalid`) are only logged; other search failures show "Não foi possível buscar
+  devs, tente novamente".
+- **"Sair"** closes the socket, forgets its token and deletes the token from secure storage.
+  Like the web, there is no server-side revocation.
 
 ## Data flow: registering a dev and seeing it live elsewhere
 
-1. A signed-in client (web today) submits `POST /devs` with its session
-   token and `techs`, `latitude`, `longitude`.
+1. A signed-in client (web; mobile has no registration screen) submits `POST /devs` with its
+   session token and `techs`, `latitude`, `longitude`.
 2. Backend takes the GitHub login from the token and checks if that dev
    already exists (case-insensitive); if not, builds the dev from the profile
    captured at sign-in (no GitHub call), turns the submitted lat/long into a
@@ -296,13 +398,15 @@ mobile sign-in also comes with slice 4.
 3. Backend computes which currently-connected sockets have a search radius
    and tech filter that the new dev matches, and emits `new-dev` to just
    those sockets.
-4. Any client with an open socket connection whose filters match sees the
+4. Any signed-in client with an open socket connection whose filters match sees the
    new dev appear on their map without polling or refreshing.
 
 ## Known architectural constraints worth designing around
 
-- **Reads not protected yet.** Registration requires sign-in, but
-  `GET /devs`, `GET /search` and the socket stay public until slice 4.
+- **Socket identity is checked once.** The socket handshake verifies the token, but an open
+  socket keeps receiving pushes after its token expires (Q6), and nothing server-side ends it
+  (no revocation; "Sair" only closes the app's own socket). Closing sockets at expiry would
+  need a timer per socket keyed on the token's `exp`.
 - **Profile is a sign-in snapshot.** Registration uses the GitHub profile as
   of sign-in, and existing devs are never refreshed from GitHub (profile
   updates come with slice 5).

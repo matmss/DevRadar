@@ -57,10 +57,14 @@ Concretely, for new tests:
 - **Mobile:** add to `dev/tests/mobile/`, mirroring
   `mobile/src/` (e.g. `dev/tests/mobile/services/api.test.js` for
   `mobile/src/services/api.js`). Run via `npm test` in `mobile/`
-  (added a `jest.config.js` there that points at this folder, plus `jest`
-  and `babel-jest` as devDependencies since neither existed for the mobile
-  app package before this pass — only `qa/mobile-tests/` had Jest, and
-  that's the E2E/BDD layer, not this one).
+  (`mobile/jest.config.js` points at this folder with the `jest-expo` preset;
+  `jest` and `jest-expo` are devDependencies — `jest-expo` pinned to 57.0.4
+  because later 57.0.x need `@react-native/jest-preset` ^0.86.3, which
+  conflicts with `react-native` 0.86.2 — only `qa/mobile-tests/` had Jest
+  before, and that's the E2E/BDD layer, not this one). Mock native modules
+  (`expo-secure-store`, `expo-crypto`, `expo-web-browser`, `socket.io-client`)
+  at the boundary with `jest.mock`; `react-test-renderer` (shipped with
+  `jest-expo`) is enough for provider/hook tests.
 
 The BDD/E2E suites (`qa/{backend,web,mobile}-tests/features/`) are a
 separate layer testing user-facing scenarios — see
@@ -105,9 +109,13 @@ Per team convention, before writing new code, check for:
   test-location table above) before adding a parallel one.
 - **Security surface** — identity comes only from the session token
   (`req.user`, set by `requireAuth`; see `00-architecture.md`,
-  Authentication). Never take an identity from `req.body`/`req.query`, and
-  remember that `GET /devs`, `GET /search` and the socket are still public
-  until auth slice 4.
+  Authentication). Never take an identity from `req.body`/`req.query`. Since
+  auth slice 4 only `/auth/*` is public: a new route that shows or changes
+  devs needs `requireAuth`, and the socket identity is `socket.data.user`
+  (set by the handshake middleware in `websocket.js`). Tokens never go in URLs:
+  HTTP uses the `Authorization` header, the socket its handshake `auth`
+  payload. On mobile, secrets and tokens go in `expo-secure-store`, never
+  AsyncStorage.
 
 ## Follow existing patterns
 
