@@ -9,7 +9,7 @@ const routes = require('./routes');
 const { setupWebsocket } = require('./websocket');
 const { corsOptions } = require('./config/cors');
 const { trustProxySetting } = require('./config/proxy');
-const { errorHandler } = require('./middleware/errorHandler');
+const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 
 /**
  * @param {{ beforeRoutes?: (app: import('express').Express) => void }} [options]
@@ -25,6 +25,7 @@ function createApp({ beforeRoutes } = {}) {
   app.use(express.json());
   if (beforeRoutes) beforeRoutes(app);
   app.use(routes);
+  app.use(notFoundHandler);
   app.use(errorHandler);
 
   return app;

@@ -55,4 +55,15 @@ function errorHandler(err, req, res, next) {
   res.status(status).json({ error, code, details });
 }
 
-module.exports = { errorHandler, describeError };
+/**
+ * Catch-all for requests no route matched (QA-AUTH-4). Registered after the routes and before
+ * errorHandler, so unknown routes get JSON instead of Express's "Cannot GET" HTML page.
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @returns {void}
+ */
+function notFoundHandler(req, res) {
+  res.status(404).json({ error: 'Not found', code: 'not_found', details: [] });
+}
+
+module.exports = { errorHandler, notFoundHandler, describeError };
