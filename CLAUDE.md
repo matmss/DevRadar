@@ -66,9 +66,22 @@ is opt-in since it needs a simulator/emulator or the Maestro CLI).
 ## Architecture
 
 ### Backend request/data flow
-`dev/backend/src/index.js` boots Express on a raw `http.Server` (not `app.listen`) specifically
-so Socket.io can share the same port — `setupWebsocket(server)` is called before `routes` is
-mounted. Two routes only (`dev/backend/src/routes.js`):
+`dev/backend/src/app.js` (`createApp` / `createServer`) assembles everything in one fixed order —
+trust proxy, CORS, JSON body parsing, routes, JSON 404, global error handler — and wraps it in a
+raw `http.Server` (not `app.listen`) so Socket.io (`setupWebsocket(server)`) shares the port.
+`index.js` and **both test harnesses** (`qa/backend-tests/.../testApp.js`,
+`qa/web-tests/.../backend-server.js`) call it, so middleware order can't drift between prod and
+tests. Every error, including unknown routes, is JSON `{ error, code, details }`
+(`middleware/errorHandler.js`, BUG-012); it never returns stacks and never logs request bodies.
+Routes (`dev/backend/src/routes.js`):
+
+- **Auth** (`AuthController`, spec in `dev/docs/03-auth-spec.md`, details in
+  `dev/docs/00-architecture.md`): `GET /auth/github` (PKCE S256 required, redirect allow-listed)
+  → `GET /auth/github/callback` → client gets a 60 s one-time code → `POST /auth/token`
+  (`code` + `code_verifier`) → 7-day HS256 JWT. `GET /auth/me` is behind `requireAuth`
+  (`middleware/auth.js`; 401 codes `token_missing`/`token_expired`/`token_invalid`). State,
+  codes and rate-limit counters are in memory (single instance). Env: see `dev/backend/.env.example`.
+  **As of auth slice 1, `/devs`, `/search` and the socket are not protected yet** (later slices).
 
 - `POST /devs` (`DevController.store`) — if `github_username` isn't already in Mongo, calls
   the **real GitHub Users API** (`GET https://api.github.com/users/:username`, unauthenticated,
@@ -77,7 +90,7 @@ mounted. Two routes only (`dev/backend/src/routes.js`):
   tech-matching connected sockets. Input is validated first by `utils/validateDevInput.js`
   (400 with `{ error, details[] }`), and GitHub failures are mapped to 404 / 503 (rate limit) /
   502 (BUG-003/004/005, fixed). Usernames are matched case-insensitively (Mongo collation).
-  There is still no global Express error middleware, so other thrown errors get Express's default 500.
+  Other thrown errors reach the global error handler (500 `internal_error`).
 - `GET /search` (`SearchController.index`) — Mongo `$near` geo query on the `Dev.location`
   `2dsphere` index (`dev/backend/src/models/Dev.js`), `$maxDistance: NEARBY_RADIUS_METERS`, filtered by
   `techs: { $in: techsArray }`. Query params are validated (400 on missing/invalid).
@@ -132,7 +145,7 @@ rather than a single cross-language framework:
   was reverse-engineered from the code (there's no separate product spec), so treat it as
   descriptive, not aspirational.
 - Known **open** issues worth checking before you "fix" related behavior yourself:
-  BUG-006 (no authentication yet; GitHub OAuth login is the planned fix. CORS is already
+  BUG-006 (GitHub sign-in in progress, delivered in slices per `dev/docs/03-auth-spec.md`. CORS is already
   restricted: browser origins must be in `CORS_ORIGINS`, see `dev/backend/src/config/cors.js`,
   which both Express and Socket.io use. Requests with no `Origin`, like the native mobile app,
   are unaffected. If you add a web client origin, add it there), BUG-008 (`update`/`destroy` are stubbed/commented out in `SearchController`,

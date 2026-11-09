@@ -6,6 +6,8 @@ const mongoose = require('../../../../dev/backend/node_modules/mongoose');
 const nock = require('nock');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const { createTestApp } = require('./testApp');
+const { applyTestAuthEnv } = require('./auth-config');
+const { resetAuthRateLimit } = require('../../../../dev/backend/src/middleware/rateLimit');
 
 let mongod;
 
@@ -21,6 +23,12 @@ AfterAll(async function () {
 });
 
 Before(async function () {
+  // Auth env is reset per scenario (a scenario may lower a rate limit or set TRUST_PROXY), and
+  // the /auth rate limiters are module-level singletons, so their counts would otherwise carry
+  // over. Done before building the app, which reads TRUST_PROXY.
+  applyTestAuthEnv();
+  await resetAuthRateLimit();
+
   // Fresh app + server per scenario. Note: websocket.js's `connections` array is module-level,
   // so it is shared across scenarios; entries are removed when sockets disconnect (After hook).
   const { app, server } = createTestApp();
