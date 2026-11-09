@@ -47,3 +47,20 @@ Feature: Real-time propagation of new developers via WebSocket
     When I submit a registration with techs "ReactJS", latitude "-23.5505" and longitude "-46.6333"
     Then client "watcher" should receive a "new-dev" event within 2 seconds
 
+
+  # QA-AUTH2-1: only the request that actually creates the developer announces it.
+  @integration @regression @edge @P1
+  Scenario: Concurrent registrations by the same user push new-dev once
+    Given I am signed in as "gaearon"
+    And a client "watcher" is connected via WebSocket at latitude "-23.5505", longitude "-46.6333" watching techs "ReactJS"
+    When I submit 5 registrations at the same time with techs "ReactJS", latitude "-23.5505" and longitude "-46.6333"
+    Then client "watcher" should receive exactly 1 "new-dev" event within 1 seconds
+
+  @integration @regression @P2
+  Scenario: Registering again as an existing developer pushes nothing
+    Given a developer already exists with github_username "gaearon" and techs "ReactJS"
+    And I am signed in as "gaearon"
+    And a client "watcher" is connected via WebSocket at latitude "-23.5505", longitude "-46.6333" watching techs "ReactJS"
+    When I submit a registration with techs "ReactJS", latitude "-23.5505" and longitude "-46.6333"
+    Then the response status should be 200
+    And client "watcher" should receive exactly 0 "new-dev" events within 1 seconds

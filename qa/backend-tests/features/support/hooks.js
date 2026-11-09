@@ -8,6 +8,7 @@ const { MongoMemoryServer } = require('mongodb-memory-server');
 const { createTestApp } = require('./testApp');
 const { applyTestAuthEnv } = require('./auth-config');
 const { watchGithubUsersApi } = require('./github-mock');
+const Dev = require('../../../../dev/backend/src/models/Dev');
 const { resetAuthRateLimit } = require('../../../../dev/backend/src/middleware/rateLimit');
 
 let mongod;
@@ -16,6 +17,9 @@ BeforeAll({ timeout: 60000 }, async function () {
   mongod = await MongoMemoryServer.create();
   const uri = mongod.getUri();
   await mongoose.connect(uri);
+  // Build the Dev indexes (unique case-insensitive github_username) before any scenario, as
+  // index.js does at startup. Scenarios empty collections with deleteMany, so indexes persist.
+  await Dev.init();
 });
 
 AfterAll(async function () {

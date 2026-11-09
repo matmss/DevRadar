@@ -80,6 +80,16 @@ Feature: Sign in and out of the web app with GitHub (US-6)
     And I should see no message
     And the session token should be cleared
 
+  # A 429 means "slow down", not "signed out": the session is kept and can be retried.
+  @edge @regression @P2
+  Scenario: A rate-limited session check keeps the session and says to try again later
+    Given the backend answers GET /auth/me with 429 and body '{"error":"Too many requests","code":"rate_limited","details":[]}'
+    When I open the DevRadar web app with a stored session token for "gaearon"
+    Then I should see the message "Muitas tentativas em pouco tempo, tente novamente mais tarde"
+    And I should be offered to try again or sign out, with my session kept
+    When I try again
+    Then I should be signed in as "gaearon"
+
   # The callback page never navigates to a URL taken from its query string, and a code without
   # this browser's PKCE verifier (e.g. a forwarded link) does not sign anyone in.
   @edge @regression @P1

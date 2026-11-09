@@ -71,3 +71,8 @@ aside .form-error {
   font-size: 14px;
   line-height: 20px;
 }
+
+aside form button[type=submit]:disabled {
+    opacity: 0.6;
+    cursor: default;
+}

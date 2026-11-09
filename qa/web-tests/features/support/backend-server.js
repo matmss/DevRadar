@@ -124,6 +124,8 @@ function testRoutes() {
 async function startBackend(port) {
   mongod = await MongoMemoryServer.create();
   await mongoose.connect(mongod.getUri());
+  // Unique case-insensitive github_username index, as index.js builds it at startup.
+  await Dev.init();
   applyTestAuthEnv(port);
   stubGithubApi();
 

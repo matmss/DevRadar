@@ -55,10 +55,36 @@ describe('session tokens', () => {
     });
     const claims = decode(token.split('.')[1]);
     expect(Object.keys(claims.profile).sort()).toEqual(['avatar_url', 'bio', 'name']);
-    expect(claims.profile.bio).toHaveLength(300);
+    expect(claims.profile.bio).toHaveLength(160);
     expect(token).not.toContain('gho_must_not_be_signed');
     expect(JSON.stringify(claims)).not.toContain('gho_must_not_be_signed');
     expect(JSON.stringify(claims)).not.toContain('dan@example.com');
+  });
+
+  // The mobile app (auth slice 4) keeps the token in expo-secure-store, whose values are limited
+  // to 2048 bytes. Worst case: the longest login, and every profile field at its byte cap with
+  // the most expensive characters (4-byte emoji, JSON-escaped quotes and backslashes).
+  it('keeps a worst-case token well under the 2048-byte secure-store limit', () => {
+    const SECURE_STORE_LIMIT = 2048;
+    const emoji = String.fromCodePoint(0x1f600);
+    const longestLogin = `a${'-b'.repeat(19)}`; // 39 characters, GitHub's maximum
+    const avatar = `https://avatars.githubusercontent.com/u/1?v=4&p=${'x'.repeat(240)}`;
+    const fillers = [emoji, '"', '\\', 'a', `${emoji}"`];
+    const sizes = [];
+    fillers.forEach((nameFill) => fillers.forEach((bioFill) => {
+      const { token } = signSessionToken(longestLogin, {
+        name: nameFill.repeat(2000),
+        bio: bioFill.repeat(2000),
+        avatar_url: avatar,
+      });
+      expect(verifySessionToken(token).ok).toBe(true);
+      sizes.push(Buffer.byteLength(token, 'utf8'));
+    }));
+    expect(longestLogin).toHaveLength(39);
+    expect(verifySessionToken(signSessionToken(longestLogin, { avatar_url: avatar }).token).user.profile.avatar_url)
+      .toBe(avatar);
+    expect(Math.max(...sizes)).toBeLessThan(1600);
+    expect(Math.max(...sizes)).toBeLessThan(SECURE_STORE_LIMIT);
   });
 
   it('signs an all-null profile when none is given', () => {

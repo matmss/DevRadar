@@ -22,6 +22,7 @@ const {
   GITHUB_DOWN_CODE,
   githubUserFixture,
 } = require('../support/auth-fixtures');
+const { unexpectedGithubRequests } = require('../support/github-network');
 
 const { Given, When, Then } = createBdd();
 
@@ -38,8 +39,6 @@ const SIGN_OUT_BUTTON = 'Sair';
 
 // Authorize URLs the browser visited, per browser context (one context per scenario).
 const authorizeVisits = new WeakMap();
-// Requests the browser itself sent to github.com, per browser context (must stay empty).
-const githubRequests = new WeakMap();
 
 /**
  * Replaces any previous GitHub fake for this scenario. `outcome` builds the callback query from
@@ -49,15 +48,7 @@ const githubRequests = new WeakMap();
  */
 async function fakeGithubAuthorize(context, outcome) {
   await context.unroute(isSignInStart);
-  if (!authorizeVisits.has(context)) {
-    authorizeVisits.set(context, []);
-    // Proof that the fake held: the browser must never contact github.com itself.
-    githubRequests.set(context, []);
-    context.on('request', (request) => {
-      const { hostname } = new URL(request.url());
-      if (hostname === 'github.com' || hostname.endsWith('.github.com')) githubRequests.get(context).push(request.url());
-    });
-  }
+  if (!authorizeVisits.has(context)) authorizeVisits.set(context, []);
   await context.route(isSignInStart, async (route) => {
     const response = await route.fetch({ maxRedirects: 0 });
     const location = response.headers().location || '';
@@ -120,7 +111,7 @@ Given('I am signed in with GitHub as {string}', async function ({ page, context 
   await page.goto('/');
   await signInWithGithub(page);
   await expect(page.getByTestId('signed-in-username')).toHaveText(login);
-  expect(githubRequests.get(context), 'the browser must not contact github.com').toEqual([]);
+  expect(unexpectedGithubRequests(context), 'the browser must not contact GitHub').toEqual([]);
 });
 
 // --- When --------------------------------------------------------------------------------------
@@ -178,6 +169,8 @@ Then('I should be signed in as {string}', async function ({ page }, login) {
   const avatar = page.getByRole('img', { name: `Avatar de ${login}` });
   await expect(avatar).toBeVisible();
   await expect(avatar).toHaveAttribute('src', githubUserFixture(login).avatar_url);
+  // Loaded from the local fake (support/github-network.js), not from GitHub.
+  await expect.poll(() => avatar.evaluate((img) => img.complete && img.naturalWidth)).toBe(1);
   await expect(page.getByRole('button', { name: SIGN_OUT_BUTTON })).toBeVisible();
   await expect(page.getByRole('button', { name: SIGN_IN_BUTTON })).toHaveCount(0);
 });
@@ -201,7 +194,7 @@ Then('GitHub should have been asked for sign-in with a state and no extra scope'
   expect(params.get('redirect_uri')).toBe(`${BACKEND_URL}/auth/github/callback`);
   expect(params.get('state')).toBeTruthy();
   expect(params.has('scope')).toBe(false);
-  expect(githubRequests.get(context)).toEqual([]);
+  expect(unexpectedGithubRequests(context)).toEqual([]);
 });
 
 Then('the address bar should show the app without a sign-in code', async function ({ page, baseURL }) {
@@ -210,6 +203,19 @@ Then('the address bar should show the app without a sign-in code', async functio
 
 Then('the PKCE verifier should be cleared', async function ({ page }) {
   expect(await page.evaluate((key) => window.sessionStorage.getItem(key), PKCE_VERIFIER_KEY)).toBeNull();
+});
+
+Then('I should be offered to try again or sign out, with my session kept', async function ({ page }) {
+  await expect(page.getByRole('button', { name: 'Tentar novamente' })).toBeVisible();
+  await expect(page.getByRole('button', { name: SIGN_OUT_BUTTON })).toBeVisible();
+  await expect(page.getByRole('button', { name: SIGN_IN_BUTTON })).toHaveCount(0);
+  await expect(page.locator('form')).toHaveCount(0);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), SESSION_TOKEN_KEY)).not.toBeNull();
+});
+
+When('I try again', async function ({ page }) {
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+  await page.getByRole('button', { name: 'Tentar novamente' }).click();
 });
 
 Then('the session token should be cleared', async function ({ page }) {

@@ -73,7 +73,7 @@ Feature: Developer registration as the signed-in GitHub user (US-3)
 
   @edge
   Scenario: Sign-in profile values are sanitized
-    # null name -> login; bio truncated to 300 characters; avatar_url kept only if https;
+    # null or invisible-only name -> login; bio cut to 160 characters (400 bytes); avatar_url kept only if https;
     # control and bidi-override characters replaced (registration.feature, unit/githubProfile.test.js)
 ```
 

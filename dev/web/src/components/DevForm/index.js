@@ -1,4 +1,4 @@
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useRef} from 'react';
 
 import './styles.css';
 
@@ -9,6 +9,11 @@ function DevForm({onSubmit}) {
 
   const [latitude, setLatitude] = useState('');
   const [longitude, setLongitude] = useState('');
+
+  // One registration at a time (QA-AUTH2-1): "Salvar" is disabled while a request is in flight,
+  // and the ref also stops a second submit that arrives before the re-render.
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
 
   useEffect(() => {
@@ -27,7 +32,10 @@ function DevForm({onSubmit}) {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (submittingRef.current) return;
 
+    submittingRef.current = true;
+    setSubmitting(true);
     try {
       await onSubmit({
         techs,
@@ -37,6 +45,9 @@ function DevForm({onSubmit}) {
     } catch {
       // The parent already shows the error; keep the fields so the user can correct them.
       return;
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
     }
 
     setTechs('');
@@ -61,7 +72,7 @@ function DevForm({onSubmit}) {
         </div>
       </div>
 
-      <button type="submit">Salvar</button>
+      <button type="submit" disabled={submitting}>Salvar</button>
     </form>
 
   );

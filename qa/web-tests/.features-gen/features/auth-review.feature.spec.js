@@ -64,6 +64,9 @@ test.describe('QA review of GitHub sign-in slices 2 and 3, web (defects found in
 
 // == technical section ==
 
+test.beforeEach('BeforeEach Hooks', ({ $runScenarioHooks, context }) => $runScenarioHooks('before', { context }));
+test.afterEach('AfterEach Hooks', ({ $runScenarioHooks, context }) => $runScenarioHooks('after', { context }));
+
 test.use({
   $test: [({}, use) => use(test), { scope: 'test', box: true }],
   $uri: [({}, use) => use('features/auth-review.feature'), { scope: 'test', box: true }],

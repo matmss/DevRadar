@@ -1,4 +1,4 @@
-const { Given, When, Then } = require('@cucumber/cucumber');
+const { Given, When, Then, After } = require('@cucumber/cucumber');
 const { expect } = require('chai');
 const request = require('supertest');
 const Dev = require('../../../../dev/backend/src/models/Dev');
@@ -40,6 +40,32 @@ Given('the developer database is empty', async function () {
 // token's sign-in snapshot (github-mock.js FIXTURES).
 Given('I am signed in as {string}', function (username) {
   this.sessionToken = signSessionToken(username, githubUserFixture(username)).token;
+});
+
+// QA-AUTH2-1: makes the next registration lose a race deterministically. Another request inserts
+// `username` first, then the upsert fails with MongoDB's duplicate-key error (E11000), as when
+// the unique github_username index rejects the second of two simultaneous inserts.
+const realFindOneAndUpdate = Dev.findOneAndUpdate;
+After(function () {
+  Dev.findOneAndUpdate = realFindOneAndUpdate;
+});
+
+Given('another request registers {string} with techs {string} just before my upsert', function (username, techs) {
+  Dev.findOneAndUpdate = function raceLost() {
+    Dev.findOneAndUpdate = realFindOneAndUpdate;
+    return Dev.create({
+      github_username: username,
+      name: username,
+      avatar_url: 'https://example.com/avatar.png',
+      bio: 'won the race',
+      techs: techs.split(','),
+      location: { type: 'Point', coordinates: [-46.6333, -23.5505] },
+    }).then(() => {
+      const err = new Error(`E11000 duplicate key error collection: devs index: github_username_unique_ci`);
+      err.code = 11000;
+      throw err;
+    });
+  };
 });
 
 // Seeds the document directly, the way a dev created before sign-in existed looks (US-8).

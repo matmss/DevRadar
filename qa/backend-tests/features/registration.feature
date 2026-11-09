@@ -129,6 +129,17 @@ Feature: Developer registration as the signed-in GitHub user (US-3)
       | gaearon         | Gaearon      |
       | GAEARON         | gaearon      |
 
+  # QA-AUTH2-1: the losing insert of a race is answered with the existing dev, not a 500.
+  @edge @regression @P1
+  Scenario: A registration that loses a race to the same user returns the winner
+    Given I am signed in as "gaearon"
+    And another request registers "gaearon" with techs "Elixir" just before my upsert
+    When I submit a registration with techs "ReactJS", latitude "-23.5505" and longitude "-46.6333"
+    Then the response status should be 200
+    And the registered developer should be "gaearon"
+    And the developer's techs should be "Elixir"
+    And the database should contain exactly 1 developer
+
   # --- Sign-in profile handling ---------------------------------------------------------------
 
   @regression @P2
@@ -144,7 +155,7 @@ Feature: Developer registration as the signed-in GitHub user (US-3)
     Given I signed in through GitHub as "gaearon" whose GitHub bio is 5000 characters long
     When I submit a registration with techs "ReactJS", latitude "-23.5505" and longitude "-46.6333"
     Then the response status should be 200
-    And the stored developer "gaearon" should have a bio of 300 characters
+    And the stored developer "gaearon" should have a bio of 160 characters
 
   @edge @regression @P2
   Scenario Outline: A GitHub avatar_url that is not a plain https URL is not stored

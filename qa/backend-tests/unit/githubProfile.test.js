@@ -2,7 +2,9 @@ const {
   sanitizeGithubProfile,
   isSanitizedGithubProfile,
   MAX_NAME_LENGTH,
+  MAX_NAME_BYTES,
   MAX_BIO_LENGTH,
+  MAX_BIO_BYTES,
 } = require('../../../dev/backend/src/utils/githubProfile');
 
 // Special characters are built from code points so this file stays plain ASCII.
@@ -55,12 +57,25 @@ describe('sanitizeGithubProfile', () => {
     expect(sanitizeGithubProfile({ name }).name).toBe(name);
   });
 
-  it('truncates name and bio by code point, never splitting a surrogate pair', () => {
-    const { name, bio } = sanitizeGithubProfile({ name: 'n'.repeat(1000), bio: EMOJI.repeat(1000) });
+  it('truncates name and bio by code point', () => {
+    const { name, bio } = sanitizeGithubProfile({ name: 'n'.repeat(1000), bio: 'b'.repeat(1000) });
     expect(name).toHaveLength(MAX_NAME_LENGTH);
-    expect(Array.from(bio)).toHaveLength(MAX_BIO_LENGTH);
-    expect(Array.from(bio).every((c) => c === EMOJI)).toBe(true);
-    expect(MAX_BIO_LENGTH).toBe(300);
+    expect(bio).toHaveLength(MAX_BIO_LENGTH);
+    expect([MAX_NAME_LENGTH, MAX_BIO_LENGTH]).toEqual([100, 160]);
+  });
+
+  it('also caps the JSON-encoded UTF-8 bytes, never splitting a surrogate pair', () => {
+    const jsonBytes = (value) => Buffer.byteLength(JSON.stringify(value), 'utf8') - 2;
+    // 4 UTF-8 bytes per emoji, so the byte cap binds before the code-point cap.
+    const { name, bio } = sanitizeGithubProfile({ name: EMOJI.repeat(1000), bio: EMOJI.repeat(1000) });
+    expect(jsonBytes(name)).toBe(MAX_NAME_BYTES);
+    expect(Array.from(name)).toHaveLength(MAX_NAME_BYTES / 4);
+    expect(Array.from(name).every((c) => c === EMOJI)).toBe(true);
+    expect(jsonBytes(bio)).toBe(MAX_BIO_BYTES);
+    expect(Array.from(bio)).toHaveLength(MAX_BIO_BYTES / 4);
+    // JSON escapes count too: a quote costs 2 bytes.
+    const quotes = sanitizeGithubProfile({ name: '"'.repeat(1000) }).name;
+    expect(jsonBytes(quotes)).toBeLessThanOrEqual(MAX_NAME_BYTES);
   });
 
   it('does not end a truncated value with a space', () => {

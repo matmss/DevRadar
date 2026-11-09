@@ -31,7 +31,9 @@ Three layers, one shared backend:
 - **Framework:** Express 5, no ORM abstraction beyond Mongoose itself.
 - **Data model:** single `Dev` collection (`backend/src/models/Dev.js`) —
   `name`, `github_username`, `bio`, `avatar_url`, `techs: [String]`, and a
-  GeoJSON `location` field with a `2dsphere` index for radius queries.
+  GeoJSON `location` field with a `2dsphere` index for radius queries, plus a
+  unique case-insensitive index on `github_username` (one dev per GitHub login,
+  see Authentication, "Registration identity and profile").
 - **Routes** (`backend/src/routes.js`):
   - `GET /devs` — list all devs (`DevController.index`)
   - `POST /devs` — register the signed-in dev (session token required, see
@@ -123,18 +125,36 @@ mobile sign-in also comes with slice 4.
   before (400 `{ error, details }`). An existing dev, matched case-insensitively (including a
   legacy profile created before sign-in in another letter case, US-8), is returned unchanged; a
   new one is created and pushed as `new-dev` as before.
+  - **One dev per login, also under concurrency** (QA-AUTH2-1): `Dev` has a unique index on
+    `github_username` with collation `{ locale: 'en', strength: 2 }` (`github_username_unique_ci`,
+    the same collation every query uses, `GITHUB_USERNAME_COLLATION` in `utils/githubUsername.js`).
+    `store` creates the dev with one atomic `findOneAndUpdate` upsert (`$setOnInsert`) under that
+    collation. If two inserts still race, the index rejects the loser with a duplicate-key error
+    (E11000), which is answered with the existing dev like any "already registered" request,
+    never a 500. Only the request that actually inserted pushes `new-dev`. `index.js` builds the
+    indexes at startup (`Dev.init()`); if legacy duplicates (same login in different letter
+    case) prevent the unique index, it logs an error and keeps running without the guarantee
+    until they are merged.
   - **Profile source:** the authenticated `GET /user` response read in the callback (product
     owner decision). It is sanitized and signed into the session token as the `profile` claim:
-    control, line/paragraph-separator and bidi-override characters become spaces, values are
-    trimmed (empty becomes `null`), `name` is cut to 255 and `bio` to 300 code points,
-    `avatar_url` is kept only if it is an absolute `https` URL without credentials (max 512),
-    and every other field is dropped. Verification rejects a `profile` claim that is not exactly
+    C0/C1 controls, line/paragraph separators and every Unicode Bidi_Control character
+    (U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069) become spaces; values are trimmed;
+    a value with nothing visible left (only whitespace, zero-width or other format/ignorable
+    characters) becomes `null`; `name` is cut to 100 code points and 200 bytes, `bio` to 160
+    code points and 400 bytes (bytes of the JSON-encoded UTF-8, so emoji and escaped quotes
+    count fully); `avatar_url` is kept only if it is an absolute `https` URL without
+    credentials, at most 300 bytes; every other field is dropped.
+  - **Token size:** with those caps the largest possible session token is about 1.5 KB (1461
+    bytes measured with a 39-character login and every field filled with the most expensive
+    characters; a typical one is about 340), well under the 2048-byte value limit of
+    `expo-secure-store` the mobile app relies on in slice 4. `unit/sessionToken.test.js` pins
+    it under 1600 bytes. Verification rejects a `profile` claim that is not exactly
     this shape, so it cannot carry anything the backend did not produce. A `null` name falls
     back to the login when the dev is created.
   - **Why claims in the token rather than a server-side record:** the token is already signed
     and verified on every request, so the profile reaches registration with no extra storage,
     no new collection and no cleanup, and it works across backend instances (unlike the
-    in-memory state/code stores). It adds about 200-500 bytes to a token that is only sent to
+    in-memory state/code stores). It adds at most about 1 KB to a token that is only sent to
     our own API. The profile is public GitHub data, so it being readable in the JWT exposes
     nothing new. The GitHub access token is still never stored or put in the token.
   - **Snapshot as of sign-in:** a name, avatar or bio changed on GitHub after sign-in only shows
@@ -188,10 +208,12 @@ mobile sign-in also comes with slice 4.
 - **API access:** `web/src/services/api.js`, reads `REACT_APP_API_URL`
   (CRA's required env var prefix) with a `localhost:3333` fallback for dev.
   An axios request interceptor adds `Authorization: Bearer <token>` when a
-  session exists; a response interceptor treats any 401 with code
-  `token_expired`, `token_invalid` or `token_missing` as the end of the
-  session (token cleared, signed-out view; "Sessão expirada, entre novamente"
-  for `token_expired`).
+  session exists and remembers which token each request carried. Every 401,
+  whatever its body (QA-AUTH2-4), ends the session: token cleared, signed-out
+  view, with "Sessão expirada, entre novamente" for `token_expired` and no
+  message for any other or missing `code` (e.g. a proxy's 401). The one
+  exception: a 401 for a token another tab has already replaced re-validates
+  the new token instead of clearing it.
 - Talks to the same `/devs` and `/search` endpoints as mobile, plus the
   `/auth/*` endpoints; no web-specific backend routes exist. Nothing secret is
   in the bundle: only `REACT_APP_API_URL`.
@@ -211,14 +233,37 @@ mobile sign-in also comes with slice 4.
   Nothing from the callback URL is used as a navigation target (the app always returns to `/`),
   and `reason` is only a lookup key for a fixed message, never rendered. A callback without a
   stored verifier (e.g. a link forwarded from another browser) fails without calling the
-  backend. Hosting the production build needs the usual SPA fallback so `/auth/callback`
-  serves `index.html` (the CRA dev server already does this).
+  backend.
+  **A callback that does not complete a sign-in never touches a stored session**
+  (QA-AUTH2-5): if a token is stored, the app ignores the failed callback and restores that
+  session as on any load; only a successful exchange replaces the token. This is the safer of
+  the two options: clearing the token instead would let anyone sign a user out by sending a
+  crafted `/auth/callback` link, and showing the signed-out view while keeping the token (the
+  old behavior) made people believe they were signed out on a shared computer.
+- **Deployment: SPA fallback required.** The production build is static files, and GitHub
+  sign-in returns to `<web origin>/auth/callback`. The web server must answer every unknown
+  path (at least `/auth/callback`) with `index.html`, e.g. nginx `try_files $uri /index.html`,
+  Netlify `/* /index.html 200`, or `serve -s build`. Without it the callback is a 404 and
+  sign-in cannot finish. The CRA dev server already does this. Also noted in
+  `web/.env.example`.
 - **Views:** signed out, only the sign-in button (plus a message after "Login cancelado", a
   failure, or an expired session; the button is also the retry). Signed in, the GitHub username
   and avatar (from `POST /auth/token`, then `GET /auth/me` on every load), "Sair", the
-  registration form without a username field, and the dev list. "Sair" clears the token and
-  shows the signed-out view; there is no server-side logout (tokens are stateless and expire
-  after 7 days).
+  registration form without a username field, and the dev list. "Salvar" is disabled while a
+  registration is in flight (QA-AUTH2-1). If the stored session cannot be checked (server
+  unreachable, or `GET /auth/me` answers 429), the token is kept and the app shows why ("Muitas
+  tentativas em pouco tempo, tente novamente mais tarde" for 429) with "Tentar novamente" and
+  "Sair", never a misleading "expired" or signed-out view.
+- **"Sair" only ends the session in this browser.** It removes the token from `localStorage`
+  (which also signs out the other tabs). There is no server-side logout or revocation: tokens
+  are stateless JWTs, so a copy of the token (e.g. taken by XSS before sign-out) stays valid
+  until it expires, up to 7 days after sign-in. Revoking sooner would need a server-side
+  denylist or a token version per user, which is out of scope (no refresh tokens, Q3).
+- **Several tabs** (QA-AUTH2-3): the token in `localStorage` is shared, but each tab only acts
+  for the token it validated. A `storage` event on `devradar.session_token` makes the other
+  tabs follow: token removed, signed-out view; token changed (another account signed in),
+  re-validate with `GET /auth/me` and show that user. Registering re-checks that the stored
+  token is still the one the tab shows, and re-validates instead of sending someone else's.
 - **Token storage** (`web/src/services/session.js`): `localStorage`
   (`devradar.session_token`), so the session survives reloads and tabs. Trade-off: any script on
   the origin can read it, so an XSS bug would leak a token that stays valid until it expires (no

@@ -142,6 +142,23 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
   - A callback link with a code this browser did not start (no PKCE verifier), or with extra parameters such as `redirect=//evil.example/`: not signed in, generic failure message, and the browser stays on the app's `/`.
 - **Automated:** `qa/web-tests/features/auth.feature`, `registration.feature` (expiry during use).
 
+## TC-025 — Concurrent registrations by the same user store one developer
+- **Requirement:** FR-1.3, US-3 (QA-AUTH2-1)
+- **Type:** Regression / Edge | **P1**
+- **Steps:** Signed in as `gaearon`, send 5 `POST /devs` at once (also: same login in two letter cases; and double-click "Salvar" on the web) with a socket watching the area.
+- **Expected result:** Every request answers 200 with the same dev; exactly one `gaearon` record exists (unique case-insensitive index + atomic upsert; a lost race answers the existing dev, not a 500); the socket receives exactly one `new-dev`.
+- **Automated:** `qa/backend-tests/features/auth-slice2-review.feature`, `registration.feature`, `realtime.feature`; `qa/web-tests/features/auth-review.feature`.
+
+## TC-026 (Web) — Sessions across tabs and odd session answers
+- **Requirement:** US-6 (QA-AUTH2-3/4/5)
+- **Type:** Edge | **P2**
+- **Steps / expected result:**
+  - Sign out in a second tab: the first tab shows the signed-out view. Sign in as another account in a second tab: the first tab never registers anyone but the user it shows.
+  - Any 401 from `GET /auth/me` or `POST /devs`, whatever its `code`: signed-out view (expired message only for `token_expired`).
+  - `GET /auth/me` answers 429: token kept, "Muitas tentativas em pouco tempo, tente novamente mais tarde", "Tentar novamente" and "Sair".
+  - A `/auth/callback` link opened while signed in: the stored session stays and is shown; the view always matches what is stored.
+- **Automated:** `qa/web-tests/features/auth-review.feature`, `auth.feature`.
+
 ## TC-017 (Mobile) — Map centers on current location
 - **Requirement:** FR-6.1
 - **Type:** Functional | **P2**
@@ -186,8 +203,8 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 | Requirement | Test Cases |
 |---|---|
 | FR-1 | TC-001, TC-002, TC-003, TC-004, TC-011, TC-012, TC-013 |
-| US-3 (auth) | TC-001, TC-002, TC-011, TC-012 |
-| US-6 (auth) | TC-015, TC-016, TC-023, TC-024 |
+| US-3 (auth) | TC-001, TC-002, TC-011, TC-012, TC-025 |
+| US-6 (auth) | TC-015, TC-016, TC-023, TC-024, TC-025, TC-026 |
 | FR-2 | TC-007 |
 | FR-3 | TC-008, TC-009, TC-010 |
 | FR-4 | TC-004, TC-005, TC-006, TC-019 |

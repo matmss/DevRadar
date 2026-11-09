@@ -80,6 +80,9 @@ test.describe('Register as the signed-in developer from the web app', () => {
 
 // == technical section ==
 
+test.beforeEach('BeforeEach Hooks', ({ $runScenarioHooks, context }) => $runScenarioHooks('before', { context }));
+test.afterEach('AfterEach Hooks', ({ $runScenarioHooks, context }) => $runScenarioHooks('after', { context }));
+
 test.use({
   $test: [({}, use) => use(test), { scope: 'test', box: true }],
   $uri: [({}, use) => use('features/registration.feature'), { scope: 'test', box: true }],
