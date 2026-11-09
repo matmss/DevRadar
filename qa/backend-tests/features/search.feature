@@ -23,3 +23,17 @@ Feature: Search developers by location and tech
   Scenario: Search with a tech nobody has returns an empty list
     When I search at latitude "-23.5505", longitude "-46.6333" for techs "COBOL"
     Then the response should contain exactly 0 developers
+
+  # BUG-011 (search side): missing/invalid params used to surface as a raw 500.
+  @regression @edge @P2
+  Scenario Outline: Search with missing or invalid params is rejected with 400
+    When I search at latitude "<latitude>", longitude "<longitude>" for techs "<techs>"
+    Then the response status should be 400
+
+    Examples:
+      | latitude | longitude | techs   |
+      | -23.5505 | -46.6333  |         |
+      |          | -46.6333  | ReactJS |
+      | abc      | -46.6333  | ReactJS |
+      | -23.5505 | 200       | ReactJS |
+

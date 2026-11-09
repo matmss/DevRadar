@@ -21,8 +21,8 @@ AfterAll(async function () {
 });
 
 Before(async function () {
-  // Fresh app + server per scenario so websocket in-memory `connections` state
-  // (see dev/backend/src/websocket.js) never leaks between scenarios.
+  // Fresh app + server per scenario. Note: websocket.js's `connections` array is module-level,
+  // so it is shared across scenarios; entries are removed when sockets disconnect (After hook).
   const { app, server } = createTestApp();
   this.app = app;
   this.server = server;

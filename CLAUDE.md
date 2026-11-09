@@ -80,9 +80,10 @@ mounted. Two routes only (`dev/backend/src/routes.js`):
   There is still no global Express error middleware, so other thrown errors get Express's default 500.
 - `GET /search` (`SearchController.index`) — Mongo `$near` geo query on the `Dev.location`
   `2dsphere` index (`dev/backend/src/models/Dev.js`), `$maxDistance: NEARBY_RADIUS_METERS`, filtered by
-  `techs: { $in: techsArray }`.
+  `techs: { $in: techsArray }`. Query params are validated (400 on missing/invalid).
 - `dev/backend/src/websocket.js` holds an in-memory `connections` array (id, coordinates, techs)
-  populated on socket `connection` handshake query params, and filters them with `isNearby()`.
+  populated on socket `connection` handshake query params (validated; invalid sockets are
+  disconnected, entries removed on `disconnect`, see BUG-010/011), and filters them with `isNearby()`.
   **The "nearby" radius lives in one place, `dev/backend/src/utils/nearby.js`**
   (`NEARBY_RADIUS_METERS`, `isNearby`), used by both `/search` and the websocket. `isNearby`
   mirrors MongoDB's `$maxDistance` exactly: inclusive (`<=`), and `calculateDistance` uses
