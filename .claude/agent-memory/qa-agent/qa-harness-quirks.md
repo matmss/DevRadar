@@ -12,5 +12,12 @@ Gotchas hit during the auth slice 1 review (2026-11-08):
 - qa is an npm workspace: supertest/nock/etc. live in `qa/node_modules`, not `qa/backend-tests/node_modules`. testApp.js uses qa's hoisted express, not dev/backend's.
 - Express 5's finalhandler calls `console.error(err)` in a setImmediate AFTER the response is sent, so console capture in a step must wait a tick or it falsely passes.
 
+Added during the auth slices 2+3 review (2026-11-08):
+
+- The Write tool turns `\uXXXX` escapes into raw characters (a `\u0000` became a NUL byte, U+2028 broke a regex literal). In files and probes, build special characters with `String.fromCodePoint(0x...)` or numeric ranges, never `\u` escapes; scan with a code-point script afterwards.
+- Bash refuses `git -C <dir>` and `for d in ...; sed $d` loops (it cannot prove they are not git). Use plain commands with literal paths.
+- Web suite: `npm test -- --reporter=list .features-gen/features/<name>.feature.spec.js` runs one generated file (pretest bddgen still runs). Failure page snapshots are in qa/web-tests/test-results/*/error-context.md (the ```yaml block). `test-results/.last-run.json` and `qa/reports/*` are tracked: `git checkout --` them before committing.
+- To fake a backend answer in Playwright (only when the real backend cannot produce it), page.route must also answer the CORS preflight (OPTIONS) and send Access-Control-Allow-Origin, or axios sees a network error and the test falsely passes through the "server unreachable" path.
+
 **Why:** each cost a wasted run or produced a false pass.
 **How to apply:** use this when writing backend probes or log-assertion steps; see [[auth-review-findings]] if it is ever written.
