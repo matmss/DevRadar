@@ -30,7 +30,7 @@ cp .env.example .env   # REACT_APP_API_URL, defaults to http://localhost:3333
 npm install
 npm start                # CRA dev server, port 3000
 npm run build
-npm test                  # CRA/Jest unit tests (none currently written beyond CRA's default)
+npm test                  # CRA/Jest unit tests (services/*.test.js), not run in CI
 ```
 
 ### Mobile (`dev/mobile/`)
@@ -38,6 +38,7 @@ npm test                  # CRA/Jest unit tests (none currently written beyond C
 cp .env.example .env   # EXPO_PUBLIC_API_URL, defaults to http://localhost:3333
 npm install
 npm start                # expo start
+npm test                 # Jest unit tests in dev/tests/mobile/ (not run in CI)
 npm run android / ios / web
 ```
 `dev/mobile/android` was generated via `expo prebuild` (Expo SDK 57) and is checked in.
@@ -59,6 +60,7 @@ cd qa/backend-tests && npx cucumber-js --tags '@smoke'
 cd qa/backend-tests && npm run unit              # plain Jest: calculateDistance, parseStringAsArray
 cd qa/web-tests && npx bddgen && npx playwright test --grep @smoke
 cd qa/mobile-tests && npm run maestro            # maestro test maestro/ — no simulator needed
+cd qa/mobile-tests && npm run unit               # QA mobile unit tests (uses dev/mobile's Jest; npm install there first)
 ```
 `run-all-tests.sh` accepts `TAGS="@smoke" ./run-all-tests.sh` and `RUN_MOBILE=true` (mobile
 is opt-in since it needs a simulator/emulator or the Maestro CLI).
@@ -81,8 +83,9 @@ Routes (`dev/backend/src/routes.js`):
   (`code` + `code_verifier`) → 7-day HS256 JWT. `GET /auth/me` is behind `requireAuth`
   (`middleware/auth.js`; 401 codes `token_missing`/`token_expired`/`token_invalid`). State,
   codes and rate-limit counters are in memory (single instance). Env: see `dev/backend/.env.example`.
-  **As of auth slices 2+3, `POST /devs` requires a token; `GET /devs`, `/search` and the socket are
-  still public until slice 4.** The JWT carries a sanitized, size-capped `profile` claim
+  **As of auth slice 4, every dev-facing surface requires a token: `POST /devs`, `GET /devs`,
+  `GET /search` and the Socket.io handshake** (only `/auth/*` is public). Backend and web tests
+  must sign in first (use the harnesses' test sign-in helpers). The JWT carries a sanitized, size-capped `profile` claim
   (`utils/githubProfile.js`; keep tokens well under 2048 bytes, the `expo-secure-store` limit).
 
 - `POST /devs` (`DevController.store`, behind `requireAuth`) — registers **the signed-in user**:
@@ -95,12 +98,20 @@ Routes (`dev/backend/src/routes.js`):
   request that created the dev pushes `new-dev` (`websocket.findConnections()` + `sendMessage()`)
   to nearby, tech-matching sockets. An already registered user gets their dev back unchanged.
   If legacy case-duplicates block the index build, `index.js` logs it and keeps running.
+- `GET /devs` and `GET /search` are behind `requireAuth` (auth is checked before query params, so
+  anonymous calls get 401, not 400).
 - `GET /search` (`SearchController.index`) — Mongo `$near` geo query on the `Dev.location`
   `2dsphere` index (`dev/backend/src/models/Dev.js`), `$maxDistance: NEARBY_RADIUS_METERS`, filtered by
   `techs: { $in: techsArray }`. Query params are validated (400 on missing/invalid).
-- `dev/backend/src/websocket.js` holds an in-memory `connections` array (id, coordinates, techs)
-  populated on socket `connection` handshake query params (validated; invalid sockets are
-  disconnected, entries removed on `disconnect`, see BUG-010/011), and filters them with `isNearby()`.
+- `dev/backend/src/websocket.js`: an `io.use` middleware authenticates and validates every
+  handshake. The token is read **only** from `socket.handshake.auth.token` (never the query
+  string); lat/long/techs come from the handshake query. Any refusal is a `connect_error` with
+  `err.data = { code, details }` (`token_missing`, `token_expired`, `token_invalid`,
+  `subscription_invalid`, `internal_error`) — this replaced the old `subscription-error` event.
+  A refused socket never reaches `connection`, so it is never added to the in-memory
+  `connections` array (id, coordinates, techs); entries are removed on `disconnect`
+  (BUG-010/011). The token is checked on connect only (Q6), `connectTimeout` is 10 s, and
+  CORS `allowRequest` runs before the middleware. Matching uses `isNearby()`.
   **The "nearby" radius lives in one place, `dev/backend/src/utils/nearby.js`**
   (`NEARBY_RADIUS_METERS`, `isNearby`), used by both `/search` and the websocket. `isNearby`
   mirrors MongoDB's `$maxDistance` exactly: inclusive (`<=`), and `calculateDistance` uses
@@ -117,9 +128,20 @@ Routes (`dev/backend/src/routes.js`):
   `/devs` — no map. Every 401 signs out. A deployed build needs an SPA fallback so
   `/auth/callback` serves `index.html` (see `dev/web/.env.example`). "Sair" is local only: tokens
   can't be revoked server-side.
+- `dev/mobile/`: `SessionContext.js` gates the app — no session shows `pages/SignIn.js`
+  ("Entrar com GitHub": PKCE via `expo-crypto` + `expo-web-browser` `openAuthSessionAsync`
+  against the backend flow, `services/auth.js`); an unreachable backend shows
+  `pages/SessionUnavailable.js`. The token lives in **`expo-secure-store`** (`services/session.js`),
+  never AsyncStorage. The app scheme is **`com.matmss.mobile`** (must match `app.json`,
+  `src/config.js`, the Android intent filter and the backend `MOBILE_APP_SCHEME`;
+  `dev/tests/mobile/config.test.js` checks this). Expo Go can't finish sign-in (`exp://` is refused);
+  use a development build. Any 401 or socket auth refusal for the *current* token returns to
+  sign-in; failures for a stale or null token are ignored.
 - `dev/mobile/src/pages/Main.js` is the map experience: `expo-location` for device position →
-  `GET /search` → renders `react-native-maps` markers → opens a Socket.io connection scoped
-  to the current map region (`services/socket.js`) to receive live `new-dev` pushes.
+  `GET /search` (Bearer token) → renders `react-native-maps` markers → opens a Socket.io connection
+  scoped to the current map region (`services/socket.js`, token in the handshake `auth` payload)
+  to receive live `new-dev` pushes. It only connects if still mounted and the token the search
+  used is still the session's (QA-AUTH4-1).
   `dev/mobile/src/pages/Profile.js` is just a `WebView` pointed at the dev's GitHub profile URL —
   there's no native profile screen.
 - Both web and mobile read their backend URL from an env var with a `localhost:3333`
@@ -158,7 +180,8 @@ rather than a single cross-language framework:
   was reverse-engineered from the code (there's no separate product spec), so treat it as
   descriptive, not aspirational.
 - Known **open** issues worth checking before you "fix" related behavior yourself:
-  BUG-006 (GitHub sign-in in progress, delivered in slices per `dev/docs/03-auth-spec.md`. CORS is already
+  BUG-006 (GitHub sign-in in progress, delivered in slices per `dev/docs/03-auth-spec.md`; slices 1-4 done,
+  slice 5 = `PUT`/`DELETE /devs/me` + `dev-updated`, slice 6 = legacy profiles. CORS is already
   restricted: browser origins must be in `CORS_ORIGINS`, see `dev/backend/src/config/cors.js`,
   which both Express and Socket.io use. Requests with no `Origin`, like the native mobile app,
   are unaffected. If you add a web client origin, add it there), BUG-008 (`update`/`destroy` are stubbed/commented out in `SearchController`,
