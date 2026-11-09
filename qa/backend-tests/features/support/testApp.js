@@ -21,6 +21,9 @@ const routes = require('../../../../dev/backend/src/routes');
 const { setupWebsocket } = require('../../../../dev/backend/src/websocket');
 const { corsOptions } = require('../../../../dev/backend/src/config/cors');
 
+// index.js's boot-time assertAuthConfig() is deliberately not mirrored: it is a no-op outside
+// NODE_ENV=production, and features/support/auth-config.js sets the auth env for scenarios.
+// The /auth/* routes and their rate limiter come in through routes.js like everything else.
 function createTestApp() {
   const app = express();
   const server = http.Server(app);

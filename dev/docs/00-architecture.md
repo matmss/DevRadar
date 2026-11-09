@@ -49,6 +49,53 @@ Three layers, one shared backend:
   both production load and why `qa/backend-tests` mocks it with `nock`
   rather than hitting the real API.
 
+## Authentication
+
+GitHub sign-in, per `dev/docs/03-auth-spec.md`. **Slice 1 status:** the auth endpoints and
+the `requireAuth` middleware exist, but only `GET /auth/me` uses it; `/devs`, `/search` and
+the socket are still public until slices 2 and 4.
+
+- **Flow** (`backend/src/controllers/AuthController.js`, routes in `routes.js`):
+  1. `GET /auth/github?redirect=<client url>`: checks `redirect` against the allow-list
+     (`utils/redirectAllowList.js`: any path on a `CORS_ORIGINS` origin, or the
+     `MOBILE_APP_SCHEME` custom scheme), stores a random single-use `state` (10 min), and
+     redirects 302 to GitHub's authorize URL with no `scope` (public profile only).
+  2. `GET /auth/github/callback?code&state`: consumes the `state` (missing/unknown/expired/
+     reused gives 400), exchanges `code` at GitHub, reads `GET https://api.github.com/user`,
+     drops the GitHub access token, and redirects 302 to `<redirect>?code=<one-time code>`.
+     `error=access_denied` redirects to `<redirect>?error=sign_in_cancelled` instead.
+  3. `POST /auth/token` `{ code }`: trades the one-time code (single use, 60 s) for
+     `{ token, token_type: "Bearer", expires_in, user: { github_username, name, avatar_url } }`.
+     The session token never appears in a URL.
+  4. `GET /auth/me` (Bearer token): `{ github_username }`.
+- **Session token** (`utils/sessionToken.js`): HS256 JWT signed with `JWT_SECRET`,
+  `sub` = GitHub login, `iss` = `devradar`, `exp` = 7 days, no refresh token.
+  `verifySessionToken(token)` never throws and is exported for the Socket.io handshake
+  (also re-exported as `verifyToken` from `middleware/auth.js`).
+- **`requireAuth`** (`middleware/auth.js`): reads `Authorization: Bearer <token>`, sets
+  `req.user = { github_username }`, or answers 401 with a `WWW-Authenticate` header and
+  `{ error, code, details }`. Clients switch on `code`:
+  `token_missing`, `token_expired` (show "Session expired, sign in again"), `token_invalid`.
+  The signature is checked before expiry, so a forged expired token is `token_invalid`.
+- **Other error codes** on `/auth/*`: `redirect_invalid`, `state_missing`, `state_invalid`,
+  `github_code_missing`, `code_missing`, `code_invalid` (400); `github_error`,
+  `github_unavailable` (502); `github_rate_limited`, `not_configured` (503);
+  `rate_limited` (429).
+- **Rate limit** (`middleware/rateLimit.js`, `express-rate-limit`): `AUTH_RATE_LIMIT_MAX`
+  requests (default 60) per IP per 15 minutes across all `/auth/*` routes.
+- **Config** (`config/auth.js`, read from env on each use): `GITHUB_CLIENT_ID`,
+  `GITHUB_CLIENT_SECRET`, `GITHUB_CALLBACK_URL` (default
+  `http://localhost:3333/auth/github/callback`), `JWT_SECRET`, `MOBILE_APP_SCHEME` (default
+  `devradar`). With `NODE_ENV=production`, `index.js` refuses to start unless the client id,
+  client secret and a `JWT_SECRET` of at least 32 characters are set. Outside production a
+  missing `JWT_SECRET` falls back to a random per-process secret (sessions reset on restart),
+  and `GET /auth/github` answers 503 until the GitHub credentials are set. Secrets and tokens
+  are never logged or returned.
+- **Single-instance limitation:** the `state` store, the one-time code store
+  (`utils/oneTimeStore.js`) and the rate-limit counters live in process memory. Running more
+  than one backend instance needs sticky sessions or a shared store (e.g. Redis) first. Behind
+  a reverse proxy, configure Express `trust proxy` or every client shares one rate-limit key.
+
 ## Web (`web/`)
 
 - **Framework:** Create React App.
@@ -85,10 +132,9 @@ Three layers, one shared backend:
 
 ## Known architectural constraints worth designing around
 
-- **No auth layer.** Any client can register a dev as anyone (no
+- **Auth not enforced yet.** GitHub sign-in exists (see Authentication),
+  but until slice 2 any client can still register a dev as anyone (no
   verification that the submitter owns the `github_username` claimed).
-  Fine for the current scope; flag before this goes anywhere near
-  production data.
 - **Unauthenticated GitHub API calls.** Rate-limited at 60/hr per backend
   IP. A `GITHUB_TOKEN` env var + authenticated requests would raise this to
   5,000/hr if registration volume ever becomes a bottleneck.

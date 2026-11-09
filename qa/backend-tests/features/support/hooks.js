@@ -6,6 +6,8 @@ const mongoose = require('../../../../dev/backend/node_modules/mongoose');
 const nock = require('nock');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const { createTestApp } = require('./testApp');
+const { applyTestAuthEnv } = require('./auth-config');
+const { resetAuthRateLimit } = require('../../../../dev/backend/src/middleware/rateLimit');
 
 let mongod;
 
@@ -33,6 +35,11 @@ Before(async function () {
   for (const key of Object.keys(collections)) {
     await collections[key].deleteMany({});
   }
+
+  // Auth env is reset per scenario (a scenario may lower AUTH_RATE_LIMIT_MAX), and the /auth
+  // rate limiter is a module-level singleton, so its counts would otherwise carry over.
+  applyTestAuthEnv();
+  await resetAuthRateLimit();
 
   nock.cleanAll();
   nock.disableNetConnect();

@@ -70,7 +70,7 @@ separate layer testing user-facing scenarios — see
 
 | Layer   | File               | Var                   |
 |---------|--------------------|------------------------|
-| backend | `backend/.env`     | `MONGO_URI`, `PORT`, `CORS_ORIGINS` |
+| backend | `backend/.env`     | `MONGO_URI`, `PORT`, `CORS_ORIGINS`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_CALLBACK_URL`, `JWT_SECRET`, `MOBILE_APP_SCHEME`, `AUTH_RATE_LIMIT_MAX` (see `00-architecture.md`, Authentication) |
 | web     | `web/.env`         | `REACT_APP_API_URL`   |
 | mobile  | `mobile/.env`      | `EXPO_PUBLIC_API_URL` |
 
