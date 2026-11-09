@@ -27,3 +27,23 @@ Feature: Real-time propagation of new developers via WebSocket
     And a client "mismatched-watcher" is connected via WebSocket at latitude "-23.5505", longitude "-46.6333" watching techs "Python"
     When I submit a registration with github_username "gaearon", techs "ReactJS", latitude "-23.5505" and longitude "-46.6333"
     Then client "mismatched-watcher" should not receive a "new-dev" event within 2 seconds
+
+  # BUG-010: closed sockets must leave the in-memory subscription list.
+  @integration @regression @P2
+  Scenario: A disconnected client is removed from live subscriptions
+    Given a client "leaver" is connected via WebSocket at latitude "1.2345", longitude "2.3456" watching techs "Elixir"
+    Then there should be 1 live subscription near latitude "1.2345", longitude "2.3456" for techs "Elixir"
+    When client "leaver" disconnects
+    Then there should be 0 live subscriptions near latitude "1.2345", longitude "2.3456" for techs "Elixir"
+
+  # BUG-011: a handshake without query params used to throw inside the connection
+  # listener and crash the whole backend process.
+  @integration @regression @edge @P1
+  Scenario: A client connecting without subscription params is rejected and the server keeps running
+    Given "gaearon" is a valid GitHub username
+    When a client connects via WebSocket without query params
+    Then that client should be disconnected by the server
+    And a client "watcher" is connected via WebSocket at latitude "-23.5505", longitude "-46.6333" watching techs "ReactJS"
+    When I submit a registration with github_username "gaearon", techs "ReactJS", latitude "-23.5505" and longitude "-46.6333"
+    Then client "watcher" should receive a "new-dev" event within 2 seconds
+
