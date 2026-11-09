@@ -13,6 +13,7 @@ const {
   mockGithubOAuthTokenExchangeFailure,
   mockGithubAuthenticatedUser,
   mockGithubAuthenticatedUserFailure,
+  githubUserFixture,
 } = require('../support/github-mock');
 
 const GITHUB_ACCESS_TOKEN = 'gho_test_access_token_must_never_leak';
@@ -109,17 +110,43 @@ Given(
   }
 );
 
-Given('I completed GitHub sign-in as {string}', async function (username) {
+async function completeSignIn(world, username, profileOverrides = {}) {
   mockGithubOAuthTokenExchange('good-code', GITHUB_ACCESS_TOKEN);
-  mockGithubAuthenticatedUser(GITHUB_ACCESS_TOKEN, username);
-  await startSignIn(this, 'http://localhost:3000/');
-  await callBack(this, { code: 'good-code', state: this.authState });
-  this.oneTimeCode = oneTimeCodeFrom(this.response);
-  expect(this.oneTimeCode, 'sign-in should have produced a one-time code').to.be.a('string').that.is.not.empty;
+  mockGithubAuthenticatedUser(GITHUB_ACCESS_TOKEN, username, profileOverrides);
+  await startSignIn(world, 'http://localhost:3000/');
+  await callBack(world, { code: 'good-code', state: world.authState });
+  world.oneTimeCode = oneTimeCodeFrom(world.response);
+  expect(world.oneTimeCode, 'sign-in should have produced a one-time code').to.be.a('string').that.is.not.empty;
+}
+
+/** Full OAuth sign-in (mocked GitHub) plus the PKCE token exchange; leaves world.sessionToken set. */
+async function signInThroughGithub(world, username, profileOverrides) {
+  await completeSignIn(world, username, profileOverrides);
+  await exchangeOneTimeCode(world, { code_verifier: world.pkceVerifier });
+  expect(world.response.status, 'token exchange should succeed').to.equal(200);
+  expect(world.sessionToken, 'token exchange should issue a session token').to.be.a('string').that.is.not.empty;
+}
+
+Given('I completed GitHub sign-in as {string}', async function (username) {
+  await completeSignIn(this, username);
+});
+
+Given('I signed in through GitHub as {string}', async function (username) {
+  await signInThroughGithub(this, username);
+});
+
+// `value` takes JSON string escapes (e.g. "\u0007" or "\u202e"), and "<null>" means null.
+Given('I signed in through GitHub as {string} whose GitHub {word} is {string}', async function (username, field, value) {
+  const parsed = value === '<null>' ? null : JSON.parse(`"${value}"`);
+  await signInThroughGithub(this, username, { [field]: parsed });
+});
+
+Given('I signed in through GitHub as {string} whose GitHub bio is {int} characters long', async function (username, length) {
+  await signInThroughGithub(this, username, { bio: 'b'.repeat(length) });
 });
 
 Given('I have a valid session token for {string}', function (username) {
-  this.sessionToken = signSessionToken(username).token;
+  this.sessionToken = signSessionToken(username, githubUserFixture(username)).token;
 });
 
 Given('I have a session token for {string} that expired {int} hour(s) ago', function (username, hours) {
@@ -159,6 +186,13 @@ Given('I have a {word} session token', function (kind) {
     this.sessionToken = `${base64UrlJson({ alg: 'none', typ: 'JWT' })}.${base64UrlJson(claims)}.`;
   } else if (kind === 'malformed') {
     this.sessionToken = 'not-a-jwt';
+  } else if (kind === 'profile-less') {
+    // Correctly signed but without the `profile` claim, like the tokens slice 1 issued.
+    this.sessionToken = jwt.sign(claims, TEST_JWT_SECRET, { algorithm: 'HS256' });
+  } else if (kind === 'forged-profile') {
+    // Correctly signed, but the profile claim is not what the backend would have signed.
+    const profile = { name: 'Eve', avatar_url: 'javascript:alert(1)', bio: null };
+    this.sessionToken = jwt.sign({ ...claims, profile }, TEST_JWT_SECRET, { algorithm: 'HS256' });
   } else {
     throw new Error(`Unknown token kind: ${kind}`);
   }
@@ -413,7 +447,18 @@ Then("the backend should have called GitHub's token and user endpoints", functio
 });
 
 Then('the signed-in identity should be {string}', function (username) {
-  expect(this.response.body).to.deep.equal({ github_username: username });
+  expect(this.response.body.github_username).to.equal(username);
+});
+
+Then("the signed-in user should have the name and avatar_url of {string}'s GitHub profile", function (username) {
+  const { name, avatar_url } = githubUserFixture(username);
+  expect(this.response.body).to.deep.equal({ github_username: username, name, avatar_url });
+});
+
+Then("the session token should carry {string}'s GitHub profile from sign-in", function (username) {
+  const { name, avatar_url, bio } = githubUserFixture(username);
+  const claims = decodeJwtPart(this.response.body.token.split('.')[1]);
+  expect(claims.profile).to.deep.equal({ name, avatar_url, bio });
 });
 
 Then('the response should be an auth error with code {string}', function (code) {

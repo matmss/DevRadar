@@ -3,8 +3,9 @@ Feature: GitHub sign-in and session tokens (US-1, US-2; BUG-006 auth part)
   I want to sign in with my GitHub account and get a DevRadar session token
   So that the API knows who I am without trusting a username I type
 
-  # Spec: dev/docs/03-auth-spec.md. Slice 1: the auth endpoints exist, only GET /auth/me is
-  # protected. GitHub's OAuth endpoints are mocked with nock (features/support/github-mock.js).
+  # Spec: dev/docs/03-auth-spec.md. GET /auth/me and POST /devs (registration.feature) require
+  # a session token; the reads follow in slice 4. The token carries the GitHub profile read at
+  # sign-in. GitHub's OAuth endpoints are mocked with nock (features/support/github-mock.js).
   # The backend runs with GITHUB_CLIENT_ID "test-client-id" and the default callback URL
   # (features/support/auth-config.js). Allowed redirects: the CORS origins + "devradar://".
   # Every sign-in uses PKCE (RFC 7636, S256): "I start GitHub sign-in" sends the challenge of a
@@ -103,10 +104,12 @@ Feature: GitHub sign-in and session tokens (US-1, US-2; BUG-006 auth part)
     And the response should contain a Bearer session token for "gaearon" valid for 7 days
     And the response should not contain the GitHub access token
     And the backend should have called GitHub's token and user endpoints
+    And the session token should carry "gaearon"'s GitHub profile from sign-in
     And no developer should be persisted
     When I call GET /auth/me with the session token
     Then the response status should be 200
     And the signed-in identity should be "gaearon"
+    And the signed-in user should have the name and avatar_url of "gaearon"'s GitHub profile
 
   @regression @P2
   Scenario: The redirect keeps the client's own query parameters
@@ -329,11 +332,23 @@ Feature: GitHub sign-in and session tokens (US-1, US-2; BUG-006 auth part)
       # tampered: subject changed to "bob", original signature kept
       # foreign-signed: signed with a secret other than JWT_SECRET
       # alg-none: unsigned token with header alg "none"
+      # profile-less: correctly signed, no sign-in profile claim (tokens issued by slice 1)
+      # forged-profile: correctly signed, profile claim not in the shape the backend signs
       | kind           |
       | tampered       |
       | foreign-signed |
       | alg-none       |
       | malformed      |
+      | profile-less   |
+      | forged-profile |
+
+  @regression @P1
+  Scenario: GET /auth/me returns the name and avatar captured at sign-in, without calling GitHub
+    Given I have a valid session token for "gaearon"
+    When I call GET /auth/me with the session token
+    Then the response status should be 200
+    And the signed-in user should have the name and avatar_url of "gaearon"'s GitHub profile
+    And no call should have been made to GitHub's public users API
 
   @edge @regression @P2
   Scenario: An expired token that was also tampered with is "invalid", not "expired"
@@ -344,9 +359,12 @@ Feature: GitHub sign-in and session tokens (US-1, US-2; BUG-006 auth part)
 
   # --- Slice 1 scope and non-functional -----------------------------------------------------
 
+  # Slice 2 protects POST /devs (registration.feature); the reads follow in slice 4.
   @regression @P1
-  Scenario: Existing routes are not protected yet in slice 1
+  Scenario: Reads are not protected yet
     When I request the list of all developers
+    Then the response status should be 200
+    When I search at latitude "-23.5505", longitude "-46.6333" for techs "ReactJS"
     Then the response status should be 200
 
   # Two limiters per IP per 15 min: sign-in (AUTH_RATE_LIMIT_MAX, default 60) for

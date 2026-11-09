@@ -8,13 +8,14 @@ const { signInRateLimiter, sessionRateLimiter } = require('./middleware/rateLimi
 
 const routes = Router();
 
+// Registration needs a session token: the dev is the signed-in GitHub login (US-3). Reads
+// (GET /devs, GET /search, the socket) stay public until slice 4 of dev/docs/03-auth-spec.md.
 routes.get('/devs', DevController.index);
-routes.post('/devs', DevController.store);
+routes.post('/devs', requireAuth, DevController.store);
 
 routes.get('/search', SearchController.index);
 
-// GitHub sign-in (dev/docs/03-auth-spec.md). Public and rate limited. Slice 1: /auth/me is the
-// only route that requires a session token; /devs and /search are not protected yet.
+// GitHub sign-in (dev/docs/03-auth-spec.md). Public and rate limited.
 routes.get('/auth/github', signInRateLimiter, AuthController.start);
 routes.get('/auth/github/callback', signInRateLimiter, AuthController.callback);
 routes.post('/auth/token', signInRateLimiter, AuthController.token);

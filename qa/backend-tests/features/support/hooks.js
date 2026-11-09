@@ -7,6 +7,7 @@ const nock = require('nock');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const { createTestApp } = require('./testApp');
 const { applyTestAuthEnv } = require('./auth-config');
+const { watchGithubUsersApi } = require('./github-mock');
 const { resetAuthRateLimit } = require('../../../../dev/backend/src/middleware/rateLimit');
 
 let mongod;
@@ -45,6 +46,19 @@ Before(async function () {
   nock.cleanAll();
   nock.disableNetConnect();
   nock.enableNetConnect('127.0.0.1'); // allow supertest/socket.io-client local traffic
+
+  // The backend must never call GitHub's public users API (registration uses the profile
+  // captured at sign-in). Recorded for every scenario; the After hook fails on any call.
+  this.githubUsersApi = watchGithubUsersApi();
+});
+
+After(function () {
+  if (!this.githubUsersApi) return;
+  this.githubUsersApi.stop();
+  const { calls } = this.githubUsersApi;
+  if (calls.length > 0) {
+    throw new Error(`The backend called GitHub's public users API: ${calls.join(', ')}`);
+  }
 });
 
 After(async function () {

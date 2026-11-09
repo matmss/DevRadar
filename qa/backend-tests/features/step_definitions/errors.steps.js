@@ -11,13 +11,20 @@ After(function () {
   Dev.find = realDevFind;
 });
 
+// Sends the session token when a previous step signed in, like registration.steps.js.
+function rawRegistration(world, body) {
+  const req = request(world.app).post('/devs').set('Content-Type', 'application/json');
+  if (world.sessionToken) req.set('Authorization', `Bearer ${world.sessionToken}`);
+  return req.send(body);
+}
+
 When('I send the raw registration body {string}', async function (body) {
-  this.response = await request(this.app).post('/devs').set('Content-Type', 'application/json').send(body);
+  this.response = await rawRegistration(this, body);
 });
 
 When('I send the raw registration body an oversized JSON payload', async function () {
-  const body = JSON.stringify({ github_username: 'gaearon', bio: 'a'.repeat(200 * 1024) }); // limit is 100kb
-  this.response = await request(this.app).post('/devs').set('Content-Type', 'application/json').send(body);
+  const body = JSON.stringify({ techs: 'ReactJS', bio: 'a'.repeat(200 * 1024) }); // limit is 100kb
+  this.response = await rawRegistration(this, body);
 });
 
 Given('the database fails when listing developers', function () {

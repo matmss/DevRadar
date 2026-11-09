@@ -13,46 +13,62 @@ const FIXTURES = {
     avatar_url: 'https://avatars.githubusercontent.com/u/1?v=4',
     bio: 'Test fixture',
   },
+  alice: {
+    login: 'alice',
+    name: 'Alice Liddell',
+    avatar_url: 'https://avatars.githubusercontent.com/u/2?v=4',
+    bio: 'Down the rabbit hole',
+  },
 };
 
-/** Stubs GET https://api.github.com/users/:username for a known fixture username. */
-function mockGithubUser(username, overrides = {}) {
-  const fixture = FIXTURES[username] || {
+/**
+ * The GET https://api.github.com/user response for a fixture user. Unknown names get a generated
+ * fixture with `name: null`, so DevController's fallback to the login applies.
+ * @param {string} username
+ * @returns {{ login: string, name: string | null, avatar_url: string, bio: string }}
+ */
+function githubUserFixture(username) {
+  return FIXTURES[username] || {
     login: username,
-    name: null, // DevController falls back to `login` per FR-1.2 when name is absent
-    avatar_url: `https://avatars.githubusercontent.com/u/0?v=4`,
+    name: null,
+    avatar_url: 'https://avatars.githubusercontent.com/u/0?v=4',
     bio: 'Auto-generated fixture bio',
   };
-
-  nock('https://api.github.com')
-    .get(`/users/${username}`)
-    .reply(200, { ...fixture, ...overrides });
 }
 
-/** Stubs a 404, as real GitHub would return for an unknown username (see OI-1 / BUG-004). */
-function mockGithubUserNotFound(username) {
-  nock('https://api.github.com').get(`/users/${username}`).reply(404, { message: 'Not Found' });
-}
+// --- GitHub's public users API (must never be called) ---------------------------------------
+// Registration builds a dev from the profile captured at sign-in, so nothing may call
+// GET https://api.github.com/users/:username any more. hooks.js makes nock strict and no
+// scenario mocks that path, so such a call fails the request; this also records it, so
+// scenarios (and the After hook) can assert there were none instead of relying on the call's
+// error path. nock emits "no match" for every unmocked request, with the request or its options.
+const USERS_PATH = /^\/users(\/|\?|$)/;
 
-/** Stubs GitHub's rate-limit response: 403 with x-ratelimit-remaining: 0, or 429. */
-function mockGithubRateLimited(username, status = 403) {
-  nock('https://api.github.com')
-    .get(`/users/${username}`)
-    .reply(status, { message: 'API rate limit exceeded' }, { 'x-ratelimit-remaining': '0' });
-}
+/**
+ * Starts recording calls to https://api.github.com/users/*. Call `stop()` when the scenario ends.
+ * @returns {{ calls: string[], stop: () => void }}
+ */
+function watchGithubUsersApi() {
+  const calls = [];
 
-/** Stubs a 403 that is NOT a rate limit (e.g. abuse detection): quota still remaining. */
-function mockGithubForbidden(username) {
-  nock('https://api.github.com')
-    .get(`/users/${username}`)
-    .reply(403, { message: 'Forbidden' }, { 'x-ratelimit-remaining': '42' });
-}
+  // nock emits either (options), or (req, options, body) when other api.github.com mocks exist
+  // (e.g. GET /user during sign-in), and that `req` carries no host: check every argument.
+  const onNoMatch = (...args) => {
+    const hit = args.find((arg) => {
+      if (!arg || typeof arg !== 'object') return false;
+      const host = String(arg.hostname || arg.host || '');
+      return host.startsWith('api.github.com') && USERS_PATH.test(String(arg.path || ''));
+    });
+    if (hit) calls.push(String(hit.path));
+  };
+  nock.emitter.on('no match', onNoMatch);
 
-/** Simulates a network-level failure (DNS/connection error) reaching GitHub. */
-function mockGithubUnreachable(username) {
-  nock('https://api.github.com')
-    .get(`/users/${username}`)
-    .replyWithError({ code: 'ECONNREFUSED', message: 'connect ECONNREFUSED' });
+  return {
+    calls,
+    stop() {
+      nock.emitter.removeListener('no match', onNoMatch);
+    },
+  };
 }
 
 // --- GitHub OAuth web flow (dev/docs/03-auth-spec.md, US-1) ---------------------------------
@@ -97,17 +113,14 @@ function mockGithubOAuthTokenExchangeFailure(kind) {
   }
 }
 
-/** Stubs GET https://api.github.com/user, answering only for `Authorization: Bearer <accessToken>`. */
-function mockGithubAuthenticatedUser(accessToken, username) {
-  const fixture = FIXTURES[username] || {
-    login: username,
-    name: null,
-    avatar_url: 'https://avatars.githubusercontent.com/u/0?v=4',
-    bio: 'Auto-generated fixture bio',
-  };
+/**
+ * Stubs GET https://api.github.com/user, answering only for `Authorization: Bearer <accessToken>`.
+ * `overrides` replace fixture fields (e.g. a hostile bio).
+ */
+function mockGithubAuthenticatedUser(accessToken, username, overrides = {}) {
   nock('https://api.github.com', { reqheaders: { authorization: `Bearer ${accessToken}` } })
     .get('/user')
-    .reply(200, fixture);
+    .reply(200, { ...githubUserFixture(username), ...overrides });
 }
 
 /** Stubs a failing GET https://api.github.com/user. `kind`: "unauthorized" (401) or "rate limited". */
@@ -128,10 +141,7 @@ module.exports = {
   mockGithubOAuthTokenExchangeFailure,
   mockGithubAuthenticatedUser,
   mockGithubAuthenticatedUserFailure,
-  mockGithubUser,
-  mockGithubUserNotFound,
-  mockGithubRateLimited,
-  mockGithubForbidden,
-  mockGithubUnreachable,
+  githubUserFixture,
+  watchGithubUsersApi,
   FIXTURES,
 };

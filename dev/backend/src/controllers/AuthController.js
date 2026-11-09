@@ -7,10 +7,12 @@
 //        -> 302 to <client url>?error=sign_in_cancelled on access_denied
 //        -> 302 to <client url>?error=sign_in_failed&reason=<code> on any other failure
 //   3. POST /auth/token { code, code_verifier } -> { token, token_type, expires_in, user }
-//   4. GET /auth/me (Bearer token) -> { github_username }
+//   4. GET /auth/me (Bearer token) -> { github_username, name, avatar_url }
 // The session token never appears in a URL, the one-time code is only redeemable with the
 // verifier of the client that started sign-in, and the GitHub access token is used once to
-// read the identity, then dropped (never stored, logged or returned).
+// read the identity and public profile, then dropped (never stored, logged or returned). The
+// profile (name, avatar_url, bio) is signed into the session token as a snapshot as of sign-in;
+// POST /devs registers new devs from it (utils/githubProfile.js).
 //
 // JSON error bodies: { error, code, details }. See dev/docs/00-architecture.md for every code.
 const { createOneTimeStore } = require('../utils/oneTimeStore');
@@ -32,7 +34,7 @@ const SIGN_IN_FAILED = 'sign_in_failed';
 
 // In-memory, per process: see the multi-instance note in utils/oneTimeStore.js.
 // stateStore payload:      { redirect, codeChallenge }
-// signInCodeStore payload: { user: { github_username, name, avatar_url }, codeChallenge }
+// signInCodeStore payload: { githubUsername, profile: { name, avatar_url, bio }, codeChallenge }
 const stateStore = createOneTimeStore({ ttlMs: STATE_TTL_MS });
 const signInCodeStore = createOneTimeStore({ ttlMs: SIGN_IN_CODE_TTL_MS });
 
@@ -70,6 +72,16 @@ function githubFailureReason(failure) {
 function noStore(res) {
   res.set('Cache-Control', 'no-store');
   res.set('Referrer-Policy', 'no-referrer');
+}
+
+/**
+ * The signed-in user as clients see it (POST /auth/token `user`, GET /auth/me).
+ * @param {string} githubUsername
+ * @param {import('../utils/githubProfile').GithubProfile} profile
+ * @returns {{ github_username: string, name: string | null, avatar_url: string | null }}
+ */
+function publicUser(githubUsername, profile) {
+  return { github_username: githubUsername, name: profile.name, avatar_url: profile.avatar_url };
 }
 
 /**
@@ -146,9 +158,10 @@ module.exports = {
     const identity = await fetchAuthenticatedUser(exchanged.accessToken);
     if (!identity.user) return redirectFailure(res, attempt.redirect, githubFailureReason(identity));
 
-    const { login, name, avatar_url } = identity.user;
+    const { login, profile } = identity.user;
     const signInCode = signInCodeStore.issue({
-      user: { github_username: login, name, avatar_url },
+      githubUsername: login,
+      profile,
       codeChallenge: attempt.codeChallenge,
     });
     return res.redirect(302, buildRedirectUrl(attempt.redirect, { code: signInCode }));
@@ -180,16 +193,18 @@ module.exports = {
       ]);
     }
 
-    const { token, expiresIn } = signSessionToken(pending.user.github_username);
+    const { token, expiresIn } = signSessionToken(pending.githubUsername, pending.profile);
     return res.json({
       token,
       token_type: 'Bearer',
       expires_in: expiresIn,
-      user: pending.user,
+      user: publicUser(pending.githubUsername, pending.profile),
     });
   },
 
+  // Answers from the token alone (no database or GitHub call), so clients can show who is signed
+  // in after a reload. Values are the sign-in snapshot.
   async me(req, res) {
-    return res.json({ github_username: req.user.github_username });
+    return res.json(publicUser(req.user.github_username, req.user.profile));
   },
 };

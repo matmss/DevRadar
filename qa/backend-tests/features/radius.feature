@@ -9,19 +9,19 @@ Feature: One "nearby" radius for search and real-time pushes (BUG-002 / TC-010)
 
   Background:
     Given the developer database is empty
-    And "gaearon" is a valid GitHub username
+    And I am signed in as "gaearon"
     And a client "watcher" is connected via WebSocket at latitude "-23.5505", longitude "-46.6333" watching techs "ReactJS"
 
   @regression @edge @P2
   Scenario: A developer just inside 10 km is both pushed live and found by search
-    When I register "gaearon" with techs "ReactJS" 9.995 km north of latitude "-23.5505" and longitude "-46.6333"
+    When I register with techs "ReactJS" 9.995 km north of latitude "-23.5505" and longitude "-46.6333"
     Then client "watcher" should receive a "new-dev" event within 2 seconds
     When I search at latitude "-23.5505", longitude "-46.6333" for techs "ReactJS"
     Then the response should include "gaearon"
 
   @regression @edge @P2
   Scenario: A developer just outside 10 km is neither pushed live nor found by search
-    When I register "gaearon" with techs "ReactJS" 10.005 km north of latitude "-23.5505" and longitude "-46.6333"
+    When I register with techs "ReactJS" 10.005 km north of latitude "-23.5505" and longitude "-46.6333"
     Then client "watcher" should not receive a "new-dev" event within 2 seconds
     When I search at latitude "-23.5505", longitude "-46.6333" for techs "ReactJS"
     Then the response should not include "gaearon"
