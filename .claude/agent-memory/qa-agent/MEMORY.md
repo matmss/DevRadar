@@ -1,0 +1,1 @@
+- [QA harness quirks](qa-harness-quirks.md) — cucumber path merging, sandbox rejects GITHUB_ in bash, hoisted qa/node_modules, Express deferred error log

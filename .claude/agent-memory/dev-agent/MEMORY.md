@@ -1,0 +1,2 @@
+- [qa/reports are tracked](project_qa_reports_tracked.md) — test runs dirty qa/reports/*; `git checkout -- qa/reports` before committing
+- [Worktree bash limits](feedback_worktree_bash.md) — compound shell writes get refused in worktree mode; use Write/Edit
