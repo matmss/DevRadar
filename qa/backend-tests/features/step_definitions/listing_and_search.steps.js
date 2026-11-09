@@ -2,6 +2,11 @@ const { Given, When, Then } = require('@cucumber/cucumber');
 const { expect } = require('chai');
 const request = require('supertest');
 const Dev = require('../../../../dev/backend/src/models/Dev');
+const { withSession } = require('../support/session');
+
+// GET /devs and GET /search require a session token since auth slice 4 (Q1). These steps send
+// the one a previous step set ("I am signed in as", or a forged token from auth.steps.js), and
+// no Authorization header otherwise (read-auth.feature checks those 401s).
 
 Given('the following developers exist:', async function (dataTable) {
   const rows = dataTable.hashes();
@@ -21,7 +26,7 @@ Given('the following developers exist:', async function (dataTable) {
 });
 
 When('I request the list of all developers', async function () {
-  this.response = await request(this.app).get('/devs');
+  this.response = await withSession(request(this.app).get('/devs'), this);
 });
 
 Then('the response should contain {int} developers', function (count) {
@@ -29,7 +34,7 @@ Then('the response should contain {int} developers', function (count) {
 });
 
 When('I search at latitude {string}, longitude {string} for techs {string}', async function (latitude, longitude, techs) {
-  this.response = await request(this.app).get('/search').query({ latitude, longitude, techs });
+  this.response = await withSession(request(this.app).get('/search'), this).query({ latitude, longitude, techs });
 });
 
 Then('the response should contain exactly {int} developer', function (count) {

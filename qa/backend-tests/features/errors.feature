@@ -23,7 +23,8 @@ Feature: Every route answers errors as JSON (BUG-012)
 
   @edge @regression @P2
   Scenario: An unexpected server error gets a generic JSON 500 without a stack trace
-    Given the database fails when listing developers
+    Given I am signed in as "gaearon"
+    And the database fails when listing developers
     When I request the list of all developers
     Then the response status should be 500
     And the response should be a JSON error with code "internal_error"

@@ -3,11 +3,14 @@ const { Given, When, Then, After } = require('@cucumber/cucumber');
 const { expect } = require('chai');
 const request = require('supertest');
 const nock = require('nock');
-// Same copy dev/backend uses, so forged tokens are built exactly like real ones.
-const jwt = require('../../../../dev/backend/node_modules/jsonwebtoken');
 const { signSessionToken } = require('../../../../dev/backend/src/utils/sessionToken');
-const { TEST_JWT_SECRET } = require('../support/auth-config');
 const { createTestApp } = require('../support/testApp');
+const {
+  SEVEN_DAYS_SECONDS,
+  expiredSessionToken,
+  forgedSessionToken,
+  decodeJwtPart,
+} = require('../support/session');
 const {
   mockGithubOAuthTokenExchange,
   mockGithubOAuthTokenExchangeFailure,
@@ -18,7 +21,6 @@ const {
 
 const GITHUB_ACCESS_TOKEN = 'gho_test_access_token_must_never_leak';
 const AUTHORIZE_URL = 'https://github.com/login/oauth/authorize';
-const SEVEN_DAYS_SECONDS = 7 * 24 * 60 * 60;
 
 // --- Clock control ---------------------------------------------------------------------------
 // The state store, the one-time code store and jsonwebtoken all read Date.now() at call time,
@@ -40,19 +42,15 @@ When('{int} seconds pass', function (seconds) {
   shiftClock(seconds * 1000);
 });
 
+When('{int} days pass', function (days) {
+  shiftClock(days * 24 * 60 * 60 * 1000);
+});
+
 // --- Helpers ---------------------------------------------------------------------------------
 
 /** RFC 7636 S256: BASE64URL(SHA256(ascii(code_verifier))). */
 function s256(verifier) {
   return crypto.createHash('sha256').update(verifier, 'ascii').digest('base64url');
-}
-
-function base64UrlJson(value) {
-  return Buffer.from(JSON.stringify(value)).toString('base64url');
-}
-
-function decodeJwtPart(part) {
-  return JSON.parse(Buffer.from(part, 'base64url').toString('utf8'));
 }
 
 function locationOf(response) {
@@ -150,52 +148,20 @@ Given('I have a valid session token for {string}', function (username) {
 });
 
 Given('I have a session token for {string} that expired {int} hour(s) ago', function (username, hours) {
-  const now = Math.floor(Date.now() / 1000);
-  const exp = now - hours * 3600;
-  this.sessionToken = jwt.sign(
-    { sub: username, iss: 'devradar', iat: exp - SEVEN_DAYS_SECONDS, exp },
-    TEST_JWT_SECRET,
-    { algorithm: 'HS256' }
-  );
+  this.sessionToken = expiredSessionToken(username, hours);
 });
 
 Given(
   'I have a session token for {string} that expired {int} hour(s) ago, signed with another secret',
   function (username, hours) {
-    const now = Math.floor(Date.now() / 1000);
-    const exp = now - hours * 3600;
-    this.sessionToken = jwt.sign(
-      { sub: username, iss: 'devradar', iat: exp - SEVEN_DAYS_SECONDS, exp },
-      'some-other-secret-that-is-not-jwt-secret',
-      { algorithm: 'HS256' }
-    );
+    this.sessionToken = expiredSessionToken(username, hours, { otherSecret: true });
   }
 );
 
+// Kinds (tampered, foreign-signed, alg-none, malformed, profile-less, forged-profile): see
+// forgedSessionToken in support/session.js.
 Given('I have a {word} session token', function (kind) {
-  const now = Math.floor(Date.now() / 1000);
-  const claims = { sub: 'gaearon', iss: 'devradar', iat: now, exp: now + SEVEN_DAYS_SECONDS };
-
-  if (kind === 'tampered') {
-    const [header, payload, signature] = signSessionToken('gaearon').token.split('.');
-    const forged = { ...decodeJwtPart(payload), sub: 'bob' };
-    this.sessionToken = [header, base64UrlJson(forged), signature].join('.');
-  } else if (kind === 'foreign-signed') {
-    this.sessionToken = jwt.sign(claims, 'some-other-secret-that-is-not-jwt-secret', { algorithm: 'HS256' });
-  } else if (kind === 'alg-none') {
-    this.sessionToken = `${base64UrlJson({ alg: 'none', typ: 'JWT' })}.${base64UrlJson(claims)}.`;
-  } else if (kind === 'malformed') {
-    this.sessionToken = 'not-a-jwt';
-  } else if (kind === 'profile-less') {
-    // Correctly signed but without the `profile` claim, like the tokens slice 1 issued.
-    this.sessionToken = jwt.sign(claims, TEST_JWT_SECRET, { algorithm: 'HS256' });
-  } else if (kind === 'forged-profile') {
-    // Correctly signed, but the profile claim is not what the backend would have signed.
-    const profile = { name: 'Eve', avatar_url: 'javascript:alert(1)', bio: null };
-    this.sessionToken = jwt.sign({ ...claims, profile }, TEST_JWT_SECRET, { algorithm: 'HS256' });
-  } else {
-    throw new Error(`Unknown token kind: ${kind}`);
-  }
+  this.sessionToken = forgedSessionToken(kind);
 });
 
 // Rate-limit env is reset by applyTestAuthEnv() in hooks.js before every scenario.
@@ -211,6 +177,11 @@ Given('the sign-in rate limit is {int} requests per window', function (limit) {
 
 Given('the session check rate limit is {int} requests per window', function (limit) {
   process.env.AUTH_SESSION_RATE_LIMIT_MAX = String(limit);
+});
+
+// config/auth.js reads MOBILE_APP_SCHEME per request; reset by applyTestAuthEnv() in hooks.js.
+Given('the backend runs with the default MOBILE_APP_SCHEME', function () {
+  delete process.env.MOBILE_APP_SCHEME;
 });
 
 // TRUST_PROXY is applied when the app is built, so rebuild it (no server is listening yet).

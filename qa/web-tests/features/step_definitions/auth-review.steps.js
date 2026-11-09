@@ -6,7 +6,7 @@ const { expect } = require('@playwright/test');
 // Same copy dev/backend signs with, so the stored token is built like a real one.
 const jwt = require('../../../../dev/backend/node_modules/jsonwebtoken');
 const { INTEGRATION_BACKEND_PORT } = require('../support/global-setup');
-const { TEST_JWT_SECRET, githubUserFixture } = require('../support/auth-fixtures');
+const { TEST_JWT_SECRET, githubUserFixture, inspectorAuthHeaders } = require('../support/auth-fixtures');
 
 const { Given, When, Then } = createBdd();
 
@@ -56,7 +56,7 @@ async function fakeBackendAnswer(page, method, path, status, body) {
 
 /** @returns {Promise<string[]>} the logins of every developer in the harness backend */
 async function backendLogins() {
-  const res = await fetch(`${BACKEND_URL}/devs`);
+  const res = await fetch(`${BACKEND_URL}/devs`, { headers: inspectorAuthHeaders() });
   if (!res.ok) throw new Error(`Failed to list the backend's developers: ${res.status}`);
   return (await res.json()).map((dev) => dev.github_username);
 }

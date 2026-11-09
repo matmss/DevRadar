@@ -3,8 +3,11 @@ Feature: Search developers by location and tech
   I want to find nearby developers who know specific technologies
   So that I can network with them
 
+  # GET /search requires a session token (auth slice 4); its 401s are in read-auth.feature.
+
   Background:
     Given the developer database is empty
+    And I am signed in as "gaearon"
     And the following developers exist:
       | github_username | techs             | latitude  | longitude  |
       | near-match       | ReactJS,Node.js   | -23.5505  | -46.6333   |

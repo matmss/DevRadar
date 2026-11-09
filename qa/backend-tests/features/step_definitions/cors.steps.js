@@ -2,9 +2,10 @@ const { When, Then } = require('@cucumber/cucumber');
 const { expect } = require('chai');
 const request = require('supertest');
 const io = require('socket.io-client');
+const { withSession } = require('../support/session');
 
 When('I request the list of all developers from origin {string}', async function (origin) {
-  this.response = await request(this.app).get('/devs').set('Origin', origin);
+  this.response = await withSession(request(this.app).get('/devs'), this).set('Origin', origin);
 });
 
 When('a browser at origin {string} sends a preflight for {string} {string}', async function (origin, method, path) {
@@ -23,11 +24,14 @@ Then('the response should not allow any origin', function () {
   expect(this.response.headers).to.not.have.property('access-control-allow-origin');
 });
 
-When('a browser client at origin {string} connects via WebSocket watching techs {string}', async function (origin, techs) {
+// Sends the session token of a previous "I am signed in as" step in the handshake `auth`
+// payload, so only the origin decides the outcome.
+When('a signed-in browser client at origin {string} connects via WebSocket watching techs {string}', async function (origin, techs) {
   if (!this.server.listening) await new Promise((resolve) => this.server.listen(0, resolve));
   const { port } = this.server.address();
 
   const socket = io(`http://127.0.0.1:${port}`, {
+    auth: { token: this.sessionToken },
     query: { latitude: '-23.5505', longitude: '-46.6333', techs },
     transports: ['websocket'],
     extraHeaders: { Origin: origin },

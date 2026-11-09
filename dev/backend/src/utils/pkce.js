@@ -1,7 +1,7 @@
 // PKCE (RFC 7636) between DevRadar clients and the backend (QA-AUTH-1). Each sign-in is bound
 // to the client that started it: GET /auth/github takes a `code_challenge`, and POST
 // /auth/token only redeems the one-time code with the matching `code_verifier`. A forwarded
-// callback URL or an intercepted devradar:// redirect is useless without the verifier.
+// callback URL or an intercepted com.matmss.mobile:// redirect is useless without the verifier.
 // Only S256 is accepted ("plain" offers no protection if the challenge leaks).
 const crypto = require('crypto');
 

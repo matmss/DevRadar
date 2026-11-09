@@ -10,7 +10,7 @@ Feature: One "nearby" radius for search and real-time pushes (BUG-002 / TC-010)
   Background:
     Given the developer database is empty
     And I am signed in as "gaearon"
-    And a client "watcher" is connected via WebSocket at latitude "-23.5505", longitude "-46.6333" watching techs "ReactJS"
+    And a signed-in client "watcher" is connected via WebSocket at latitude "-23.5505", longitude "-46.6333" watching techs "ReactJS"
 
   @regression @edge @P2
   Scenario: A developer just inside 10 km is both pushed live and found by search

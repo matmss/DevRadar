@@ -1,5 +1,6 @@
-// Bearer-token authentication (US-2). Applied to POST /devs and GET /auth/me; GET /devs,
-// GET /search and the socket follow in slice 4 (dev/docs/03-auth-spec.md "Delivery order").
+// Bearer-token authentication (US-2). Applied to GET /devs, POST /devs, GET /search and
+// GET /auth/me (routes.js). The Socket.io handshake uses the same verifySessionToken and codes
+// (websocket.js), with the token in the handshake `auth` payload instead of a header.
 //
 // 401 body: { error, code, details }. `code` is stable and lets clients tell the cases apart:
 //   token_missing  no `Authorization: Bearer <token>` header

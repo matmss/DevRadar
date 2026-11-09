@@ -1,7 +1,10 @@
 Feature: List all developers
 
+  # GET /devs requires a session token (auth slice 4); its 401s are in read-auth.feature.
+
   Background:
     Given the developer database is empty
+    And I am signed in as "gaearon"
 
   @smoke @P2
   Scenario: Listing developers returns everyone regardless of location

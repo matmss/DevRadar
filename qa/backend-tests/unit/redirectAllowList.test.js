@@ -5,7 +5,7 @@ describe('post-login redirect allow-list', () => {
   const original = { cors: process.env.CORS_ORIGINS, scheme: process.env.MOBILE_APP_SCHEME };
   beforeEach(() => {
     delete process.env.CORS_ORIGINS; // defaults: http://localhost:3000, http://localhost:8081
-    delete process.env.MOBILE_APP_SCHEME; // default: devradar
+    delete process.env.MOBILE_APP_SCHEME; // default: com.matmss.mobile (dev/mobile/app.json scheme)
   });
   afterAll(() => {
     if (original.cors === undefined) delete process.env.CORS_ORIGINS;
@@ -19,8 +19,8 @@ describe('post-login redirect allow-list', () => {
     'http://localhost:3000/',
     'http://localhost:3000/some/path?x=1#frag',
     'http://localhost:8081/',
-    'devradar://auth',
-    'devradar:///callback?x=1',
+    'com.matmss.mobile://auth/callback',
+    'com.matmss.mobile:///callback?x=1',
   ])('allows %p', (redirect) => {
     expect(isRedirectAllowed(redirect)).toBe(true);
   });
@@ -42,6 +42,8 @@ describe('post-login redirect allow-list', () => {
     'javascript:alert(1)',
     'data:text/html,<script>alert(1)</script>',
     'devradarx://auth',
+    'devradar://auth', // the pre-slice-4 default, no longer the app's scheme
+    'com.matmss.mobilex://auth',
     'exp://192.168.0.10:8081',
   ])('rejects %p', (redirect) => {
     expect(isRedirectAllowed(redirect)).toBe(false);
