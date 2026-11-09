@@ -70,7 +70,7 @@ separate layer testing user-facing scenarios — see
 
 | Layer   | File               | Var                   |
 |---------|--------------------|------------------------|
-| backend | `backend/.env`     | `MONGO_URI`, `PORT`, `CORS_ORIGINS`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_CALLBACK_URL`, `JWT_SECRET`, `MOBILE_APP_SCHEME`, `AUTH_RATE_LIMIT_MAX` (see `00-architecture.md`, Authentication) |
+| backend | `backend/.env`     | `MONGO_URI`, `PORT`, `CORS_ORIGINS`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_CALLBACK_URL`, `JWT_SECRET`, `MOBILE_APP_SCHEME`, `AUTH_RATE_LIMIT_MAX`, `AUTH_SESSION_RATE_LIMIT_MAX`, `TRUST_PROXY` (see `00-architecture.md`, Authentication) |
 | web     | `web/.env`         | `REACT_APP_API_URL`   |
 | mobile  | `mobile/.env`      | `EXPO_PUBLIC_API_URL` |
 
@@ -83,11 +83,11 @@ three layers now have one.
   meaningfully or rethrows with added context.
 - Express 5 (used here) auto-forwards rejected promises from async route
   handlers to error middleware, so `async (req, res) => { ... }` controllers
-  don't need manual try/catch for that path — **but** `backend/src/index.js`
-  currently has no error-handling middleware registered, so unhandled
-  rejections still crash with a default stack-trace response. Add one
-  (`app.use((err, req, res, next) => { ... })`, registered last) before
-  relying on this further — flagged, not yet fixed.
+  don't need manual try/catch for that path. `backend/src/app.js` registers
+  `middleware/errorHandler.js` last (BUG-012), which turns anything unhandled
+  into a JSON `{ error, code, details }` (500 `internal_error`, no stack).
+  Handle expected failures in the controller anyway, with a specific status
+  and `code`. Never log request bodies or `err.body`.
 - External calls (the GitHub Users API in `DevController.store`) should
   handle the "user not found" (404) and rate-limit (403) cases explicitly
   rather than letting a raw axios error surface to the client.

@@ -65,6 +65,54 @@ describe('auth config', () => {
     });
   });
 
+  describe('MOBILE_APP_SCHEME warnings', () => {
+    afterEach(() => {
+      delete process.env.MOBILE_APP_SCHEME;
+    });
+
+    it('warns at startup, without the value, when the scheme is refused', () => {
+      process.env.MOBILE_APP_SCHEME = 'intent';
+      expect(config.authConfigWarnings()).toEqual([
+        'MOBILE_APP_SCHEME is not an allowed app scheme; mobile sign-in redirects are disabled',
+      ]);
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        config.assertAuthConfig();
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0][0]).not.toContain('intent');
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('warns when the scheme has an invalid shape', () => {
+      process.env.MOBILE_APP_SCHEME = 'my_app';
+      expect(config.authConfigWarnings()).toHaveLength(1);
+    });
+
+    it('does not warn for the default, a valid scheme, or an explicitly empty one', () => {
+      expect(config.authConfigWarnings()).toEqual([]);
+      process.env.MOBILE_APP_SCHEME = 'com.devradar.app';
+      expect(config.authConfigWarnings()).toEqual([]);
+      process.env.MOBILE_APP_SCHEME = '';
+      expect(config.authConfigWarnings()).toEqual([]);
+    });
+
+    it('does not stop the server in production', () => {
+      process.env.NODE_ENV = 'production';
+      process.env.GITHUB_CLIENT_ID = 'id';
+      process.env.GITHUB_CLIENT_SECRET = 'secret';
+      process.env.JWT_SECRET = LONG_SECRET;
+      process.env.MOBILE_APP_SCHEME = 'https';
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        expect(() => config.assertAuthConfig()).not.toThrow();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+  });
+
   describe('outside production', () => {
     it('does not block startup when nothing is configured', () => {
       expect(config.authConfigErrors()).toEqual([]);

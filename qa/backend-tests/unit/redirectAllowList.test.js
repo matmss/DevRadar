@@ -1,4 +1,5 @@
 const { isRedirectAllowed, buildRedirectUrl } = require('../../../dev/backend/src/utils/redirectAllowList');
+const { mobileAppScheme } = require('../../../dev/backend/src/config/auth');
 
 describe('post-login redirect allow-list', () => {
   const original = { cors: process.env.CORS_ORIGINS, scheme: process.env.MOBILE_APP_SCHEME };
@@ -67,14 +68,37 @@ describe('post-login redirect allow-list', () => {
     expect(isRedirectAllowed('devradar://auth')).toBe(false);
   });
 
-  it.each(['https', 'http', 'javascript', 'data', 'not a scheme'])(
-    'ignores an unsafe MOBILE_APP_SCHEME %p instead of opening a redirect',
+  const REFUSED = [
+    'http', 'https', 'intent', 'exp', 'exps', 'javascript', 'data', 'file', 'ftp',
+    'ws', 'wss', 'about', 'blob', 'content', 'vbscript', 'chrome',
+  ];
+
+  it.each(REFUSED)('refuses MOBILE_APP_SCHEME %p and allows nothing through it', (scheme) => {
+    process.env.MOBILE_APP_SCHEME = scheme;
+    expect(mobileAppScheme()).toBeNull();
+    expect(isRedirectAllowed(`${scheme}://evil.example/`)).toBe(false);
+    expect(isRedirectAllowed('https://evil.example/')).toBe(false);
+    expect(isRedirectAllowed('javascript:alert(1)')).toBe(false);
+  });
+
+  it.each(['HTTPS', 'Intent://', 'exp:'])('refuses %p regardless of case or "://" spelling', (scheme) => {
+    process.env.MOBILE_APP_SCHEME = scheme;
+    expect(mobileAppScheme()).toBeNull();
+  });
+
+  it.each(['not a scheme', 'my_app', 'a+b', '1app', 'app.', '.app', 'app..x', 'app--x', '-app', 'ü'])(
+    'refuses MOBILE_APP_SCHEME %p with an invalid shape',
     (scheme) => {
       process.env.MOBILE_APP_SCHEME = scheme;
-      expect(isRedirectAllowed('https://evil.example/')).toBe(false);
-      expect(isRedirectAllowed('javascript:alert(1)')).toBe(false);
+      expect(mobileAppScheme()).toBeNull();
     }
   );
+
+  it.each(['devradar', 'com.devradar.app', 'dev-radar', 'app2'])('accepts MOBILE_APP_SCHEME %p', (scheme) => {
+    process.env.MOBILE_APP_SCHEME = scheme;
+    expect(mobileAppScheme()).toBe(scheme);
+    expect(isRedirectAllowed(`${scheme}://auth`)).toBe(true);
+  });
 
   it('appends params while keeping the existing query', () => {
     expect(buildRedirectUrl('http://localhost:3000/welcome?tab=devs', { code: 'abc' }))

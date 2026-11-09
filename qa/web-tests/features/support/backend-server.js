@@ -11,10 +11,12 @@
  *  - `/__test__/*` routes below exist only in this harness (never touch dev/backend/src) so
  *    scenarios can reset/seed data over HTTP instead of opening a second, cross-process
  *    Mongo connection from the Playwright worker that runs the step definitions.
+ *
+ * The app itself comes from dev/backend/src/app.js's createServer(), the same function
+ * index.js uses, so middleware order (trust proxy, CORS, JSON body, routes, error handler)
+ * matches production; the `/__test__` router is mounted through its `beforeRoutes` hook.
  */
 const express = require('express');
-const cors = require('cors');
-const http = require('http');
 const nock = require('nock');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 
@@ -23,10 +25,8 @@ const { MongoMemoryServer } = require('mongodb-memory-server');
 // pointed at an unconnected instance and every query hangs. See
 // qa/backend-tests/features/support/hooks.js for the identical constraint.
 const mongoose = require('../../../../dev/backend/node_modules/mongoose');
-const routes = require('../../../../dev/backend/src/routes');
-const { setupWebsocket } = require('../../../../dev/backend/src/websocket');
+const { createServer } = require('../../../../dev/backend/src/app');
 const Dev = require('../../../../dev/backend/src/models/Dev');
-const { corsOptions } = require('../../../../dev/backend/src/config/cors');
 
 let mongod;
 let server;
@@ -82,14 +82,9 @@ async function startBackend(port) {
   await mongoose.connect(mongod.getUri());
   stubGithubApi();
 
-  const app = express();
-  server = http.Server(app);
-  setupWebsocket(server);
-
-  app.use(cors(corsOptions));
-  app.use(express.json());
-  app.use('/__test__', testRoutes());
-  app.use(routes);
+  ({ server } = createServer({
+    beforeRoutes: (app) => app.use('/__test__', testRoutes()),
+  }));
 
   await new Promise((resolve) => server.listen(port, resolve));
 }

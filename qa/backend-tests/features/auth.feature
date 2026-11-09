@@ -7,6 +7,8 @@ Feature: GitHub sign-in and session tokens (US-1, US-2; BUG-006 auth part)
   # protected. GitHub's OAuth endpoints are mocked with nock (features/support/github-mock.js).
   # The backend runs with GITHUB_CLIENT_ID "test-client-id" and the default callback URL
   # (features/support/auth-config.js). Allowed redirects: the CORS origins + "devradar://".
+  # Every sign-in uses PKCE (RFC 7636, S256): "I start GitHub sign-in" sends the challenge of a
+  # fresh random verifier, and "I exchange the one-time code" sends that verifier.
 
   # --- US-1: Start the flow -----------------------------------------------------------------
 
@@ -50,6 +52,42 @@ Feature: GitHub sign-in and session tokens (US-1, US-2; BUG-006 auth part)
     When I start GitHub sign-in without a redirect
     Then the response status should be 400
     And the response should be an auth error with code "redirect_invalid"
+
+  # --- QA-AUTH-1: PKCE is required to start sign-in -----------------------------------------
+
+  @edge @regression @P1
+  Scenario: Starting sign-in without a PKCE challenge is rejected
+    When I start GitHub sign-in with redirect "http://localhost:3000/" without a PKCE challenge
+    Then the response status should be 400
+    And the response should be an auth error with code "code_challenge_invalid"
+    And I should not be redirected anywhere
+
+  @edge @regression @P1
+  Scenario Outline: A malformed PKCE challenge is rejected
+    When I start GitHub sign-in with redirect "http://localhost:3000/" and code_challenge "<challenge>"
+    Then the response status should be 400
+    And the response should be an auth error with code "code_challenge_invalid"
+    And I should not be redirected anywhere
+
+    Examples:
+      | challenge                                    |
+      |                                              |
+      | too-short                                    |
+      | E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-c+  |
+      | E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM= |
+
+  @edge @regression @P1
+  Scenario Outline: Only the S256 PKCE method is accepted
+    When I start GitHub sign-in with redirect "http://localhost:3000/" and code_challenge_method "<method>"
+    Then the response status should be 400
+    And the response should be an auth error with code "code_challenge_method_invalid"
+    And I should not be redirected anywhere
+
+    Examples:
+      | method |
+      |        |
+      | plain  |
+      | s256   |
 
   # --- US-1: Successful callback ------------------------------------------------------------
 
@@ -115,12 +153,14 @@ Feature: GitHub sign-in and session tokens (US-1, US-2; BUG-006 auth part)
     And the response should be an auth error with code "state_invalid"
     And no sign-in code should be issued
 
+  # Once the state is verified, the client's redirect is known: every later failure sends the
+  # browser back to the client with ?error=sign_in_failed&reason=<code> instead of a JSON page.
+
   @edge @regression @P2
-  Scenario: A callback with a valid state but no code is rejected
+  Scenario: A callback with a valid state but no code sends the client a "sign-in failed" result
     When I start GitHub sign-in with redirect "http://localhost:3000/"
     And GitHub calls back with no code and the issued state
-    Then the response status should be 400
-    And the response should be an auth error with code "github_code_missing"
+    Then I should be redirected to "http://localhost:3000/" with error "sign_in_failed" and reason "github_code_missing"
     And no sign-in code should be issued
 
   # --- US-1: User denies consent ------------------------------------------------------------
@@ -139,44 +179,47 @@ Feature: GitHub sign-in and session tokens (US-1, US-2; BUG-006 auth part)
     And the response should be an auth error with code "state_invalid"
 
   @edge @regression @P2
-  Scenario: Any other GitHub callback error is reported as a GitHub failure
+  Scenario: Any other GitHub callback error sends the client a "sign-in failed" result
     When I start GitHub sign-in with redirect "http://localhost:3000/"
     And GitHub calls back with error "redirect_uri_mismatch" and the issued state
-    Then the response status should be 502
-    And the response should be an auth error with code "github_error"
+    Then I should be redirected to "http://localhost:3000/" with error "sign_in_failed" and reason "github_error"
     And no sign-in code should be issued
+
+  @edge @regression @P2
+  Scenario: A failure redirect goes to the mobile app too
+    When I start GitHub sign-in with redirect "devradar://auth"
+    And GitHub calls back with error "redirect_uri_mismatch" and the issued state
+    Then I should be redirected to "devradar://auth" with error "sign_in_failed" and reason "github_error"
 
   # --- US-1: GitHub failures ----------------------------------------------------------------
 
   @edge @regression @P1
-  Scenario Outline: A failing GitHub token exchange issues no token
+  Scenario Outline: A failing GitHub token exchange issues no token and sends the client back
     Given GitHub's token exchange will fail with "<failure>"
     When I start GitHub sign-in with redirect "http://localhost:3000/"
     And GitHub calls back with code "good-code" and the issued state
-    Then the response status should be <status>
-    And the response should be an auth error with code "<code>"
+    Then I should be redirected to "http://localhost:3000/" with error "sign_in_failed" and reason "<reason>"
     And no sign-in code should be issued
 
     Examples:
-      | failure      | status | code                |
-      | rejected     | 502    | github_unavailable  |
-      | server error | 502    | github_unavailable  |
-      | unreachable  | 502    | github_unavailable  |
-      | rate limited | 503    | github_rate_limited |
+      | failure      | reason              |
+      | rejected     | github_unavailable  |
+      | server error | github_unavailable  |
+      | unreachable  | github_unavailable  |
+      | rate limited | github_rate_limited |
 
   @edge @regression @P2
-  Scenario Outline: A failing GitHub user lookup issues no token
+  Scenario Outline: A failing GitHub user lookup issues no token and sends the client back
     Given GitHub's token exchange succeeds for code "good-code" but the user lookup fails with "<failure>"
     When I start GitHub sign-in with redirect "http://localhost:3000/"
     And GitHub calls back with code "good-code" and the issued state
-    Then the response status should be <status>
-    And the response should be an auth error with code "<code>"
+    Then I should be redirected to "http://localhost:3000/" with error "sign_in_failed" and reason "<reason>"
     And no sign-in code should be issued
 
     Examples:
-      | failure      | status | code                |
-      | unauthorized | 502    | github_unavailable  |
-      | rate limited | 503    | github_rate_limited |
+      | failure      | reason              |
+      | unauthorized | github_unavailable  |
+      | rate limited | github_rate_limited |
 
   # --- One-time sign-in code ----------------------------------------------------------------
 
@@ -188,6 +231,34 @@ Feature: GitHub sign-in and session tokens (US-1, US-2; BUG-006 auth part)
     Then the response status should be 400
     And the response should be an auth error with code "code_invalid"
     And the response should not contain a session token
+
+  # --- QA-AUTH-1: the one-time code only works with the client's own PKCE verifier ---------
+
+  @edge @regression @P1
+  Scenario: A one-time code without a PKCE verifier is rejected and spent
+    Given I completed GitHub sign-in as "gaearon"
+    When I exchange the one-time code without a PKCE verifier
+    Then the response status should be 400
+    And the response should be an auth error with code "code_verifier_missing"
+    When I exchange the one-time code for a session token
+    Then the response status should be 400
+    And the response should be an auth error with code "code_invalid"
+
+  @edge @regression @P1
+  Scenario Outline: A wrong PKCE verifier is rejected and spends the code
+    Given I completed GitHub sign-in as "gaearon"
+    When I exchange the one-time code with a <kind> PKCE verifier
+    Then the response status should be 400
+    And the response should be an auth error with code "code_verifier_invalid"
+    And the response should not contain a session token
+    When I exchange the one-time code for a session token
+    Then the response status should be 400
+    And the response should be an auth error with code "code_invalid"
+
+    Examples:
+      | kind      |
+      | wrong     |
+      | malformed |
 
   @edge @regression @P1
   Scenario: A one-time code expires after about a minute
@@ -278,9 +349,47 @@ Feature: GitHub sign-in and session tokens (US-1, US-2; BUG-006 auth part)
     When I request the list of all developers
     Then the response status should be 200
 
+  # Two limiters per IP per 15 min: sign-in (AUTH_RATE_LIMIT_MAX, default 60) for
+  # /auth/github, the callback and /auth/token; session checks (AUTH_SESSION_RATE_LIMIT_MAX,
+  # default 600) for GET /auth/me, which clients call on every load.
+
   @edge @regression @P2
-  Scenario: Auth endpoints are rate limited
-    Given the auth rate limit is 3 requests per window
+  Scenario: Sign-in endpoints are rate limited
+    Given the sign-in rate limit is 3 requests per window
+    When I start GitHub sign-in 4 times
+    Then the response status should be 429
+    And the response should be an auth error with code "rate_limited"
+
+  @edge @regression @P2
+  Scenario: Session checks are rate limited separately
+    Given the session check rate limit is 3 requests per window
     When I call GET /auth/me without a token 4 times
     Then the response status should be 429
     And the response should be an auth error with code "rate_limited"
+
+  @regression @P2
+  Scenario: Exhausting the sign-in limit does not block session checks
+    Given the sign-in rate limit is 2 requests per window
+    And I have a valid session token for "gaearon"
+    When I start GitHub sign-in 3 times
+    Then the response status should be 429
+    When I call GET /auth/me with the session token
+    Then the response status should be 200
+
+  # TRUST_PROXY decides whether the rate-limit key (req.ip) comes from X-Forwarded-For. Off by
+  # default, so a client cannot dodge the limit by sending a different X-Forwarded-For.
+  @edge @regression @P2
+  Scenario Outline: The rate-limit key follows X-Forwarded-For only when trust proxy is enabled
+    Given the backend runs with TRUST_PROXY "<trust proxy>"
+    And the sign-in rate limit is 2 requests per window
+    When I start GitHub sign-in 2 times from forwarded address "203.0.113.1"
+    And I start GitHub sign-in 1 times from forwarded address "203.0.113.2"
+    Then the response status should be <status>
+
+    Examples:
+      | trust proxy | status |
+      |             | 429    |
+      | false       | 429    |
+      | true        | 302    |
+      | 1           | 302    |
+      | loopback    | 302    |

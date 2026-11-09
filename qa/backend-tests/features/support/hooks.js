@@ -23,6 +23,12 @@ AfterAll(async function () {
 });
 
 Before(async function () {
+  // Auth env is reset per scenario (a scenario may lower a rate limit or set TRUST_PROXY), and
+  // the /auth rate limiters are module-level singletons, so their counts would otherwise carry
+  // over. Done before building the app, which reads TRUST_PROXY.
+  applyTestAuthEnv();
+  await resetAuthRateLimit();
+
   // Fresh app + server per scenario. Note: websocket.js's `connections` array is module-level,
   // so it is shared across scenarios; entries are removed when sockets disconnect (After hook).
   const { app, server } = createTestApp();
@@ -35,11 +41,6 @@ Before(async function () {
   for (const key of Object.keys(collections)) {
     await collections[key].deleteMany({});
   }
-
-  // Auth env is reset per scenario (a scenario may lower AUTH_RATE_LIMIT_MAX), and the /auth
-  // rate limiter is a module-level singleton, so its counts would otherwise carry over.
-  applyTestAuthEnv();
-  await resetAuthRateLimit();
 
   nock.cleanAll();
   nock.disableNetConnect();

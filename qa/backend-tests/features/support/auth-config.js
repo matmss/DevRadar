@@ -13,6 +13,8 @@ function applyTestAuthEnv() {
   process.env.JWT_SECRET = TEST_JWT_SECRET;
   process.env.MOBILE_APP_SCHEME = 'devradar';
   delete process.env.AUTH_RATE_LIMIT_MAX;
+  delete process.env.AUTH_SESSION_RATE_LIMIT_MAX;
+  delete process.env.TRUST_PROXY;
 }
 
 module.exports = { TEST_JWT_SECRET, applyTestAuthEnv };

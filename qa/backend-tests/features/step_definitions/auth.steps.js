@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { Given, When, Then, After } = require('@cucumber/cucumber');
 const { expect } = require('chai');
 const request = require('supertest');
@@ -6,6 +7,7 @@ const nock = require('nock');
 const jwt = require('../../../../dev/backend/node_modules/jsonwebtoken');
 const { signSessionToken } = require('../../../../dev/backend/src/utils/sessionToken');
 const { TEST_JWT_SECRET } = require('../support/auth-config');
+const { createTestApp } = require('../support/testApp');
 const {
   mockGithubOAuthTokenExchange,
   mockGithubOAuthTokenExchangeFailure,
@@ -39,6 +41,11 @@ When('{int} seconds pass', function (seconds) {
 
 // --- Helpers ---------------------------------------------------------------------------------
 
+/** RFC 7636 S256: BASE64URL(SHA256(ascii(code_verifier))). */
+function s256(verifier) {
+  return crypto.createHash('sha256').update(verifier, 'ascii').digest('base64url');
+}
+
 function base64UrlJson(value) {
   return Buffer.from(JSON.stringify(value)).toString('base64url');
 }
@@ -51,9 +58,21 @@ function locationOf(response) {
   return response.headers.location;
 }
 
-async function startSignIn(world, redirect) {
-  const req = request(world.app).get('/auth/github');
-  world.response = redirect === undefined ? await req : await req.query({ redirect });
+/**
+ * Starts sign-in like a real client: a fresh random PKCE verifier per attempt, kept on the
+ * world for the token exchange, and its S256 challenge sent to GET /auth/github.
+ * `query` overrides/removes parameters (undefined values are dropped).
+ */
+async function startSignIn(world, redirect, query = {}) {
+  world.pkceVerifier = crypto.randomBytes(32).toString('base64url');
+  const params = {
+    redirect,
+    code_challenge: s256(world.pkceVerifier),
+    code_challenge_method: 'S256',
+    ...query,
+  };
+  Object.keys(params).forEach((key) => params[key] === undefined && delete params[key]);
+  world.response = await request(world.app).get('/auth/github').query(params);
   const location = locationOf(world.response);
   if (location && location.startsWith(AUTHORIZE_URL)) {
     world.authState = new URL(location).searchParams.get('state');
@@ -145,14 +164,66 @@ Given('I have a {word} session token', function (kind) {
   }
 });
 
+// Rate-limit env is reset by applyTestAuthEnv() in hooks.js before every scenario.
 Given('the auth rate limit is {int} requests per window', function (limit) {
-  process.env.AUTH_RATE_LIMIT_MAX = String(limit); // reset by applyTestAuthEnv() in hooks.js
+  // Every /auth limiter: sign-in (AUTH_RATE_LIMIT_MAX) and session checks (AUTH_SESSION_RATE_LIMIT_MAX).
+  process.env.AUTH_RATE_LIMIT_MAX = String(limit);
+  process.env.AUTH_SESSION_RATE_LIMIT_MAX = String(limit);
+});
+
+Given('the sign-in rate limit is {int} requests per window', function (limit) {
+  process.env.AUTH_RATE_LIMIT_MAX = String(limit);
+});
+
+Given('the session check rate limit is {int} requests per window', function (limit) {
+  process.env.AUTH_SESSION_RATE_LIMIT_MAX = String(limit);
+});
+
+// TRUST_PROXY is applied when the app is built, so rebuild it (no server is listening yet).
+Given('the backend runs with TRUST_PROXY {string}', function (value) {
+  process.env.TRUST_PROXY = value; // reset by applyTestAuthEnv() in hooks.js
+  const { app, server } = createTestApp();
+  this.app = app;
+  this.server = server;
 });
 
 // --- When ------------------------------------------------------------------------------------
 
 When('I start GitHub sign-in with redirect {string}', async function (redirect) {
   await startSignIn(this, redirect);
+});
+
+When('I start GitHub sign-in with redirect {string} without a PKCE challenge', async function (redirect) {
+  await startSignIn(this, redirect, { code_challenge: undefined, code_challenge_method: undefined });
+});
+
+When(
+  'I start GitHub sign-in with redirect {string} and code_challenge {string}',
+  async function (redirect, challenge) {
+    await startSignIn(this, redirect, { code_challenge: challenge });
+  }
+);
+
+When(
+  'I start GitHub sign-in with redirect {string} and code_challenge_method {string}',
+  async function (redirect, method) {
+    await startSignIn(this, redirect, { code_challenge_method: method === '' ? undefined : method });
+  }
+);
+
+When('I start GitHub sign-in {int} times from forwarded address {string}', async function (times, address) {
+  for (let i = 0; i < times; i += 1) {
+    this.response = await request(this.app)
+      .get('/auth/github')
+      .set('X-Forwarded-For', address)
+      .query({ redirect: 'http://localhost:3000/', code_challenge: s256('v'.repeat(43)), code_challenge_method: 'S256' });
+  }
+});
+
+When('I start GitHub sign-in {int} times', async function (times) {
+  for (let i = 0; i < times; i += 1) {
+    await startSignIn(this, 'http://localhost:3000/');
+  }
 });
 
 When('I start GitHub sign-in with redirect {string} twice', async function (redirect) {
@@ -190,10 +261,26 @@ When('GitHub calls back with error {string} and state {string}', async function 
   await callBack(this, { error, state });
 });
 
+async function exchangeOneTimeCode(world, body) {
+  if (!world.oneTimeCode) world.oneTimeCode = oneTimeCodeFrom(world.response);
+  world.response = await request(world.app).post('/auth/token').send({ code: world.oneTimeCode, ...body });
+  if (world.response.body && world.response.body.token) world.sessionToken = world.response.body.token;
+}
+
 When('I exchange the one-time code for a session token', async function () {
-  if (!this.oneTimeCode) this.oneTimeCode = oneTimeCodeFrom(this.response);
-  this.response = await request(this.app).post('/auth/token').send({ code: this.oneTimeCode });
-  if (this.response.body && this.response.body.token) this.sessionToken = this.response.body.token;
+  await exchangeOneTimeCode(this, { code_verifier: this.pkceVerifier });
+});
+
+When('I exchange the one-time code without a PKCE verifier', async function () {
+  await exchangeOneTimeCode(this, {});
+});
+
+When('I exchange the one-time code with a wrong PKCE verifier', async function () {
+  await exchangeOneTimeCode(this, { code_verifier: crypto.randomBytes(32).toString('base64url') });
+});
+
+When('I exchange the one-time code with a malformed PKCE verifier', async function () {
+  await exchangeOneTimeCode(this, { code_verifier: 'too-short' });
 });
 
 When('I exchange the one-time code {string} for a session token', async function (code) {
@@ -270,6 +357,16 @@ Then('I should be redirected to {string} with error {string}', function (target,
   const location = new URL(locationOf(this.response));
   expect(location.searchParams.get('error')).to.equal(error);
   location.searchParams.delete('error');
+  expect(location.toString()).to.equal(new URL(target).toString());
+});
+
+Then('I should be redirected to {string} with error {string} and reason {string}', function (target, error, reason) {
+  expect(this.response.status).to.equal(302);
+  const location = new URL(locationOf(this.response));
+  expect(location.searchParams.get('error')).to.equal(error);
+  expect(location.searchParams.get('reason')).to.equal(reason);
+  location.searchParams.delete('error');
+  location.searchParams.delete('reason');
   expect(location.toString()).to.equal(new URL(target).toString());
 });
 

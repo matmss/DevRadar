@@ -7,9 +7,16 @@ const DEFAULT_GITHUB_CALLBACK_URL = 'http://localhost:3333/auth/github/callback'
 const DEFAULT_MOBILE_APP_SCHEME = 'devradar';
 const MIN_PRODUCTION_SECRET_LENGTH = 32;
 
-// Schemes that would turn the mobile allow-list entry into an open redirect or script sink.
-const FORBIDDEN_APP_SCHEMES = ['http', 'https', 'javascript', 'data', 'file', 'vbscript', 'blob', 'about'];
-const URL_SCHEME_PATTERN = /^[a-z][a-z\d+.-]*$/;
+// MOBILE_APP_SCHEME is an allow-list of shape (QA-AUTH-3): lowercase letters/digits, optionally
+// in dot- or hyphen-separated groups (e.g. "devradar", "com.devradar.app"). On top of that,
+// schemes that browsers or OSes resolve to web pages, scripts, files or other apps are refused,
+// since allow-listing them would make the mobile redirect an open redirect for the sign-in code
+// (e.g. Android's intent://host/#Intent;scheme=https;end opens an arbitrary https URL).
+const APP_SCHEME_PATTERN = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/;
+const REFUSED_APP_SCHEMES = [
+  'http', 'https', 'intent', 'exp', 'exps', 'javascript', 'data', 'file', 'ftp',
+  'ws', 'wss', 'about', 'blob', 'content', 'vbscript', 'chrome',
+];
 
 // Outside production a missing JWT_SECRET falls back to a random per-process secret, so local
 // development works without setup. Sessions then reset whenever the process restarts.
@@ -63,18 +70,43 @@ function jwtSecret() {
   return fallbackJwtSecret;
 }
 
-/**
- * The custom URL scheme of the mobile app (e.g. "devradar" for devradar://...), allowed as a
- * post-login redirect target. Returns null if it is unset or unsafe to allow-list.
- * @returns {string | null}
- */
-function mobileAppScheme() {
+/** @returns {string} MOBILE_APP_SCHEME as configured (default "devradar"), lowercased, without "://" */
+function configuredAppScheme() {
   const raw = process.env.MOBILE_APP_SCHEME === undefined
     ? DEFAULT_MOBILE_APP_SCHEME
     : readEnv('MOBILE_APP_SCHEME');
-  const scheme = raw.toLowerCase().replace(/:(\/\/)?$/, '');
-  if (!URL_SCHEME_PATTERN.test(scheme) || FORBIDDEN_APP_SCHEMES.includes(scheme)) return null;
-  return scheme;
+  return raw.toLowerCase().replace(/:(\/\/)?$/, '');
+}
+
+/**
+ * @param {string} scheme - lowercased, without "://"
+ * @returns {boolean} true if the scheme may be allow-listed as a post-login redirect
+ */
+function isAllowedAppScheme(scheme) {
+  return APP_SCHEME_PATTERN.test(scheme) && !REFUSED_APP_SCHEMES.includes(scheme);
+}
+
+/**
+ * The custom URL scheme of the mobile app (e.g. "devradar" for devradar://...), allowed as a
+ * post-login redirect target. Returns null (mobile redirects disabled) if it is empty, has
+ * an invalid shape, or is a refused scheme.
+ * @returns {string | null}
+ */
+function mobileAppScheme() {
+  const scheme = configuredAppScheme();
+  return isAllowedAppScheme(scheme) ? scheme : null;
+}
+
+/**
+ * Settings that are ignored but do not stop the server. Never includes the values themselves.
+ * @returns {string[]}
+ */
+function authConfigWarnings() {
+  const scheme = configuredAppScheme();
+  if (scheme !== '' && !isAllowedAppScheme(scheme)) {
+    return ['MOBILE_APP_SCHEME is not an allowed app scheme; mobile sign-in redirects are disabled'];
+  }
+  return [];
 }
 
 /**
@@ -97,10 +129,12 @@ function authConfigErrors() {
 }
 
 /**
- * Throws if the auth configuration is unusable, so index.js refuses to start.
+ * Logs warnings for ignored settings, then throws if the auth configuration is unusable, so
+ * index.js refuses to start.
  * @returns {void}
  */
 function assertAuthConfig() {
+  authConfigWarnings().forEach((warning) => console.warn(`Auth configuration warning: ${warning}`));
   const errors = authConfigErrors();
   if (errors.length > 0) {
     throw new Error(`Invalid auth configuration: ${errors.join('; ')}. See dev/backend/.env.example.`);
@@ -116,6 +150,8 @@ module.exports = {
   isGithubOAuthConfigured,
   jwtSecret,
   mobileAppScheme,
+  isAllowedAppScheme,
+  authConfigWarnings,
   authConfigErrors,
   assertAuthConfig,
 };
