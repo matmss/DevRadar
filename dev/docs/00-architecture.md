@@ -144,8 +144,8 @@ mobile sign-in also comes with slice 4.
     code points and 400 bytes (bytes of the JSON-encoded UTF-8, so emoji and escaped quotes
     count fully); `avatar_url` is kept only if it is an absolute `https` URL without
     credentials, at most 300 bytes; every other field is dropped.
-  - **Token size:** with those caps the largest possible session token is about 1.5 KB (1461
-    bytes measured with a 39-character login and every field filled with the most expensive
+  - **Token size:** with those caps the largest possible session token is about 1.5 KB (about
+    1,480 bytes at most, measured with a 39-character login and every field filled with the most expensive
     characters; a typical one is about 340), well under the 2048-byte value limit of
     `expo-secure-store` the mobile app relies on in slice 4. `unit/sessionToken.test.js` pins
     it under 1600 bytes. Verification rejects a `profile` claim that is not exactly
