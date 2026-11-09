@@ -26,6 +26,7 @@ const mongoose = require('../../../../dev/backend/node_modules/mongoose');
 const routes = require('../../../../dev/backend/src/routes');
 const { setupWebsocket } = require('../../../../dev/backend/src/websocket');
 const Dev = require('../../../../dev/backend/src/models/Dev');
+const { corsOptions } = require('../../../../dev/backend/src/config/cors');
 
 let mongod;
 let server;
@@ -85,7 +86,7 @@ async function startBackend(port) {
   server = http.Server(app);
   setupWebsocket(server);
 
-  app.use(cors());
+  app.use(cors(corsOptions));
   app.use(express.json());
   app.use('/__test__', testRoutes());
   app.use(routes);

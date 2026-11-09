@@ -19,6 +19,7 @@ const http = require('http');
 // below repo-root (qa/ then backend-tests/), alongside repo-root/backend.
 const routes = require('../../../../dev/backend/src/routes');
 const { setupWebsocket } = require('../../../../dev/backend/src/websocket');
+const { corsOptions } = require('../../../../dev/backend/src/config/cors');
 
 function createTestApp() {
   const app = express();
@@ -26,7 +27,7 @@ function createTestApp() {
 
   setupWebsocket(server);
 
-  app.use(cors());
+  app.use(cors(corsOptions));
   app.use(express.json());
   app.use(routes);
 
