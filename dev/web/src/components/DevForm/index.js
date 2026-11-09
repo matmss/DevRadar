@@ -1,13 +1,19 @@
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useRef} from 'react';
 
 import './styles.css';
 
+// Registers the signed-in developer: the GitHub username comes from the session token, so the
+// form only asks for techs and location.
 function DevForm({onSubmit}) {
-  const [github_username, setGithubUsername] = useState('');
-  const [techs, setTechs] = useState(''); 
+  const [techs, setTechs] = useState('');
 
   const [latitude, setLatitude] = useState('');
   const [longitude, setLongitude] = useState('');
+
+  // One registration at a time (QA-AUTH2-1): "Salvar" is disabled while a request is in flight,
+  // and the ref also stops a second submit that arrives before the re-render.
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
 
   useEffect(() => {
@@ -26,10 +32,12 @@ function DevForm({onSubmit}) {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    
+    if (submittingRef.current) return;
+
+    submittingRef.current = true;
+    setSubmitting(true);
     try {
       await onSubmit({
-        github_username,
         techs,
         latitude,
         longitude,
@@ -37,19 +45,16 @@ function DevForm({onSubmit}) {
     } catch {
       // The parent already shows the error; keep the fields so the user can correct them.
       return;
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
     }
 
-    setGithubUsername('');
     setTechs('');
   }
 
   return(
     <form onSubmit={handleSubmit}>
-      <div className="input-block">
-        <label htmlFor="github_username">Usuário GitHub</label>
-        <input name="github_username" id="github_username" required value={github_username} onChange={e => setGithubUsername(e.target.value)} />
-      </div>
-
       <div className="input-block">
         <label htmlFor="techs">Tecnologias</label>
         <input name="techs" id="techs" required value={techs} onChange={e => setTechs(e.target.value)} />
@@ -67,7 +72,7 @@ function DevForm({onSubmit}) {
         </div>
       </div>
 
-      <button type="submit">Salvar</button>
+      <button type="submit" disabled={submitting}>Salvar</button>
     </form>
 
   );

@@ -1,8 +1,14 @@
 // DevRadar session tokens: HS256-signed JWTs, subject = GitHub login, valid 7 days (Q3, no
 // refresh token). Tokens carry no GitHub credentials.
+//
+// The `profile` claim is the public profile captured at sign-in ({ name, avatar_url, bio }, see
+// utils/githubProfile.js). POST /devs creates a new dev from it, and GET /auth/me returns it. It
+// is required: a token without a well-formed profile (e.g. one issued before this claim existed)
+// is token_invalid, so the client signs in again.
 const jwt = require('jsonwebtoken');
 const { jwtSecret } = require('../config/auth');
 const { isValidGithubUsername } = require('./githubUsername');
+const { sanitizeGithubProfile, isSanitizedGithubProfile } = require('./githubProfile');
 
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const ISSUER = 'devradar';
@@ -17,10 +23,12 @@ const TOKEN_ERROR = {
 
 /**
  * @param {string} githubUsername - the GitHub login the session belongs to
+ * @param {{ name?: unknown, avatar_url?: unknown, bio?: unknown }} [profile] - the GitHub profile
+ *   read at sign-in; sanitized and length-limited here (missing values become null)
  * @returns {{ token: string, expiresIn: number }}
  */
-function signSessionToken(githubUsername) {
-  const token = jwt.sign({}, jwtSecret(), {
+function signSessionToken(githubUsername, profile) {
+  const token = jwt.sign({ profile: sanitizeGithubProfile(profile) }, jwtSecret(), {
     algorithm: ALGORITHM,
     expiresIn: SESSION_TTL_SECONDS,
     issuer: ISSUER,
@@ -35,7 +43,8 @@ function signSessionToken(githubUsername) {
  * reported as expired; anything malformed, tampered with or signed with another key is invalid.
  * @param {unknown} token
  * @param {{ nowSeconds?: number }} [options] - override the clock (tests)
- * @returns {{ ok: true, user: { github_username: string } } | { ok: false, code: string }}
+ * @returns {{ ok: true, user: { github_username: string, profile: import('./githubProfile').GithubProfile } }
+ *   | { ok: false, code: string }}
  */
 function verifySessionToken(token, { nowSeconds } = {}) {
   if (typeof token !== 'string' || token === '') return { ok: false, code: TOKEN_ERROR.MISSING };
@@ -55,10 +64,12 @@ function verifySessionToken(token, { nowSeconds } = {}) {
     throw err;
   }
 
-  if (!claims || !isValidGithubUsername(claims.sub) || typeof claims.exp !== 'number') {
+  if (!claims || !isValidGithubUsername(claims.sub) || typeof claims.exp !== 'number'
+    || !isSanitizedGithubProfile(claims.profile)) {
     return { ok: false, code: TOKEN_ERROR.INVALID };
   }
-  return { ok: true, user: { github_username: claims.sub } };
+  const { name, avatar_url, bio } = claims.profile;
+  return { ok: true, user: { github_username: claims.sub, profile: { name, avatar_url, bio } } };
 }
 
 module.exports = { signSessionToken, verifySessionToken, TOKEN_ERROR, SESSION_TTL_SECONDS, ISSUER };

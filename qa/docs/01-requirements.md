@@ -22,8 +22,8 @@ Cross-cutting integration: the backend calls the public **GitHub Users API** (`G
 ## 2. Functional requirements
 
 ### FR-1 — Developer registration
-- **FR-1.1** The system shall accept a new developer registration containing `github_username`, `techs` (free-text, comma-separated), `latitude`, and `longitude`.
-- **FR-1.2** On registration, the system shall look up the given GitHub username via the GitHub public API and populate `name` (falling back to the username if no name is set), `avatar_url`, and `bio`.
+- **FR-1.1** The system shall accept a new developer registration containing `github_username`, `techs` (free-text, comma-separated), `latitude`, and `longitude`. *Since auth slice 2 (`dev/docs/03-auth-spec.md`, US-3): registration requires a session token and `github_username` is the token's GitHub login; a body `github_username` is ignored.*
+- **FR-1.2** On registration, the system shall look up the given GitHub username via the GitHub public API and populate `name` (falling back to the username if no name is set), `avatar_url`, and `bio`. *Since auth slice 2: these come from the GitHub profile captured at sign-in (a snapshot carried in the session token), and registration makes no GitHub API call.*
 - **FR-1.3** The system shall not create a duplicate developer record for a `github_username` that already exists; it shall return the existing record instead.
 - **FR-1.4** The system shall persist `techs` as an array, parsed from the comma-separated input string, trimming whitespace around each tech.
 - **FR-1.5** The system shall persist `location` as a GeoJSON `Point` (`[longitude, latitude]`) indexed with a `2dsphere` index.
@@ -45,7 +45,7 @@ Cross-cutting integration: the backend calls the public **GitHub Users API** (`G
 
 ### FR-5 — Web client
 - **FR-5.1** The web app shall request the browser's geolocation on load and pre-fill latitude/longitude in the registration form (user-editable).
-- **FR-5.2** The web app shall submit a registration via `POST /devs` and append the returned developer to the visible list without a full reload.
+- **FR-5.2** The web app shall submit a registration via `POST /devs` and append the returned developer to the visible list without a full reload. *Since auth slice 3 (US-6): only when signed in with GitHub; the form has no username field.*
 - **FR-5.3** The web app shall load and display the full developer list (`GET /devs`) on mount, showing avatar, name, techs, bio, and a link to the developer's GitHub profile.
 
 ### FR-6 — Mobile client

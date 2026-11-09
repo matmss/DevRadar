@@ -8,6 +8,7 @@ Feature: Every route answers errors as JSON (BUG-012)
 
   @edge @regression @P2
   Scenario Outline: A malformed registration body gets a JSON error
+    Given I am signed in as "gaearon"
     When I send the raw registration body <body>
     Then the response status should be <status>
     And the response should be a JSON error with code "<code>"
@@ -16,8 +17,8 @@ Feature: Every route answers errors as JSON (BUG-012)
 
     Examples:
       | body                                  | status | code           |
-      | '{"github_username":'                 | 400    | body_invalid   |
-      | '{"github_username":"gaearon",}'      | 400    | body_invalid   |
+      | '{"techs":'                           | 400    | body_invalid   |
+      | '{"techs":"ReactJS",}'                | 400    | body_invalid   |
       | an oversized JSON payload             | 413    | body_too_large |
 
   @edge @regression @P2

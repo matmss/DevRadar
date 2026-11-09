@@ -1,0 +1,3 @@
+- [qa/reports are tracked](project_qa_reports_tracked.md) - test runs dirty qa/reports/*; `git checkout -- qa/reports` before committing
+- [Worktree bash limits](feedback_worktree_bash.md) - compound shell writes get refused in worktree mode; use Write/Edit
+- [Write tool unicode escapes](feedback_write_tool_unicode_escapes.md) - backslash-u escapes become raw chars (NUL, U+2028, U+202E); use code points, write U+XXXX in prose, scan after

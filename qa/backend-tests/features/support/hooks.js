@@ -7,6 +7,8 @@ const nock = require('nock');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const { createTestApp } = require('./testApp');
 const { applyTestAuthEnv } = require('./auth-config');
+const { watchGithubUsersApi } = require('./github-mock');
+const Dev = require('../../../../dev/backend/src/models/Dev');
 const { resetAuthRateLimit } = require('../../../../dev/backend/src/middleware/rateLimit');
 
 let mongod;
@@ -15,6 +17,9 @@ BeforeAll({ timeout: 60000 }, async function () {
   mongod = await MongoMemoryServer.create();
   const uri = mongod.getUri();
   await mongoose.connect(uri);
+  // Build the Dev indexes (unique case-insensitive github_username) before any scenario, as
+  // index.js does at startup. Scenarios empty collections with deleteMany, so indexes persist.
+  await Dev.init();
 });
 
 AfterAll(async function () {
@@ -45,6 +50,19 @@ Before(async function () {
   nock.cleanAll();
   nock.disableNetConnect();
   nock.enableNetConnect('127.0.0.1'); // allow supertest/socket.io-client local traffic
+
+  // The backend must never call GitHub's public users API (registration uses the profile
+  // captured at sign-in). Recorded for every scenario; the After hook fails on any call.
+  this.githubUsersApi = watchGithubUsersApi();
+});
+
+After(function () {
+  if (!this.githubUsersApi) return;
+  this.githubUsersApi.stop();
+  const { calls } = this.githubUsersApi;
+  if (calls.length > 0) {
+    throw new Error(`The backend called GitHub's public users API: ${calls.join(', ')}`);
+  }
 });
 
 After(async function () {

@@ -17,7 +17,7 @@ nearby devs on a map in real time. Four independent npm projects, no monorepo to
 
 ### Backend (`dev/backend/`)
 ```bash
-cp .env.example .env   # set MONGO_URI (Atlas or local), optionally PORT and CORS_ORIGINS
+cp .env.example .env   # MONGO_URI; for sign-in also GITHUB_CLIENT_ID/SECRET and JWT_SECRET (see the file)
 npm install
 npm run dev             # nodemon src/index.js, port 3333 by default
 ```
@@ -81,16 +81,20 @@ Routes (`dev/backend/src/routes.js`):
   (`code` + `code_verifier`) → 7-day HS256 JWT. `GET /auth/me` is behind `requireAuth`
   (`middleware/auth.js`; 401 codes `token_missing`/`token_expired`/`token_invalid`). State,
   codes and rate-limit counters are in memory (single instance). Env: see `dev/backend/.env.example`.
-  **As of auth slice 1, `/devs`, `/search` and the socket are not protected yet** (later slices).
+  **As of auth slices 2+3, `POST /devs` requires a token; `GET /devs`, `/search` and the socket are
+  still public until slice 4.** The JWT carries a sanitized, size-capped `profile` claim
+  (`utils/githubProfile.js`; keep tokens well under 2048 bytes, the `expo-secure-store` limit).
 
-- `POST /devs` (`DevController.store`) — if `github_username` isn't already in Mongo, calls
-  the **real GitHub Users API** (`GET https://api.github.com/users/:username`, unauthenticated,
-  60 req/hr) to populate `name`/`avatar_url`/`bio`, persists a GeoJSON `Point`, then calls
-  `websocket.findConnections()` + `sendMessage()` to push a `new-dev` event to nearby,
-  tech-matching connected sockets. Input is validated first by `utils/validateDevInput.js`
-  (400 with `{ error, details[] }`), and GitHub failures are mapped to 404 / 503 (rate limit) /
-  502 (BUG-003/004/005, fixed). Usernames are matched case-insensitively (Mongo collation).
-  Other thrown errors reach the global error handler (500 `internal_error`).
+- `POST /devs` (`DevController.store`, behind `requireAuth`) — registers **the signed-in user**:
+  the username and `name`/`avatar_url`/`bio` come from the token (`req.user`, captured from
+  GitHub's `/user` at sign-in); a body `github_username` is ignored, and there is **no GitHub API
+  call** at registration any more. Input is validated by `utils/validateDevInput.js` (400 with
+  `{ error, details[] }`). The dev is created with one atomic `findOneAndUpdate` upsert, backed by
+  a **unique case-insensitive index on `github_username`** (`models/Dev.js`, collation
+  `{locale:'en', strength:2}`); a lost race (E11000) returns the existing dev, and only the
+  request that created the dev pushes `new-dev` (`websocket.findConnections()` + `sendMessage()`)
+  to nearby, tech-matching sockets. An already registered user gets their dev back unchanged.
+  If legacy case-duplicates block the index build, `index.js` logs it and keeps running.
 - `GET /search` (`SearchController.index`) — Mongo `$near` geo query on the `Dev.location`
   `2dsphere` index (`dev/backend/src/models/Dev.js`), `$maxDistance: NEARBY_RADIUS_METERS`, filtered by
   `techs: { $in: techsArray }`. Query params are validated (400 on missing/invalid).
@@ -107,7 +111,12 @@ Routes (`dev/backend/src/routes.js`):
   the websocket handshake parsing; keep them consistent if you change the format.
 
 ### Client responsibilities
-- `dev/web/` is registration + a flat list only (`dev/web/src/App.js`) — no map, calls `/devs`.
+- `dev/web/` (`dev/web/src/App.js`): GitHub sign-in (PKCE, `services/auth.js`; token in
+  localStorage `devradar.session_token`, followed across tabs via the `storage` event; callback
+  route `/auth/callback`), then the registration form (no username field) and a flat list from
+  `/devs` — no map. Every 401 signs out. A deployed build needs an SPA fallback so
+  `/auth/callback` serves `index.html` (see `dev/web/.env.example`). "Sair" is local only: tokens
+  can't be revoked server-side.
 - `dev/mobile/src/pages/Main.js` is the map experience: `expo-location` for device position →
   `GET /search` → renders `react-native-maps` markers → opens a Socket.io connection scoped
   to the current map region (`services/socket.js`) to receive live `new-dev` pushes.
@@ -123,12 +132,16 @@ rather than a single cross-language framework:
 
 - `qa/backend-tests/` — Cucumber.js `.feature` + step definitions, driving the real Express
   `app` in-process via `supertest` against a real ephemeral MongoDB (`mongodb-memory-server`
-  — needed because `2dsphere` geo queries can't be faithfully mocked). `nock` stubs the
-  GitHub API so functional runs are deterministic and don't burn the rate limit.
+  — needed because `2dsphere` geo queries can't be faithfully mocked). `nock` stubs
+  GitHub's OAuth token exchange and `GET /user` (`support/github-mock.js`); nothing stubs
+  `/users/*`, so any registration-time GitHub lookup fails the scenario.
 - `qa/web-tests/` — Playwright + `playwright-bdd`. `playwright.config.js` boots a **real**
   backend + real ephemeral Mongo via `features/support/global-setup.js` (see
   `INTEGRATION_BACKEND_PORT`) and the real CRA dev server — deliberately no `page.route`
-  mocking; only GitHub's API and browser geolocation (`context.setGeolocation`) are faked.
+  mocking; only GitHub and browser geolocation (`context.setGeolocation`) are faked: nock for
+  GitHub's server-side OAuth API, `context.route` for the authorize page and avatar images, and
+  a hook (`support/github-network.js`) fails any scenario whose browser reaches real GitHub.
+  Runs with `workers: 1` (scenarios share one backend and its `/__test__` reset).
   Run `bddgen` before `playwright test` (or use the `pretest`/`test:*` npm scripts, which do
   it automatically) — it compiles `.feature` files into Playwright test files.
 - `qa/mobile-tests/` — Detox + `jest-cucumber` is the intended primary suite

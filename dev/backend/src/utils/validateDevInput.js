@@ -2,7 +2,6 @@
 const DECIMAL_PATTERN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
 
 const parseStringAsArray = require('./parseStringAsArray');
-const { isValidGithubUsername } = require('./githubUsername');
 
 /**
  * Parses a coordinate that may arrive as a number or a numeric string.
@@ -16,36 +15,31 @@ function toCoordinate(raw) {
 }
 
 /**
- * Validates the body of POST /devs.
+ * Validates the body of POST /devs. The developer's identity comes from the session token
+ * (req.user), so a `github_username` in the body is ignored, not validated (auth spec Q9).
  * @param {Record<string, unknown>} body
- * @returns {{ errors: string[], value: { github_username: string, techs: string, latitude: number, longitude: number } }}
+ * @returns {{ errors: string[], value: { techs: string, latitude: number, longitude: number } }}
  */
-function validateDevInput(body = {}) {
+function validateDevInput(body) {
+  const source = body && typeof body === 'object' ? body : {};
   const errors = [];
-  const { github_username, techs } = body;
-
-  const username = typeof github_username === 'string' ? github_username.trim() : '';
-  if (!username) {
-    errors.push('github_username is required');
-  } else if (!isValidGithubUsername(username)) {
-    errors.push('github_username is not a valid GitHub username');
-  }
+  const { techs } = source;
 
   if (typeof techs !== 'string' || parseStringAsArray(techs).length === 0) {
     errors.push('techs is required (comma-separated string)');
   }
 
-  const latitude = toCoordinate(body.latitude);
+  const latitude = toCoordinate(source.latitude);
   if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
     errors.push('latitude must be a number between -90 and 90');
   }
 
-  const longitude = toCoordinate(body.longitude);
+  const longitude = toCoordinate(source.longitude);
   if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
     errors.push('longitude must be a number between -180 and 180');
   }
 
-  return { errors, value: { github_username: username, techs, latitude, longitude } };
+  return { errors, value: { techs, latitude, longitude } };
 }
 
 module.exports = validateDevInput;

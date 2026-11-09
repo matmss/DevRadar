@@ -49,6 +49,13 @@ Then('client {string} should not receive a {string} event within {int} seconds',
   expect(received, `Expected client "${alias}" NOT to receive a "${eventName}" event, but it did.`).to.be.false;
 });
 
+// Waits the whole window, then counts: proves no extra event arrives late.
+Then('client {string} should receive exactly {int} {string} event(s) within {int} seconds', async function (alias, count, eventName, seconds) {
+  await new Promise((r) => setTimeout(r, seconds * 1000));
+  const received = this.receivedEvents[alias].filter((e) => e.event === eventName).length;
+  expect(received, `client "${alias}" "${eventName}" events`).to.equal(count);
+});
+
 Then('the event payload for {string} should contain github_username {string}', function (alias, username) {
   const match = this.receivedEvents[alias].find((e) => e.payload.github_username === username);
   expect(match, `No "new-dev" event with github_username "${username}" found for "${alias}"`).to.not.be.undefined;

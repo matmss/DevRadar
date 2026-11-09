@@ -21,6 +21,10 @@ const backendUrl = `http://localhost:${INTEGRATION_BACKEND_PORT}`;
 
 module.exports = defineConfig({
   testDir,
+  // Every scenario shares the one harness backend and its database (reset/seeded through
+  // /__test__), so feature files must not run in parallel workers: one file's reset would
+  // wipe another's seed data mid-scenario.
+  workers: 1,
   globalSetup: require.resolve('./features/support/global-setup'),
   reporter: [
     ['html', { outputFolder: '../reports/web-html' }],

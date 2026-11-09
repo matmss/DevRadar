@@ -1,10 +1,12 @@
-// GitHub OAuth web flow calls. Failures map to an HTTP status + message for the client, in
-// the same style as DevController's fetchGithubUser: 503 for rate limits, 502 otherwise.
+// GitHub OAuth web flow calls, the backend's only calls to GitHub (registration uses the
+// profile captured here, see utils/githubProfile.js). Failures map to an HTTP status + message:
+// 503 for rate limits, 502 otherwise.
 // Never log request bodies, axios configs or responses here: they contain the client secret
 // and access tokens. Log `err.message` only.
 const axios = require('axios');
 const { githubClientId, githubClientSecret, githubCallbackUrl } = require('../config/auth');
 const { isValidGithubUsername } = require('../utils/githubUsername');
+const { sanitizeGithubProfile } = require('../utils/githubProfile');
 
 const AUTHORIZE_URL = 'https://github.com/login/oauth/authorize';
 const ACCESS_TOKEN_URL = 'https://github.com/login/oauth/access_token';
@@ -97,9 +99,10 @@ async function exchangeCodeForToken(code) {
 }
 
 /**
- * Reads the signed-in user's public profile with their access token.
+ * Reads the signed-in user's public profile with their access token. The profile is sanitized
+ * and length-limited (utils/githubProfile.js); it becomes the session token's `profile` claim.
  * @param {string} accessToken
- * @returns {Promise<{ user: { login: string, name: string | null, avatar_url: string | null } } | GithubFailure>}
+ * @returns {Promise<{ user: { login: string, profile: import('../utils/githubProfile').GithubProfile } } | GithubFailure>}
  */
 async function fetchAuthenticatedUser(accessToken) {
   let response;
@@ -121,13 +124,7 @@ async function fetchAuthenticatedUser(accessToken) {
     console.error('GitHub user lookup returned no valid login');
     return { status: 502, error: 'Could not complete GitHub sign-in, try again later', details: ['user lookup'] };
   }
-  return {
-    user: {
-      login: data.login,
-      name: typeof data.name === 'string' ? data.name : null,
-      avatar_url: typeof data.avatar_url === 'string' ? data.avatar_url : null,
-    },
-  };
+  return { user: { login: data.login, profile: sanitizeGithubProfile(data) } };
 }
 
 module.exports = {

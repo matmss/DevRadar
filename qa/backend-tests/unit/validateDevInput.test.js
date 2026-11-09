@@ -1,12 +1,12 @@
 const validateDevInput = require('../../../dev/backend/src/utils/validateDevInput');
 
-const valid = { github_username: 'gaearon', techs: 'ReactJS, Redux', latitude: '-23.5505', longitude: '-46.6333' };
+const valid = { techs: 'ReactJS, Redux', latitude: '-23.5505', longitude: '-46.6333' };
 
 describe('validateDevInput', () => {
   it('accepts a valid body and coerces coordinates to numbers', () => {
     const { errors, value } = validateDevInput(valid);
     expect(errors).toEqual([]);
-    expect(value).toEqual({ github_username: 'gaearon', techs: 'ReactJS, Redux', latitude: -23.5505, longitude: -46.6333 });
+    expect(value).toEqual({ techs: 'ReactJS, Redux', latitude: -23.5505, longitude: -46.6333 });
   });
 
   it('accepts numeric coordinates and boundary values', () => {
@@ -18,26 +18,25 @@ describe('validateDevInput', () => {
     expect(validateDevInput({ ...valid, latitude }).errors).toEqual([]);
   });
 
-  it('trims github_username', () => {
-    expect(validateDevInput({ ...valid, github_username: '  gaearon ' }).value.github_username).toBe('gaearon');
-  });
-
   it('rejects an empty body with one error per field', () => {
-    expect(validateDevInput({}).errors).toHaveLength(4);
-    expect(validateDevInput(undefined).errors).toHaveLength(4);
+    expect(validateDevInput({}).errors).toHaveLength(3);
+    expect(validateDevInput(undefined).errors).toHaveLength(3);
+    expect(validateDevInput(null).errors).toHaveLength(3);
   });
 
+  // The identity comes from the session token (auth spec Q9): a body github_username is
+  // neither validated nor returned.
   it.each([
     ['missing', undefined],
     ['empty', ''],
-    ['whitespace', '   '],
+    ['another user', 'bob'],
     ['non-string', 123],
     ['path traversal', '../orgs/x'],
-    ['leading hyphen', '-abc'],
-    ['double hyphen', 'a--b'],
     ['too long', 'a'.repeat(40)],
-  ])('rejects github_username: %s', (_label, github_username) => {
-    expect(validateDevInput({ ...valid, github_username }).errors).toHaveLength(1);
+  ])('ignores github_username: %s', (_label, github_username) => {
+    const { errors, value } = validateDevInput({ ...valid, github_username });
+    expect(errors).toEqual([]);
+    expect(value).not.toHaveProperty('github_username');
   });
 
   it.each([

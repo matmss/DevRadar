@@ -1,5 +1,5 @@
-// Bearer-token authentication (US-2). Not applied to /devs or /search yet (slice 1); see
-// dev/docs/03-auth-spec.md "Delivery order".
+// Bearer-token authentication (US-2). Applied to POST /devs and GET /auth/me; GET /devs,
+// GET /search and the socket follow in slice 4 (dev/docs/03-auth-spec.md "Delivery order").
 //
 // 401 body: { error, code, details }. `code` is stable and lets clients tell the cases apart:
 //   token_missing  no `Authorization: Bearer <token>` header
@@ -40,7 +40,8 @@ function readBearerToken(header) {
 
 /**
  * Express middleware: rejects the request with 401 unless it carries a valid session token,
- * otherwise sets `req.user = { github_username }` and continues.
+ * otherwise sets `req.user = { github_username, profile: { name, avatar_url, bio } }` (the
+ * sign-in snapshot from the token) and continues.
  * @param {import('express').Request} req
  * @param {import('express').Response} res
  * @param {import('express').NextFunction} next
