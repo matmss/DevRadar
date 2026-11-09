@@ -29,3 +29,7 @@ appId: com.matmss.mobile
     visible: "DevRadar"
     timeout: 20000
 - assertNotVisible: "has stopped" # generic Android crash-dialog text; adjust per OS under test
+# The map screen explains why there is no map, with a retry (dev/mobile/src/pages/Main.js).
+- assertVisible: "Permita o acesso à localização.*"
+- assertVisible:
+    id: "location-retry-button"

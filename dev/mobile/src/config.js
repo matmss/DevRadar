@@ -7,8 +7,8 @@ export const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3333
 /**
  * The app's custom URL scheme: its own applicationId / bundle identifier, reverse-domain as RFC
  * 8252 7.1 recommends for native OAuth redirects. Must equal "scheme" in app.json, the intent
- * filter in android/app/src/main/AndroidManifest.xml and the backend's MOBILE_APP_SCHEME
- * (dev/tests/mobile/config.test.js checks the first two).
+ * filter in android/app/src/main/AndroidManifest.xml and the backend's MOBILE_APP_SCHEME default
+ * and .env.example (dev/tests/mobile/config.test.js checks all of them).
  */
 export const APP_SCHEME = 'com.matmss.mobile';
 

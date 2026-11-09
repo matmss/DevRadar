@@ -212,6 +212,61 @@ describe('SessionProvider', () => {
     expect(SecureStore.__store.get(TOKEN_KEY)).toBe('fresh-token');
   });
 
+  it('ignores a socket refusal for a handshake sent without a token after "Sair" (QA-AUTH4-1)', async () => {
+    SecureStore.__store.set(TOKEN_KEY, 'stored-token');
+    routes['GET /auth/me'] = () => [200, USER];
+    renderer = await launch();
+    await act(async () => session.signOut());
+
+    // As if a late anonymous handshake still went out and the backend refused it.
+    fakeSocket.auth = { token: null };
+    await act(async () => {
+      fakeSocket.emitLocal('connect_error', Object.assign(new Error('Authentication required'), {
+        data: { code: 'token_missing', details: ['x'] },
+      }));
+    });
+    await flush();
+    expect(session.state).toEqual({ status: 'signedOut', user: null, notice: null });
+  });
+
+  it('ignores a 401 for a request sent without a token while signed out', async () => {
+    renderer = await launch();
+    routes['GET /search'] = () => [401, { code: 'token_missing' }];
+    await act(async () => {
+      await api.get('/search').catch(() => {});
+    });
+    await flush();
+    expect(session.state).toEqual({ status: 'signedOut', user: null, notice: null });
+  });
+
+  it('runs one sign-in at a time when "Entrar com GitHub" is tapped twice', async () => {
+    renderer = await launch();
+    let finish;
+    WebBrowser.openAuthSessionAsync.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    routes['POST /auth/token'] = () => [200, { token: 'fresh-token', user: USER }];
+
+    let first;
+    let second;
+    await act(async () => {
+      first = session.signIn();
+      second = session.signIn();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(WebBrowser.openAuthSessionAsync).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      finish({ type: 'success', url: `${AUTH_REDIRECT_URI}?code=c` });
+      await Promise.all([first, second]);
+    });
+    expect(session.state.status).toBe('signedIn');
+
+    // The guard is released afterwards: signing in again later works.
+    await act(async () => session.signOut());
+    WebBrowser.openAuthSessionAsync.mockResolvedValue({ type: 'cancel' });
+    await act(async () => session.signIn());
+    expect(WebBrowser.openAuthSessionAsync).toHaveBeenCalledTimes(2);
+  });
+
   it('shows "Login cancelado" when the user closes the auth session', async () => {
     renderer = await launch();
     WebBrowser.openAuthSessionAsync.mockResolvedValue({ type: 'cancel' });

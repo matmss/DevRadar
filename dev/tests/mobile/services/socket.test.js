@@ -51,6 +51,19 @@ describe('socket service', () => {
     expect(fake.connect).toHaveBeenCalledTimes(1);
   });
 
+  it.each([null, undefined, ''])('never opens an anonymous handshake (token %p, QA-AUTH4-1)', (token) => {
+    socketService.connect(1, 2, 'Go', 'token-1');
+    fake.connect.mockClear();
+    expect(socketService.connect(1, 2, 'Go', token)).toBe(false);
+    expect(fake.connect).not.toHaveBeenCalled();
+    expect(fake.disconnect).toHaveBeenCalled(); // the previous subscription is closed
+    expect(fake.auth).toEqual({});
+  });
+
+  it('reports that it connected when it has a token', () => {
+    expect(socketService.connect(1, 2, 'Go', 'token-1')).toBe(true);
+  });
+
   it('replaces the previous subscription when connecting again', () => {
     socketService.connect(1, 2, 'Go', 'token-1');
     socketService.connect(3, 4, 'Rust', 'token-2');

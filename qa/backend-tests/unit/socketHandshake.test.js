@@ -1,7 +1,20 @@
 // Socket.io handshake authentication (auth slice 4, US-5): websocket.js#authenticateHandshake is
 // the `io.use` middleware. The end-to-end behavior (connect_error on the client, nothing added to
 // `connections`) is in features/realtime-auth.feature; this pins the middleware contract.
-const { authenticateHandshake } = require('../../../dev/backend/src/websocket');
+const { authenticateHandshake, SOCKET_OPTIONS } = require('../../../dev/backend/src/websocket');
+const { socketCorsOptions } = require('../../../dev/backend/src/config/cors');
+
+describe('Socket.io server options', () => {
+  it('closes a connection that never joins (e.g. a refused client that ignores connect_error) within 10 s', () => {
+    expect(SOCKET_OPTIONS.connectTimeout).toBeGreaterThan(0);
+    expect(SOCKET_OPTIONS.connectTimeout).toBeLessThanOrEqual(10000);
+  });
+
+  it('keeps the CORS origin checks', () => {
+    expect(SOCKET_OPTIONS.cors).toBe(socketCorsOptions.cors);
+    expect(SOCKET_OPTIONS.allowRequest).toBe(socketCorsOptions.allowRequest);
+  });
+});
 const { signSessionToken } = require('../../../dev/backend/src/utils/sessionToken');
 
 const QUERY = { latitude: '-23.5505', longitude: '-46.6333', techs: 'ReactJS, Node.js' };

@@ -78,6 +78,21 @@ describe('session storage', () => {
     expect(SecureStore.__store.size).toBe(0);
   });
 
+  it('an auth failure while signed out ends nothing (QA-AUTH4-1)', async () => {
+    const session = freshSession();
+    await expect(session.clearToken(null)).resolves.toBe(false);
+    await expect(session.clearToken('some-token')).resolves.toBe(false);
+    expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
+
+    await session.saveToken('token-1');
+    await session.clearToken();
+    await expect(session.clearToken(null)).resolves.toBe(false);
+  });
+
+  it('"Sair" while already signed out still succeeds', async () => {
+    await expect(freshSession().clearToken()).resolves.toBe(true);
+  });
+
   it('treats unreadable secure storage as signed out', async () => {
     SecureStore.getItemAsync.mockRejectedValueOnce(new Error('Keychain item not found'));
     const session = freshSession();

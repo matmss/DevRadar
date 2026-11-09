@@ -11,6 +11,8 @@ export const MESSAGES = {
   serverUnreachable: 'Não foi possível falar com o servidor, tente novamente mais tarde',
   tooManyRequests: 'Muitas tentativas em pouco tempo, tente novamente mais tarde',
   searchFailed: 'Não foi possível buscar devs, tente novamente',
+  locationDenied: 'Permita o acesso à localização para ver os devs perto de você',
+  locationUnavailable: 'Não foi possível obter sua localização. Verifique se ela está ativada e tente novamente',
 };
 
 // Codes the backend uses for a rejected session token, on HTTP 401 bodies (middleware/auth.js)

@@ -46,9 +46,15 @@ function subscribeToAuthErrors(listener) {
  * @param {number} longitude
  * @param {string} techs - comma-separated
  * @param {string | null} token - the session token
+ * @returns {boolean} false (and nothing is opened) without a token: an anonymous handshake would
+ *   only be refused, and must never reach the server (QA-AUTH4-1)
  */
 function connect(latitude, longitude, techs, token) {
   socket.disconnect();
+  if (typeof token !== 'string' || token === '') {
+    socket.auth = {};
+    return false;
+  }
   socket.auth = { token };
   socket.io.opts.query = {
     latitude,
@@ -57,6 +63,7 @@ function connect(latitude, longitude, techs, token) {
   };
 
   socket.connect();
+  return true;
 }
 
 /** Closes the socket (also stops a connection attempt in progress) and forgets the token. */

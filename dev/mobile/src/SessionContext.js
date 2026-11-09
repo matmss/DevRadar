@@ -1,7 +1,7 @@
 // Holds the session for the whole app (US-7): restores it at launch, signs in and out, and sends
 // the user back to the sign-in screen on any auth failure from the API (401) or the socket
 // handshake (connect_error with a token code). See services/sessionState.js for the states.
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef } from 'react';
 
 import { setUnauthorizedHandler } from './services/api';
 import { signInWithGithub, fetchCurrentUser } from './services/auth';
@@ -20,9 +20,12 @@ function hasStatus(err, status) {
 export function SessionProvider({ children }) {
   const [state, dispatch] = useReducer(sessionReducer, initialSessionState);
 
-  // A 401 or a refused socket handshake for `sentToken`. Ends the session only if that is still
-  // the token in use (a late 401 for an older session must not end a newer one).
+  // A 401 or a refused socket handshake for `sentToken`. Ends the session only if one is active
+  // and that is still its token: a late 401 for an older session must not end a newer one, and a
+  // failure for a request sent without a token (nothing to end, e.g. after "Sair") must not turn
+  // a voluntary sign-out into "Sua sessão não é mais válida" (QA-AUTH4-1).
   const handleAuthFailure = useCallback(async (code, sentToken) => {
+    if (!sentToken) return;
     const ended = await clearToken(sentToken);
     if (!ended) return;
     disconnectSocket();
@@ -49,21 +52,31 @@ export function SessionProvider({ children }) {
     }
   }, []);
 
+  // One sign-in at a time: a second tap on "Entrar com GitHub" before the screen re-renders with
+  // the disabled button would open a second auth session with another PKCE verifier.
+  const signInInFlight = useRef(false);
+
   const signIn = useCallback(async () => {
-    dispatch({ type: 'signInStarted' });
-    const result = await signInWithGithub();
-    if (!result.ok) {
-      dispatch({ type: 'signInFailed', result });
-      return;
-    }
+    if (signInInFlight.current) return;
+    signInInFlight.current = true;
     try {
-      await saveToken(result.token);
-    } catch (err) {
-      console.warn('Could not store the session:', err.message);
-      dispatch({ type: 'signInFailed', result: { error: SIGN_IN_RESULT.FAILED } });
-      return;
+      dispatch({ type: 'signInStarted' });
+      const result = await signInWithGithub();
+      if (!result.ok) {
+        dispatch({ type: 'signInFailed', result });
+        return;
+      }
+      try {
+        await saveToken(result.token);
+      } catch (err) {
+        console.warn('Could not store the session:', err.message);
+        dispatch({ type: 'signInFailed', result: { error: SIGN_IN_RESULT.FAILED } });
+        return;
+      }
+      dispatch({ type: 'signedIn', user: result.user });
+    } finally {
+      signInInFlight.current = false;
     }
-    dispatch({ type: 'signedIn', user: result.user });
   }, []);
 
   // "Sair": closes the socket and removes the token from secure storage. Tokens are stateless

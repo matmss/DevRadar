@@ -49,14 +49,17 @@ export async function saveToken(token) {
 }
 
 /**
- * Ends the session. With `expectedToken`, only if that is still the token in use: a 401 for an
- * older token (e.g. a request that was in flight while the user signed out and back in) must
- * not wipe the new session.
+ * Ends the session. With `expectedToken` (an auth failure), only if a session is active and it
+ * is still that token: a 401 for an older token (e.g. a request that was in flight while the
+ * user signed out and back in) must not wipe the new session, and a failure while signed out
+ * (no token, e.g. a late request after "Sair") ends nothing, so it shows no "session ended"
+ * message (QA-AUTH4-1).
  * @param {string | null} [expectedToken] - omit to clear unconditionally ("Sair")
- * @returns {Promise<boolean>} true if the session was ended
+ * @returns {Promise<boolean>} true if an active session was ended (always true without
+ *   `expectedToken`)
  */
 export async function clearToken(expectedToken) {
-  if (expectedToken !== undefined && expectedToken !== currentToken) return false;
+  if (expectedToken !== undefined && (currentToken === null || expectedToken !== currentToken)) return false;
   currentToken = null;
   try {
     await SecureStore.deleteItemAsync(SESSION_TOKEN_KEY, STORE_OPTIONS);

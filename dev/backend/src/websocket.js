@@ -53,6 +53,12 @@ const HANDSHAKE_ERRORS = {
   },
 };
 
+// A refused client never joins the namespace; Socket.io closes such a connection after
+// `connectTimeout` (default 45 s). Lowered so a client that ignores connect_error does not keep
+// a refused connection open for long. A legitimate handshake takes well under a second.
+const HANDSHAKE_TIMEOUT_MS = 10000;
+const SOCKET_OPTIONS = { ...socketCorsOptions, connectTimeout: HANDSHAKE_TIMEOUT_MS };
+
 let io;
 const connections = [];
 
@@ -103,7 +109,7 @@ function authenticateHandshake(socket, next) {
 }
 
 exports.setupWebsocket = (server) => {
-  io = socketio(server, socketCorsOptions);
+  io = socketio(server, SOCKET_OPTIONS);
 
   io.use(authenticateHandshake);
 
@@ -151,4 +157,5 @@ exports.sendMessage = (to, message, data) => {
 }
 
 exports.SUBSCRIPTION_INVALID = SUBSCRIPTION_INVALID;
+exports.SOCKET_OPTIONS = SOCKET_OPTIONS;
 exports.authenticateHandshake = authenticateHandshake;

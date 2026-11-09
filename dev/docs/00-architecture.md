@@ -151,7 +151,8 @@ the `requireAuth` middleware, web sign-in (US-6, without update/delete) and mobi
   server-side disconnect: one mechanism for every refusal, and since the socket never reaches
   `connection`, a refused client is never added to `connections` (BUG-010) and never receives a
   push. socket.io-client does not auto-reconnect after a middleware refusal, so clients do not
-  loop. `socket.data.user` holds the identity for later use.
+  loop. `connectTimeout` is 10 s (default 45 s), so a client that ignores the refusal and never
+  joins is disconnected within 10 s. `socket.data.user` holds the identity for later use.
   - **Checked on connect only (Q6):** an open socket is not closed when its token expires. If
     it reconnects later (network drop, backend restart), the handshake runs again and an
     expired token is refused as `token_expired`.
@@ -380,10 +381,15 @@ the `requireAuth` middleware, web sign-in (US-6, without update/delete) and mobi
   (whatever its body) or a socket `connect_error` with a token code ends the session and shows
   the sign-in screen with "Sessão expirada, entre novamente" (`token_expired`) or "Sua sessão não
   é mais válida, entre novamente" (anything else), never an empty map. As on the web, the token
-  is cleared only if it is still the one the failing request or handshake used, so a late 401
-  for an older session does not end a newer one. Other socket refusals
-  (`subscription_invalid`) are only logged; other search failures show "Não foi possível buscar
-  devs, tente novamente".
+  is cleared only if a session is active and it is still the token the failing request or
+  handshake used: a late 401 for an older session does not end a newer one, and a failure for
+  something sent without a token ends nothing (no message after a voluntary "Sair",
+  QA-AUTH4-1). The map remembers the token a search was sent with and opens the socket only if
+  it is still mounted and that token is still in use; the socket service never connects without
+  a token. Other socket refusals (`subscription_invalid`) are only logged; other search failures
+  show "Não foi possível buscar devs, tente novamente". If the location cannot be read (services
+  off, permission denied or the request failing), the map screen says so with "Tentar
+  novamente". A second "Entrar com GitHub" tap during a sign-in is ignored.
 - **"Sair"** closes the socket, forgets its token and deletes the token from secure storage.
   Like the web, there is no server-side revocation.
 
