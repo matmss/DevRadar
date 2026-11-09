@@ -17,7 +17,7 @@ nearby devs on a map in real time. Four independent npm projects, no monorepo to
 
 ### Backend (`dev/backend/`)
 ```bash
-cp .env.example .env   # set MONGO_URI (Atlas or local), optionally PORT
+cp .env.example .env   # set MONGO_URI (Atlas or local), optionally PORT and CORS_ORIGINS
 npm install
 npm run dev             # nodemon src/index.js, port 3333 by default
 ```
@@ -132,7 +132,9 @@ rather than a single cross-language framework:
   was reverse-engineered from the code (there's no separate product spec), so treat it as
   descriptive, not aspirational.
 - Known **open** issues worth checking before you "fix" related behavior yourself:
-  BUG-006 (no auth, CORS fully open — accepted risk for
-  this project), BUG-008 (`update`/`destroy` are stubbed/commented out in `SearchController`,
+  BUG-006 (no authentication yet; GitHub OAuth login is the planned fix. CORS is already
+  restricted: browser origins must be in `CORS_ORIGINS`, see `dev/backend/src/config/cors.js`,
+  which both Express and Socket.io use. Requests with no `Origin`, like the native mobile app,
+  are unaffected. If you add a web client origin, add it there), BUG-008 (`update`/`destroy` are stubbed/commented out in `SearchController`,
   not implemented), BUG-009 (Detox timeout, above). Full detail and status in
   `qa/docs/05-bug-tracker.md`.

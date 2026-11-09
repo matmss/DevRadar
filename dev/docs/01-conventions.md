@@ -70,7 +70,7 @@ separate layer testing user-facing scenarios — see
 
 | Layer   | File               | Var                   |
 |---------|--------------------|------------------------|
-| backend | `backend/.env`     | `MONGO_URI`, `PORT`   |
+| backend | `backend/.env`     | `MONGO_URI`, `PORT`, `CORS_ORIGINS` |
 | web     | `web/.env`         | `REACT_APP_API_URL`   |
 | mobile  | `mobile/.env`      | `EXPO_PUBLIC_API_URL` |
 

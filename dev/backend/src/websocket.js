@@ -1,16 +1,13 @@
 const socketio = require('socket.io');
 const parseStringAsArray = require('./utils/parseStringAsArray');
 const { isNearby } = require('./utils/nearby');
+const { socketCorsOptions } = require('./config/cors');
 
 let io;
 const connections = [];
 
 exports.setupWebsocket = (server) => {
-  io = socketio(server, {
-    cors: {
-      origin: '*',
-    },
-  });
+  io = socketio(server, socketCorsOptions);
 
   io.on('connection', socket => {
     const subscription = parseHandshake(socket.handshake.query);
