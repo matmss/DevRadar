@@ -88,9 +88,10 @@ three layers now have one.
   into a JSON `{ error, code, details }` (500 `internal_error`, no stack).
   Handle expected failures in the controller anyway, with a specific status
   and `code`. Never log request bodies or `err.body`.
-- External calls (the GitHub Users API in `DevController.store`) should
-  handle the "user not found" (404) and rate-limit (403) cases explicitly
-  rather than letting a raw axios error surface to the client.
+- External calls (GitHub's OAuth and `GET /user` endpoints in
+  `services/githubOAuth.js`, the only GitHub calls left) should handle
+  failure and rate-limit (403 + `x-ratelimit-remaining: 0`, 429) cases
+  explicitly rather than letting a raw axios error surface to the client.
 
 ## Before implementing
 
@@ -102,9 +103,11 @@ Per team convention, before writing new code, check for:
   which documents this).
 - **Redundant logic** — check whether a util already exists (like the
   test-location table above) before adding a parallel one.
-- **Security surface** — no auth exists yet (see `00-architecture.md`);
-  don't assume `req.body`/`req.query` values are trustworthy identity
-  claims.
+- **Security surface** — identity comes only from the session token
+  (`req.user`, set by `requireAuth`; see `00-architecture.md`,
+  Authentication). Never take an identity from `req.body`/`req.query`, and
+  remember that `GET /devs`, `GET /search` and the socket are still public
+  until auth slice 4.
 
 ## Follow existing patterns
 

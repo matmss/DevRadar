@@ -40,8 +40,8 @@ When('I open the DevRadar web app', async function ({ page }) {
   await page.goto('/');
 });
 
-When('I fill in github username {string}, techs {string} and submit', async function ({ page }, username, techs) {
-  await page.getByLabel('Usuário GitHub').fill(username);
+// The form has no username field: the backend registers the signed-in user (US-3).
+When('I fill in techs {string} and submit', async function ({ page }, techs) {
   await page.getByLabel('Tecnologias').fill(techs);
   await page.getByRole('button', { name: 'Salvar' }).click();
 });
@@ -63,10 +63,6 @@ Then('a new entry for {string} should appear in the developer list', async funct
   await expect(page.locator('.dev-item', { hasText: username })).toBeVisible();
 });
 
-Then('the github username field should be empty', async function ({ page }) {
-  await expect(page.getByLabel('Usuário GitHub')).toHaveValue('');
-});
-
 Then('the techs field should be empty', async function ({ page }) {
   await expect(page.getByLabel('Tecnologias')).toHaveValue('');
 });
@@ -84,6 +80,22 @@ Then('I should see the error {string}', async function ({ page }, message) {
   await expect(page.getByRole('alert')).toContainText(message);
 });
 
-Then('the github username field should contain {string}', async function ({ page }, value) {
-  await expect(page.getByLabel('Usuário GitHub')).toHaveValue(value);
+Then('the techs field should contain {string}', async function ({ page }, value) {
+  await expect(page.getByLabel('Tecnologias')).toHaveValue(value);
+});
+
+// Checked over the real HTTP API (GET /devs is public until slice 4).
+async function backendDevs() {
+  const res = await fetch(`${BACKEND_URL}/devs`);
+  if (!res.ok) throw new Error(`Failed to list the backend's developers: ${res.status}`);
+  return res.json();
+}
+
+Then('the backend should have exactly {int} developer, {string}', async function ({}, count, username) {
+  const devs = await backendDevs();
+  expect(devs.map((dev) => dev.github_username)).toEqual(Array(count).fill(username));
+});
+
+Then('the backend should have no developers', async function () {
+  expect(await backendDevs()).toEqual([]);
 });

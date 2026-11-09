@@ -6,8 +6,10 @@
  *
  * Two things are intentionally still test doubles, both for reasons unrelated to "removing
  * web mocks":
- *  - GitHub's API is stubbed with `nock` — it's third-party and out of this repo's control,
- *    same call qa/backend-tests makes (see its features/support/github-mock.js).
+ *  - GitHub is faked — it's third-party and out of this repo's control, same call
+ *    qa/backend-tests makes (see its features/support/github-mock.js). Its server-side OAuth
+ *    endpoints are stubbed here with `nock` (stubGithubApi); the browser's visit to GitHub's
+ *    authorize page is faked in the step definitions (Playwright context.route).
  *  - `/__test__/*` routes below exist only in this harness (never touch dev/backend/src) so
  *    scenarios can reset/seed data over HTTP instead of opening a second, cross-process
  *    Mongo connection from the Playwright worker that runs the step definitions.
@@ -27,28 +29,70 @@ const { MongoMemoryServer } = require('mongodb-memory-server');
 const mongoose = require('../../../../dev/backend/node_modules/mongoose');
 const { createServer } = require('../../../../dev/backend/src/app');
 const Dev = require('../../../../dev/backend/src/models/Dev');
+const {
+  TEST_JWT_SECRET,
+  FAKE_CODE_PREFIX,
+  FAKE_ACCESS_TOKEN_PREFIX,
+  GITHUB_DOWN_CODE,
+  githubUserFixture,
+} = require('./auth-fixtures');
 
 let mongod;
 let server;
 
+/**
+ * Auth configuration for the harness backend (dev/backend/src/config/auth.js reads env at
+ * request time). Set before the app is built. The GitHub credentials are dummies: GitHub is
+ * faked. CORS_ORIGINS is the CRA dev server, so it is also the allowed sign-in redirect origin.
+ * @param {number} port - the harness backend port
+ */
+function applyTestAuthEnv(port) {
+  process.env.GITHUB_CLIENT_ID = 'web-test-client-id';
+  process.env.GITHUB_CLIENT_SECRET = 'web-test-client-secret';
+  process.env.GITHUB_CALLBACK_URL = `http://localhost:${port}/auth/github/callback`;
+  process.env.JWT_SECRET = TEST_JWT_SECRET;
+  process.env.CORS_ORIGINS = 'http://localhost:3000';
+  // Every scenario signs in (3 sign-in requests) and reloads (GET /auth/me), from one IP.
+  process.env.AUTH_RATE_LIMIT_MAX = '100000';
+  process.env.AUTH_SESSION_RATE_LIMIT_MAX = '100000';
+  delete process.env.TRUST_PROXY;
+}
+
+/**
+ * Fakes GitHub's server-side OAuth endpoints. The browser side (github.com/login/oauth/authorize)
+ * is faked per scenario in the step definitions with Playwright's context.route(), which sends
+ * the browser back to the backend callback with code "fake-code-<login>". Here:
+ *  - POST https://github.com/login/oauth/access_token turns that code into "gho_fake_<login>"
+ *    (500 for GITHUB_DOWN_CODE);
+ *  - GET https://api.github.com/user answers the fixture profile for that access token.
+ * Nothing fakes GET https://api.github.com/users/*: registration must not call it, and with
+ * net connect disabled such a call would fail the registration.
+ */
 function stubGithubApi() {
   nock.disableNetConnect();
   nock.enableNetConnect((host) => host.includes('127.0.0.1') || host.includes('localhost'));
 
-  // `name` is omitted (not set to null) so DevController's `name = login` default parameter
-  // actually kicks in (it only triggers on `undefined`, not an explicit `null`) — the
-  // rendered .dev-item then shows the github_username, which the feature-file assertions
-  // key off of.
+  nock('https://github.com')
+    .persist()
+    .post('/login/oauth/access_token')
+    .reply((uri, body) => {
+      const { code } = typeof body === 'string' ? JSON.parse(body) : body;
+      if (code === GITHUB_DOWN_CODE) return [500, 'Internal Server Error'];
+      if (typeof code !== 'string' || !code.startsWith(FAKE_CODE_PREFIX)) {
+        return [200, { error: 'bad_verification_code' }];
+      }
+      const login = code.slice(FAKE_CODE_PREFIX.length);
+      return [200, { access_token: `${FAKE_ACCESS_TOKEN_PREFIX}${login}`, token_type: 'bearer', scope: '' }];
+    });
+
   nock('https://api.github.com')
     .persist()
-    .get(/^\/users\/.+/)
-    .reply(200, (uri) => {
-      const username = uri.replace('/users/', '');
-      return {
-        login: username,
-        avatar_url: 'https://avatars.githubusercontent.com/u/0?v=4',
-        bio: 'Integration test fixture',
-      };
+    .get('/user')
+    .reply(function reply() {
+      const authorization = String(this.req.headers.authorization || '');
+      const prefix = `Bearer ${FAKE_ACCESS_TOKEN_PREFIX}`;
+      if (!authorization.startsWith(prefix)) return [401, { message: 'Bad credentials' }];
+      return [200, githubUserFixture(authorization.slice(prefix.length))];
     });
 }
 
@@ -80,6 +124,7 @@ function testRoutes() {
 async function startBackend(port) {
   mongod = await MongoMemoryServer.create();
   await mongoose.connect(mongod.getUri());
+  applyTestAuthEnv(port);
   stubGithubApi();
 
   ({ server } = createServer({

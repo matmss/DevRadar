@@ -6,23 +6,24 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 
 ---
 
-## TC-001 — Register developer with valid GitHub username
-- **Requirement:** FR-1.1, FR-1.2
+## TC-001 — Register the signed-in developer
+- **Requirement:** FR-1.1, FR-1.2, US-3 (`dev/docs/03-auth-spec.md`)
 - **Type:** Functional | **P1**
-- **Preconditions:** Backend running, MongoDB empty of this username, network access to GitHub API.
+- **Preconditions:** Backend running, MongoDB empty of this username, signed in with GitHub as `gaearon` (session token from `POST /auth/token`).
 - **Steps:**
-  1. `POST /devs` with `{ github_username: "gaearon", techs: "ReactJS, Redux", latitude: -23.5505, longitude: -46.6333 }`
+  1. `POST /devs` with `Authorization: Bearer <token>` and `{ techs: "ReactJS, Redux", latitude: -23.5505, longitude: -46.6333 }`
   2. Inspect response body.
-- **Expected result:** Status 200. Body contains `name`, `avatar_url`, `bio` populated from GitHub. `techs` = `["ReactJS", "Redux"]` (trimmed). `location.type` = `"Point"`, `location.coordinates` = `[-46.6333, -23.5505]`.
+- **Expected result:** Status 200. `github_username` is the token's login. `name`, `avatar_url`, `bio` are the GitHub profile captured at sign-in (a null name falls back to the login); no call to GitHub's `GET /users/:username`. `techs` = `["ReactJS", "Redux"]` (trimmed). `location.type` = `"Point"`, `location.coordinates` = `[-46.6333, -23.5505]`.
+- **Automated:** `registration.feature` ("Register as the signed-in user with the profile captured at sign-in", "Sign in through GitHub, then register: ...").
 
 ## TC-002 — Duplicate registration returns existing record, does not duplicate
 - **Requirement:** FR-1.3
 - **Type:** Functional | **P1**
 - **Steps:**
-  1. Register `github_username: "gaearon"`.
-  2. Register `github_username: "gaearon"` again with different `techs`.
+  1. Signed in as `gaearon`, register.
+  2. Register again with different `techs`.
   3. `GET /devs` and count entries with `github_username: "gaearon"`.
-- **Expected result:** Step 2 returns 200 with the **original** record (techs unchanged). Step 3 shows exactly 1 matching entry.
+- **Expected result:** Step 2 returns 200 with the **original** record (techs unchanged). Step 3 shows exactly 1 matching entry. The match is case-insensitive, so a legacy record created before sign-in as `gaearon` is returned to the owner signing in as `Gaearon` (US-8).
 
 ## TC-003 — Techs string parsing trims whitespace
 - **Requirement:** FR-1.4
@@ -77,24 +78,28 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 - **Expected result:** Document actual MongoDB `$maxDistance` inclusive/exclusive behavior; assert it matches. Flag as a defect if it silently diverges from the websocket layer's `< 10` (strict-less-than) comparison — see NFR-2 and BUG-002.
 - **Actual result (2026-11-08):** `$maxDistance` is inclusive and measures on a 6378.1 km sphere. Automated in `qa/backend-tests/features/radius.feature`: a dev 9.995 km away is both pushed and found; one 10.005 km away is neither.
 
-## TC-011 — Missing github_username is rejected
-- **Requirement:** FR-1.1 (validation gap — see OI of requirements doc)
-- **Type:** Functional (currently expected to FAIL — documents a defect) | **P1**
-- **Steps:** `POST /devs` with `github_username` omitted.
-- **Expected result (desired):** 400 with a validation error.
-- **Actual result (as of this audit):** Likely 500 or unhandled rejection — becomes BUG-003 once confirmed by running the automated suite.
+## TC-011 — Registration requires a session token; the body username is ignored
+- **Requirement:** FR-1.1, US-2, US-3 (Q9)
+- **Type:** Functional | **P1**
+- **Steps:**
+  1. `POST /devs` without an `Authorization` header.
+  2. `POST /devs` with an expired token, then with a tampered/foreign-signed/malformed token.
+  3. Signed in as `alice`, `POST /devs` with `github_username: "bob"` in the body.
+- **Expected result:** 1: 401 `token_missing`, nothing persisted. 2: 401 `token_expired` / `token_invalid`, nothing persisted. 3: 200, the dev created is `alice`; no `bob` record is created or changed.
+- **History:** Before auth slice 2 this case was "missing `github_username` is rejected" (BUG-003, fixed with a 400). The username no longer comes from the body, so it is not validated there.
+- **Automated:** `registration.feature` (authentication-required and Q9 scenarios).
 
-## TC-012 — Non-existent GitHub username
-- **Requirement:** FR-7.2, OI-1
-- **Type:** Functional (currently expected to FAIL) | **P1**
-- **Steps:** `POST /devs` with `github_username: "ghost-user-does-not-exist-xyz"`.
-- **Expected result (desired):** 404 or 422 with a clear error message, no partial DB write.
-- **Actual result (as of this audit):** GitHub API 404 is not caught in `DevController.store` — likely surfaces as an unhandled promise rejection / 500. Confirm and file as BUG-004.
+## TC-012 — Registration does not call GitHub
+- **Requirement:** FR-7.2, OI-1, US-3 ("Registration identity comes from the OAuth identity")
+- **Type:** Functional | **P1**
+- **Steps:** Signed in as `gaearon`, `POST /devs` with valid input while GitHub's `GET /users/:username` is unreachable (strict `nock`).
+- **Expected result:** 200, the profile comes from the sign-in snapshot, and no request to `api.github.com/users/*` is made. The backend scenarios' After hook fails any scenario that makes one.
+- **History:** Before auth slice 2, registration looked the username up at GitHub, and a missing user or a GitHub failure mapped to 404/503/502 (BUG-004, fixed). That lookup is removed. GitHub failures now only happen during sign-in, where they redirect to the client with `error=sign_in_failed&reason=...` (`auth.feature`).
 
 ## TC-013 — Non-numeric latitude/longitude
 - **Requirement:** Input validation gap
 - **Type:** Functional (currently expected to FAIL) | **P2**
-- **Steps:** `POST /devs` with `latitude: "not-a-number"`.
+- **Steps:** Signed in, `POST /devs` with `latitude: "not-a-number"`.
 - **Expected result (desired):** 400.
 - **Actual result:** Likely accepted and stored as `NaN` inside the GeoJSON point, corrupting the 2dsphere index entry. Confirm and file.
 
@@ -105,16 +110,37 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 - **Expected result:** Latitude/longitude inputs are pre-filled and match the mocked coordinates.
 
 ## TC-015 (Web) — Submitting the form updates the list without reload
-- **Requirement:** FR-5.2, FR-5.3
+- **Requirement:** FR-5.2, FR-5.3, US-6
 - **Type:** Functional | **P1**
-- **Steps:** Fill and submit the form with a valid GitHub username.
-- **Expected result:** New `<li class="dev-item">` appears with correct avatar/name/techs/bio/profile link; no full navigation occurs; form's username/techs fields reset to empty.
+- **Steps:** Sign in with GitHub. Fill techs (the form has no username field) and submit.
+- **Expected result:** New `<li class="dev-item">` appears for the signed-in user with correct avatar/name/techs/bio/profile link; no full navigation occurs; the techs field resets to empty.
 
 ## TC-016 (Web) — Developer list loads on mount
 - **Requirement:** FR-5.3
 - **Type:** Functional | **P2**
-- **Steps:** Seed backend with 2 developers. Load the web app.
-- **Expected result:** Both developers rendered in the list.
+- **Steps:** Seed backend with 2 developers. Load the web app and sign in.
+- **Expected result:** Both developers rendered in the list. Signed out, no list is shown.
+
+## TC-023 (Web) — Signed-out view, sign in and sign out
+- **Requirement:** US-6
+- **Type:** Functional | **P1**
+- **Steps:**
+  1. Open the app without a session.
+  2. Click "Entrar com GitHub" and approve on GitHub.
+  3. Reload the page.
+  4. Click "Sair", then reload.
+- **Expected result:** 1: only the sign-in button; no form or dev list. 2: back on `/` without `code` in the URL; GitHub username and avatar, "Sair", the form (no username field) and the dev list are shown; the PKCE verifier is gone from sessionStorage. 3: still signed in. 4: signed-out view; the token is removed from localStorage and stays signed out after reload.
+- **Automated:** `qa/web-tests/features/auth.feature`.
+
+## TC-024 (Web) — Sign-in cancelled, failed, expired or forged
+- **Requirement:** US-6
+- **Type:** Functional / Edge | **P1**
+- **Steps / expected result:**
+  - Cancel on GitHub's consent page: signed-out view with "Login cancelado"; clicking "Entrar com GitHub" again works.
+  - GitHub fails during sign-in (`sign_in_failed`, `reason=github_unavailable`): "Não foi possível falar com o GitHub, tente novamente".
+  - Expired token in localStorage on load, or a request answering 401 `token_expired` during use: signed-out view with "Sessão expirada, entre novamente", token removed. An invalid token: signed-out view, no message.
+  - A callback link with a code this browser did not start (no PKCE verifier), or with extra parameters such as `redirect=//evil.example/`: not signed in, generic failure message, and the browser stays on the app's `/`.
+- **Automated:** `qa/web-tests/features/auth.feature`, `registration.feature` (expiry during use).
 
 ## TC-017 (Mobile) — Map centers on current location
 - **Requirement:** FR-6.1
@@ -160,6 +186,8 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 | Requirement | Test Cases |
 |---|---|
 | FR-1 | TC-001, TC-002, TC-003, TC-004, TC-011, TC-012, TC-013 |
+| US-3 (auth) | TC-001, TC-002, TC-011, TC-012 |
+| US-6 (auth) | TC-015, TC-016, TC-023, TC-024 |
 | FR-2 | TC-007 |
 | FR-3 | TC-008, TC-009, TC-010 |
 | FR-4 | TC-004, TC-005, TC-006, TC-019 |
