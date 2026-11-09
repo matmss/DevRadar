@@ -1,0 +1,44 @@
+appId: com.matmss.mobile
+---
+# Covers: US-7 "Session persistence" and "Sign out" (@regression). Signs in once (real GitHub,
+# see subflows/sign-in-with-github.yaml), relaunches without clearing state and lands on the map
+# again (token from expo-secure-store), then "Sair" returns to the sign-in screen and a relaunch
+# stays signed out.
+- launchApp:
+    clearState: true
+- runFlow:
+    when:
+      visible: "Wait"
+    commands:
+      - tapOn: "Wait"
+- runFlow: subflows/sign-in-with-github.yaml
+- runFlow:
+    when:
+      visible: "While using the app"
+    commands:
+      - tapOn: "While using the app"
+- extendedWaitUntil:
+    visible: "Sair"
+    timeout: 20000
+# Relaunch: the stored session is restored (GET /auth/me), no sign-in screen.
+- stopApp
+- launchApp:
+    clearState: false
+- extendedWaitUntil:
+    visible: "Sair"
+    timeout: 20000
+- assertNotVisible: "Entrar com GitHub"
+# Sign out: token removed from secure storage, socket closed, sign-in screen.
+- tapOn:
+    id: "sign-out-button"
+- extendedWaitUntil:
+    visible: "Entrar com GitHub"
+    timeout: 10000
+- assertNotVisible:
+    id: "map-view"
+- stopApp
+- launchApp:
+    clearState: false
+- extendedWaitUntil:
+    visible: "Entrar com GitHub"
+    timeout: 20000

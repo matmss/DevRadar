@@ -1,0 +1,38 @@
+appId: com.matmss.mobile
+---
+# Reusable subflow (not run on its own: `maestro test maestro/` only runs the top-level files).
+# Signs in from the "Entrar com GitHub" screen through the REAL GitHub sign-in page in the
+# system auth session, so it needs:
+#   - the backend running with a registered GitHub OAuth App (GITHUB_CLIENT_ID/SECRET), reachable
+#     from the device at the app's EXPO_PUBLIC_API_URL, MOBILE_APP_SCHEME=com.matmss.mobile;
+#   - a development build of the app (not Expo Go);
+#   - a GitHub test account without 2FA, passed as Maestro env vars:
+#       maestro test -e GITHUB_TEST_LOGIN=... -e GITHUB_TEST_PASSWORD=... maestro/01-launch-and-map.yaml
+# GitHub's page texts can change; the steps are optional where GitHub may skip a page (already
+# signed in to GitHub in the browser, or consent already given).
+- extendedWaitUntil:
+    visible: "Entrar com GitHub"
+    timeout: 20000
+- tapOn:
+    id: "sign-in-button"
+- runFlow:
+    when:
+      visible: "Username or email address"
+    commands:
+      - tapOn: "Username or email address"
+      - inputText: ${GITHUB_TEST_LOGIN}
+      - tapOn: "Password"
+      - inputText: ${GITHUB_TEST_PASSWORD}
+      - tapOn: "Sign in"
+- runFlow:
+    when:
+      visible: "Authorize.*"
+    commands:
+      - tapOn: "Authorize.*"
+# Back in the app on the map screen. The map asks for location first if it has not been
+# granted yet, and while that system dialog is up the app's own window ("Sair") is not in the
+# accessibility tree, so wait for whichever comes first (text selectors are regexes); the
+# calling flow handles the dialog.
+- extendedWaitUntil:
+    visible: "(While using the app|Don.t allow|Sair)"
+    timeout: 30000

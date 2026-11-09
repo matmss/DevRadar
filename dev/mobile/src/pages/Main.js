@@ -6,11 +6,17 @@ import { MaterialIcons } from '@expo/vector-icons';
 
 import api from '../services/api';
 import { connect, disconnect, subscribeToNewDevs } from '../services/socket';
+import { getToken } from '../services/session';
+import { MESSAGES } from '../services/authErrors';
 
+// Only reachable signed in (routes.js). /search and the socket both send the session token; an
+// auth failure from either ends the session in SessionProvider, which replaces this screen with
+// the sign-in screen (and unmounting closes the socket below).
 function Main({ navigation }) {
   const [devs, setDevs] = useState([]);
   const [currentRegion, setCurrentRegion] = useState(null);
-  const [techs, setTechs] = useState([]);
+  const [techs, setTechs] = useState('');
+  const [searchError, setSearchError] = useState(null);
 
   useEffect(() => {
     async function loadInitialPosition() {
@@ -35,28 +41,41 @@ function Main({ navigation }) {
     loadInitialPosition();
   }, []);
 
-  useEffect(() => {
-    subscribeToNewDevs(dev => setDevs([...devs, dev]));
-  }, [devs])
+  // One listener for the screen's lifetime (it used to add another on every change of `devs`).
+  useEffect(() => subscribeToNewDevs(dev => {
+    setDevs(current => (current.some(item => item._id === dev._id) ? current : [...current, dev]));
+  }), []);
+
+  // Leaving the map (sign-out, session ended) closes the live subscription.
+  useEffect(() => () => disconnect(), []);
 
   function setupWebsocket() {
-    disconnect();
-
     const { latitude, longitude } = currentRegion;
 
-    connect(latitude, longitude, techs,);
+    connect(latitude, longitude, techs, getToken());
   }
 
   async function loadDevs() {
     const { latitude, longitude } = currentRegion;
+    setSearchError(null);
 
-    const response = await api.get('/search', {
-      params: {
-        latitude,
-        longitude,
-        techs,
+    let response;
+    try {
+      response = await api.get('/search', {
+        params: {
+          latitude,
+          longitude,
+          techs,
+        }
+      });
+    } catch (err) {
+      // A 401 already ended the session (SessionProvider shows the sign-in screen).
+      if (!(err.response && err.response.status === 401)) {
+        console.warn('Search failed:', err.response ? err.response.status : err.message);
+        setSearchError(MESSAGES.searchFailed);
       }
-    })
+      return;
+    }
 
     setDevs(response.data.devs);
     setupWebsocket();
@@ -105,6 +124,9 @@ function Main({ navigation }) {
             <MaterialIcons name="my-location" size={20} color="#FFF" />
           </TouchableOpacity>
       </View>
+      {searchError ? (
+        <Text testID="search-error" accessibilityRole="alert" style={styles.searchError}>{searchError}</Text>
+      ) : null}
     </>
   );
 
@@ -167,7 +189,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 15,
-  }
+  },
+  searchError: {
+    position: 'absolute',
+    top: 80,
+    left: 20,
+    right: 20,
+    zIndex: 5,
+    padding: 10,
+    borderRadius: 4,
+    backgroundColor: '#FFF',
+    color: '#C0392B',
+    textAlign: 'center',
+  },
 })
 
 export default Main;

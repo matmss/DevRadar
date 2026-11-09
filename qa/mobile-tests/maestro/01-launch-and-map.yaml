@@ -1,6 +1,9 @@
 appId: com.matmss.mobile
 ---
-# Covers: map-search.feature "App centers the map on the current device location" (@smoke)
+# Covers: map-search.feature "App centers the map on the current device location" (@smoke) and
+# US-7 "Sign in" (lands on the map). Since auth slice 4 the map needs a session: this flow signs
+# in through subflows/sign-in-with-github.yaml (real GitHub; see that file for the env vars and
+# backend it needs). 00-signed-out-screen.yaml covers the app without a session.
 - launchApp:
     clearState: true
 # On this host, boot-time resource contention occasionally trips Android's own ANR
@@ -11,11 +14,13 @@ appId: com.matmss.mobile
       visible: "Wait"
     commands:
       - tapOn: "Wait"
+- runFlow: subflows/sign-in-with-github.yaml
 # The location permission dialog is a separate system window: while it's up, the app's
 # own window (including the "DevRadar" title) is absent from the queried accessibility
 # tree entirely, even though it's visibly rendered underneath. So this must be waited
 # for and dismissed *before* asserting DevRadar, not after - a `when: visible:` check
 # here would race the dialog's appearance and can skip the tap if it fires too early.
+# The map asks for it only once signed in (the map screen is not mounted before).
 - extendedWaitUntil:
     visible: "While using the app"
     timeout: 15000
@@ -25,8 +30,10 @@ appId: com.matmss.mobile
       visible: "Wait"
     commands:
       - tapOn: "Wait"
-# clearState forces a fresh cold Metro bundle every run (BUG-009); extendedWaitUntil
-# tolerates that instead of asserting before the bundle finishes loading.
 - extendedWaitUntil:
-    visible: "DevRadar" # header title from dev/mobile/src/routes.js navigationOptions
+    visible: "DevRadar" # header title from dev/mobile/src/routes.js
     timeout: 20000
+- assertVisible: "Sair"
+- assertVisible:
+    id: "search-input"
+- assertNotVisible: "Entrar com GitHub"

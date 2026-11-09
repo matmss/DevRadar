@@ -1,0 +1,28 @@
+appId: com.matmss.mobile
+---
+# Covers: US-7 "Signed out" (@smoke). A fresh install has no session, so the app shows the
+# "Entrar com GitHub" screen instead of the map. Needs no backend and no GitHub account.
+- launchApp:
+    clearState: true
+# On this host, boot-time resource contention occasionally trips Android's own ANR
+# dialog ("<process> isn't responding") on top of the app (BUG-009, infra timing, not
+# an app defect) - "Wait" lets the system recover instead of failing the run outright.
+- runFlow:
+    when:
+      visible: "Wait"
+    commands:
+      - tapOn: "Wait"
+# clearState forces a fresh cold Metro bundle every run (BUG-009); extendedWaitUntil
+# tolerates that instead of asserting before the bundle finishes loading.
+- extendedWaitUntil:
+    visible: "Entrar com GitHub"
+    timeout: 20000
+- assertVisible: "DevRadar"
+- assertVisible:
+    id: "sign-in-button"
+# No map, no search, and no location prompt: the map screen is not mounted without a session.
+- assertNotVisible:
+    id: "map-view"
+- assertNotVisible: "Buscar devs por techs"
+- assertNotVisible: "While using the app"
+- assertNotVisible: "Sair"

@@ -1,5 +1,11 @@
 Feature: Search and view developers on the map
 
+  # Since auth slice 4 (dev/docs/03-auth-spec.md, US-7) the map is only shown with a session:
+  # a fresh install shows the "Entrar com GitHub" screen, and GET /search, POST /devs and the
+  # socket need a session token. These scenarios therefore need a signed-in app first; the
+  # Detox steps do not sign in yet (Detox is blocked by BUG-009). The Maestro flows sign in
+  # through maestro/subflows/sign-in-with-github.yaml.
+
   @smoke @P2
   Scenario: App centers the map on the current device location
     Given location permission is granted
