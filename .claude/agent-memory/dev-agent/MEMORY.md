@@ -1,3 +1,5 @@
 - [qa/reports are tracked](project_qa_reports_tracked.md) - test runs dirty qa/reports/*; `git checkout -- qa/reports` before committing
-- [Worktree bash limits](feedback_worktree_bash.md) - compound shell writes get refused in worktree mode; use Write/Edit
+- [Worktree bash limits](feedback_worktree_bash.md) - compound shell writes, loops, cd+git get refused in worktree mode; use Write/Edit; old-code check via scratchpad copies
 - [Write tool unicode escapes](feedback_write_tool_unicode_escapes.md) - backslash-u escapes become raw chars (NUL, U+2028, U+202E); use code points, write U+XXXX in prose, scan after
+- [expo prebuild drops Detox wiring](project_expo_prebuild_detox.md) - prebuild regenerates dev/mobile/android; keep only the manifest diff, restore gradle files
+- [Web suite reuses :3000](feedback_web_suite_port_reuse.md) - check ports, run qa/web-tests with CI=1 so another worktree's dev server is never tested
