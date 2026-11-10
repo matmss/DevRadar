@@ -1,5 +1,5 @@
-// Bearer-token authentication (US-2). Applied to GET /devs, POST /devs, GET /search and
-// GET /auth/me (routes.js). The Socket.io handshake uses the same verifySessionToken and codes
+// Bearer-token authentication (US-2). Applied to GET /devs, POST /devs, GET/PUT/DELETE /devs/me,
+// GET /search and GET /auth/me (routes.js). The Socket.io handshake uses the same verifySessionToken and codes
 // (websocket.js), with the token in the handshake `auth` payload instead of a header.
 //
 // 401 body: { error, code, details }. `code` is stable and lets clients tell the cases apart:

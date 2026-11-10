@@ -15,8 +15,9 @@ function toCoordinate(raw) {
 }
 
 /**
- * Validates the body of POST /devs. The developer's identity comes from the session token
- * (req.user), so a `github_username` in the body is ignored, not validated (auth spec Q9).
+ * Validates the body of POST /devs and PUT /devs/me (all three fields required in both). The
+ * developer's identity comes from the session token (req.user), so a `github_username` in the
+ * body is ignored, not validated (auth spec Q9).
  * @param {Record<string, unknown>} body
  * @returns {{ errors: string[], value: { techs: string, latitude: number, longitude: number } }}
  */
