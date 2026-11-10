@@ -1,0 +1,53 @@
+aside form button.delete-profile,
+aside form .delete-confirmation button {
+    border: 0;
+    border-radius: 2px;
+    padding: 10px 15px;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+aside form button.delete-profile {
+    width: 100%;
+    margin-top: 15px;
+    background: transparent;
+    color: #c0392b;
+}
+
+aside form .delete-confirmation {
+    margin-top: 15px;
+    padding: 15px;
+    border: 1px solid #f2c4bf;
+    border-radius: 2px;
+    background: #fdf3f2;
+}
+
+aside form .delete-confirmation p {
+    color: #666;
+    font-size: 14px;
+    line-height: 20px;
+}
+
+aside form .delete-confirmation-actions {
+    margin-top: 10px;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: 1fr 1fr;
+}
+
+aside form .delete-confirmation button.confirm-delete {
+    background: #c0392b;
+    color: #FFF;
+}
+
+aside form .delete-confirmation button.cancel-delete {
+    background: #eee;
+    color: #333;
+}
+
+aside form button.delete-profile:disabled,
+aside form .delete-confirmation button:disabled {
+    opacity: 0.6;
+    cursor: default;
+}

@@ -41,13 +41,24 @@ Three layers, one shared backend:
     Authentication); on first registration creates the dev from the profile
     captured at sign-in, then broadcasts it over the socket to any connected
     client whose search radius/techs match (`DevController.store`)
+  - `GET /devs/me`, `PUT /devs/me`, `DELETE /devs/me` — read, update and
+    delete the signed-in user's own dev (`DevController.show`/`update`/`destroy`,
+    session token required, see Authentication, "Own profile")
   - `GET /search` — geo + tech-filtered search using `$near` +
     `$maxDistance` (`SearchController.index`, session token required)
 - **Realtime:** `backend/src/websocket.js` tracks connected sockets by
-  their handshake query params (lat/long/techs) and pushes `new-dev` events to
+  their handshake query params (lat/long/techs) and pushes events to
   matching clients — this is what makes the map update live without a
   page refresh. Only signed-in clients can subscribe (see Authentication,
-  "Socket.io handshake").
+  "Socket.io handshake"). Events, each sent only to the sockets whose
+  position (10 km, `utils/nearby.js`) and techs match the dev
+  (`findConnections`):
+
+  | Event | When | Matched against | Payload |
+  |---|---|---|---|
+  | `new-dev` | `POST /devs` created a dev | its position and techs | the dev |
+  | `dev-updated` | `PUT /devs/me` succeeded | the **new** position and techs (Q4) | the updated dev |
+  | `dev-deleted` | `DELETE /devs/me` succeeded | the last position and techs | `{ _id, github_username }` only |
 - **External dependency:** GitHub is only called during sign-in (OAuth token
   exchange, then `GET https://api.github.com/user` with the user's access
   token). Registration makes no GitHub call, so the unauthenticated 60 req/hr
@@ -75,18 +86,18 @@ Three layers, one shared backend:
 
 ## Authentication
 
-GitHub sign-in, per `dev/docs/03-auth-spec.md`. **Status (slices 1-4):** the auth endpoints,
-the `requireAuth` middleware, web sign-in (US-6, without update/delete) and mobile sign-in
-(US-7, without `dev-updated`) exist, and the spec's access matrix is enforced:
+GitHub sign-in, per `dev/docs/03-auth-spec.md`. **Status (slices 1-5):** the auth endpoints,
+the `requireAuth` middleware, web sign-in with profile update/delete (US-6), mobile sign-in
+with live marker updates (US-7) and the own-profile routes (US-4) exist, and the spec's access
+matrix is enforced. Slice 6 (legacy verification, closure) remains.
 
 | Surface | Auth | Where |
 |---|---|---|
 | `GET /auth/github`, `GET /auth/github/callback`, `POST /auth/token` | Public, rate limited | `routes.js` |
 | `GET /auth/me` | Bearer token, rate limited | `routes.js` (`requireAuth`) |
 | `GET /devs`, `POST /devs`, `GET /search` | Bearer token | `routes.js` (`requireAuth`) |
-| Socket.io handshake (`new-dev`) | Token in the handshake `auth` payload | `websocket.js` (`io.use`) |
-
-`PUT`/`DELETE /devs/me` and `dev-updated` come with slice 5.
+| `GET /devs/me`, `PUT /devs/me`, `DELETE /devs/me` | Bearer token | `routes.js` (`requireAuth`) |
+| Socket.io handshake (`new-dev`, `dev-updated`, `dev-deleted`) | Token in the handshake `auth` payload | `websocket.js` (`io.use`) |
 
 - **Flow** (`backend/src/controllers/AuthController.js`, routes in `routes.js`). Every
   client (web and mobile) uses PKCE (RFC 7636, `utils/pkce.js`) with the backend: it makes a
@@ -198,12 +209,69 @@ the `requireAuth` middleware, web sign-in (US-6, without update/delete) and mobi
     our own API. The profile is public GitHub data, so it being readable in the JWT exposes
     nothing new. The GitHub access token is still never stored or put in the token.
   - **Snapshot as of sign-in:** a name, avatar or bio changed on GitHub after sign-in only shows
-    up in a profile created after the next sign-in (up to 7 days later). An existing dev is not
-    refreshed (updates come with slice 5, `PUT /devs/me`).
+    up after the next sign-in (up to 7 days later), in a new profile or on the next
+    `PUT /devs/me`, which refreshes them from the token. `POST /devs` returns an existing dev
+    unchanged.
   - **No GitHub call at registration:** the old unauthenticated `GET /users/:username` lookup
     and its 404/503/502 mapping are removed, so registration is not subject to GitHub's 60
     req/hr limit or outages. `qa/backend-tests` fails any scenario that calls
     `api.github.com/users/*`.
+- **Own profile** (US-4, BUG-008, slice 5; `DevController.show`/`update`/`destroy`). The dev is
+  always `req.user.github_username`, matched with the same case-insensitive collation as
+  registration, so a legacy profile in another letter case is the user's (US-8, Q5). The routes
+  take no username or id, so nobody can reach another user's profile; they are registered before
+  any `/devs/:param` route could be (none exists: `PUT /devs/bob` is a JSON 404 `not_found`).
+  Errors use `{ error, code, details }`, except the 400s, which are exactly `POST /devs`'s
+  `{ error, details }`.
+  - `GET /devs/me`: 200 with the dev, or 404 `dev_not_found`. Added so clients can tell
+    "register" from "update" without scanning `GET /devs` (which will need pagination one day).
+  - `PUT /devs/me` `{ techs, latitude, longitude }`: **all three required** (no partial update),
+    validated by the same `utils/validateDevInput.js` as `POST /devs` (same 400). A full update
+    keeps one validation path and matches what the web form sends; a partial update can be added
+    later without breaking clients. One atomic `findOneAndUpdate` **without upsert**: a dev deleted
+    by a concurrent `DELETE` stays deleted and the update answers 404. **Name, avatar and bio are
+    refreshed** from the token's sign-in `profile` claim (already sanitized, a null name falls
+    back to the login), so signing in again and saving picks up GitHub changes. Everything else in
+    the body is ignored (Q9: `github_username`, `_id`, `name`, `avatar_url`, `bio`, `location`);
+    the stored `github_username` keeps its letter case. 200 with the updated dev, or 404
+    `dev_not_found` (nothing is created). Then `dev-updated` goes to the sockets matching the new
+    position and techs (Q4), never `new-dev`.
+  - `DELETE /devs/me`: hard delete (Q7, `findOneAndDelete`), **204** with no body. Without a
+    profile, **404 `dev_not_found`**, also for a repeated delete: consistent with `PUT` and
+    `GET /devs/me`, and the client can still tell "already gone" apart (the web app treats a 404
+    on delete as done). Afterwards the dev is absent from `GET /devs` and `GET /search`, and
+    `POST /devs` registers the user again. Then `dev-deleted` with only `{ _id, github_username }`
+    (nothing else about a deleted profile is sent) goes to the sockets matching its last position
+    and techs, so maps drop the marker without a new search.
+  - **Stale markers (accepted):** `dev-updated` follows the new position and techs only (Q4), so a
+    map that only matched the old ones keeps the old marker until its next search. Fixing it
+    would mean a second event (e.g. `dev-deleted`) to the old-only sockets; not in the spec.
+  - Legacy duplicates (same login in another letter case, possible only if the unique index
+    could not be built, see `index.js`) are not merged: `PUT` and `DELETE` act on one of them.
+  - **Writes are serialized per login** (QA-AUTH5 review; `utils/keyedQueue.js`). `POST /devs`,
+    `PUT` and `DELETE /devs/me` run their database write *and* its socket announcement inside a
+    per-login queue (key: the login in lower case), one at a time in arrival order. Without it a
+    `PUT` whose database reply was slow could announce `dev-updated` after a later `DELETE` had
+    announced `dev-deleted`, and mobile re-added the deleted marker (same for PUT/PUT and
+    POST/DELETE). Different logins never wait for each other, and a key is dropped as soon as its
+    last task settles. The queue is in process memory, which matches the single-instance
+    assumption below; several instances would need a shared lock or per-dev versions on the events.
+  - **Push amplification limits** (QA-AUTH5 review): each change is pushed to every matching
+    socket, so `PUT`/`DELETE /devs/me` are rate limited **per GitHub login** (not per IP, so an
+    account cannot spread changes over addresses and users behind one NAT do not share a budget):
+    `PROFILE_RATE_LIMIT_MAX`, default 30 per 15 minutes, then 429 `rate_limited`. And `techs`
+    (`POST /devs` and `PUT /devs/me`, `utils/validateDevInput.js`) is capped at **30 entries of at
+    most 50 characters** each (counted after trimming and dropping empty entries; characters are
+    code points), else 400 with "techs must list at most 30 technologies (got N)" / "each tech
+    must be at most 50 characters". `GET /devs/me` and `POST /devs` are not rate limited (a
+    `POST` for an existing dev changes and announces nothing).
+
+  | Status | `code` | When |
+  |---|---|---|
+  | 400 | (none, `{ error, details }`) | `PUT /devs/me` techs/latitude/longitude missing or invalid, or techs over the caps |
+  | 401 | `token_missing`, `token_expired`, `token_invalid` | `requireAuth` |
+  | 404 | `dev_not_found` | `GET`/`PUT`/`DELETE /devs/me` without a profile |
+  | 429 | `rate_limited` | `PUT`/`DELETE /devs/me` over `PROFILE_RATE_LIMIT_MAX` for this login |
 - **JSON error codes** on `/auth/*` (body `{ error, code, details }`):
 
   | Status | `code` | When |
@@ -223,7 +291,9 @@ the `requireAuth` middleware, web sign-in (US-6, without update/delete) and mobi
   (`req.ip`, see `TRUST_PROXY`) per 15 minutes, two independent limiters:
   sign-in (`GET /auth/github`, the callback, `POST /auth/token`): `AUTH_RATE_LIMIT_MAX`,
   default 60 (a sign-in uses 3); session checks (`GET /auth/me`, called on every client
-  load): `AUTH_SESSION_RATE_LIMIT_MAX`, default 600.
+  load): `AUTH_SESSION_RATE_LIMIT_MAX`, default 600. A third limiter is keyed on the signed-in
+  login instead of the IP: profile changes (`PUT`/`DELETE /devs/me`, after `requireAuth`):
+  `PROFILE_RATE_LIMIT_MAX`, default 30 (see "Own profile").
 - **Config** (`config/auth.js`, read from env on each use): `GITHUB_CLIENT_ID`,
   `GITHUB_CLIENT_SECRET`, `GITHUB_CALLBACK_URL` (default
   `http://localhost:3333/auth/github/callback`), `JWT_SECRET`, `MOBILE_APP_SCHEME` (default
@@ -240,7 +310,8 @@ the `requireAuth` middleware, web sign-in (US-6, without update/delete) and mobi
   redirects, and startup logs a warning that does not print the value. It must equal the
   mobile app's scheme (see Mobile, "App scheme").
 - **Single-instance limitation:** the `state` store, the one-time code store
-  (`utils/oneTimeStore.js`) and the rate-limit counters live in process memory. Running more
+  (`utils/oneTimeStore.js`), the rate-limit counters and the per-login write queue
+  (`utils/keyedQueue.js`) live in process memory. Running more
   than one backend instance needs sticky sessions or a shared store (e.g. Redis) first.
 
 ## Web (`web/`)
@@ -264,7 +335,7 @@ the `requireAuth` middleware, web sign-in (US-6, without update/delete) and mobi
   hung `GET /auth/me` shows the "unavailable" view (below), not "Carregando..."
   forever. `GET /devs` needs the token since slice 4.
 - Talks to the same `/devs` and `/search` endpoints as mobile, plus the
-  `/auth/*` endpoints; no web-specific backend routes exist. Nothing secret is
+  `/auth/*` endpoints and `GET`/`PUT`/`DELETE /devs/me`; no web-specific backend routes exist. Nothing secret is
   in the bundle: only `REACT_APP_API_URL`.
 - **Sign-in flow** (US-6, `web/src/services/auth.js`, `services/pkce.js`):
   1. "Entrar com GitHub" makes a 32-byte random PKCE verifier
@@ -299,7 +370,34 @@ the `requireAuth` middleware, web sign-in (US-6, without update/delete) and mobi
   failure, or an expired session; the button is also the retry). Signed in, the GitHub username
   and avatar (from `POST /auth/token`, then `GET /auth/me` on every load), "Sair", the
   registration form without a username field, and the dev list. "Salvar" is disabled while a
-  registration is in flight (QA-AUTH2-1). If the stored session cannot be checked (server
+  registration is in flight (QA-AUTH2-1).
+- **Own profile** (US-6 "Already registered", slice 5; `App.js`, `components/DevForm`). After
+  sign-in the app asks `GET /devs/me` (in parallel with `GET /devs`; the form waits with
+  "Carregando seu perfil..."). 404: the registration form ("Cadastro", "Salvar", location from
+  the browser). A profile: "Meu perfil", the form prefilled with the saved techs ("ReactJS,
+  Redux") and saved coordinates (the browser's position is not asked for), "Atualizar"
+  (`PUT /devs/me`) and "Excluir meu perfil". Deleting needs an in-page confirmation ("Confirmar
+  exclusão" / "Cancelar"), never `window.confirm`, which blocks the page and browser automation.
+  After a save the list entry is replaced (matched by `_id` or by login in any letter case, so a
+  profile deleted and registered again elsewhere is not listed twice; or appended) and the form
+  is remounted with the saved values ("Perfil atualizado"; registering also switches to update
+  mode); after a delete the entry leaves the list and the form returns to registration ("Perfil
+  excluído"). Every button is disabled while a save or delete is in flight. Coordinates are
+  written into the form as plain decimals (`services/coordinates.js`): `String(1e-7)` is "1e-7",
+  which the backend rejects, so an unchanged "Atualizar" used to fail (QA-AUTH5-2).
+  **Only a 404 with `code: "dev_not_found"` means "no profile"** (QA-AUTH5-1): any other 404
+  (e.g. `not_found` from a backend without these routes, or a proxy that does not route
+  `/devs/me`) changed nothing, so it is shown as an error and the form stays in update mode.
+  Update answered `dev_not_found` (deleted on another device): registration form with "Seu
+  perfil não existe mais, cadastre-se novamente" and the values the user typed, so "Salvar"
+  registers them. Delete answered `dev_not_found`: treated as done. If `GET /devs/me` fails
+  otherwise (server unreachable), or another tab registered meanwhile, the registration form is
+  shown and `POST /devs` answers with the existing profile unchanged. The app notices because
+  the answer does not hold what was submitted (techs as the backend parses them, coordinates as
+  numbers): it then says "Você já tinha um perfil cadastrado (<saved techs>). Os dados que você
+  digitou estão no formulário: clique em "Atualizar" para salvá-los.", lists the stored profile
+  and keeps the typed values in the update form. As with registration, a change is only sent for the user this tab shows
+  (QA-AUTH2-3), and a 401 ends the session. If the stored session cannot be checked (server
   unreachable or timed out, or `GET /auth/me` answers 429), the token is kept and the app shows why ("Muitas
   tentativas em pouco tempo, tente novamente mais tarde" for 429) with "Tentar novamente" and
   "Sair", never a misleading "expired" or signed-out view.
@@ -392,6 +490,15 @@ the `requireAuth` middleware, web sign-in (US-6, without update/delete) and mobi
   novamente". A second "Entrar com GitHub" tap during a sign-in is ignored.
 - **"Sair"** closes the socket, forgets its token and deletes the token from secure storage.
   Like the web, there is no server-side revocation.
+- **Live markers** (US-7 "Live profile update", slice 5; `pages/Main.js`, `services/devList.js`,
+  `services/socket.js`). The map subscribes once per event for its lifetime (`new-dev`,
+  `dev-updated`, `dev-deleted`; one listener each, removed on unmount). `new-dev` and
+  `dev-updated` replace the dev's entry in place, so its marker (keyed by `_id`) moves and its
+  callout updates without a new search, or add it if it is not on the map (the backend only sends
+  devs that match this map's subscription). `dev-deleted` removes it. A dev is the same entry by
+  `_id` or by `github_username` in any letter case (a dev deleted and registered again has a new
+  `_id`). A push without a usable `location.coordinates` or `techs` is ignored. Mobile has no
+  registration or profile editing screen.
 
 ## Data flow: registering a dev and seeing it live elsewhere
 
@@ -407,6 +514,11 @@ the `requireAuth` middleware, web sign-in (US-6, without update/delete) and mobi
 4. Any signed-in client with an open socket connection whose filters match sees the
    new dev appear on their map without polling or refreshing.
 
+Updating and deleting (slice 5) follow the same path: the web app sends `PUT /devs/me` or
+`DELETE /devs/me`, the backend changes the token user's dev, then emits `dev-updated` (to the
+sockets matching the new position and techs) or `dev-deleted` (to those matching the last ones),
+and the mobile map moves or removes the marker.
+
 ## Known architectural constraints worth designing around
 
 - **Socket identity is checked once.** The socket handshake verifies the token, but an open
@@ -414,8 +526,13 @@ the `requireAuth` middleware, web sign-in (US-6, without update/delete) and mobi
   (no revocation; "Sair" only closes the app's own socket). Closing sockets at expiry would
   need a timer per socket keyed on the token's `exp`.
 - **Profile is a sign-in snapshot.** Registration uses the GitHub profile as
-  of sign-in, and existing devs are never refreshed from GitHub (profile
-  updates come with slice 5).
+  of sign-in; an existing dev only picks up GitHub changes when its owner
+  signs in again and saves (`PUT /devs/me`). A save from a session signed in
+  before a GitHub change writes the older snapshot.
+- **Live pushes follow the new state only.** `dev-updated` reaches the maps that
+  match a dev's new position and techs (Q4); a map that only matched the old
+  ones keeps a stale marker until it searches again. A map that misses a push
+  (socket down, app in background) also only catches up on its next search.
 - **Single MongoDB collection, no pagination.** `GET /devs` returns
   everything. Fine at seed-data scale; will need pagination or a stricter
   default radius before this is a real dataset.

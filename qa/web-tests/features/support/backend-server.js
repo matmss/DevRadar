@@ -55,6 +55,8 @@ function applyTestAuthEnv(port) {
   // Every scenario signs in (3 sign-in requests) and reloads (GET /auth/me), from one IP.
   process.env.AUTH_RATE_LIMIT_MAX = '100000';
   process.env.AUTH_SESSION_RATE_LIMIT_MAX = '100000';
+  // One login (e.g. gaearon) updates and deletes across many scenarios in one backend process.
+  process.env.PROFILE_RATE_LIMIT_MAX = '100000';
   delete process.env.TRUST_PROXY;
 }
 
@@ -115,6 +117,21 @@ function testRoutes() {
       location: { type: 'Point', coordinates: [-46.6333, -23.5505] },
     }));
     await Dev.insertMany(docs);
+    res.sendStatus(204);
+  });
+
+  // One specific developer, as a legacy (pre-sign-in) record would look: e.g. the signed-in
+  // user's own profile for the update/delete scenarios (auth slice 5), in any letter case.
+  router.post('/seed-dev', async (req, res) => {
+    const { github_username, techs, latitude, longitude } = req.body;
+    await Dev.create({
+      github_username,
+      name: github_username,
+      avatar_url: 'https://avatars.githubusercontent.com/u/0?v=4',
+      bio: 'Seeded for an @integration scenario',
+      techs: String(techs).split(',').map((tech) => tech.trim()),
+      location: { type: 'Point', coordinates: [Number(longitude), Number(latitude)] },
+    });
     res.sendStatus(204);
   });
 

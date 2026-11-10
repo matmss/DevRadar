@@ -29,7 +29,19 @@ const MESSAGES = {
   serverUnreachable: 'Não foi possível falar com o servidor, tente novamente mais tarde',
   tooManyRequests: 'Muitas tentativas em pouco tempo, tente novamente mais tarde',
   pkceUnsupported: 'Este navegador não permite entrar com segurança (use https)',
+  serverUnreachableShort: 'Não foi possível falar com o servidor, tente novamente',
+  profileUpdated: 'Perfil atualizado',
+  profileDeleted: 'Perfil excluído',
+  profileGone: 'Seu perfil não existe mais, cadastre-se novamente',
+  alreadyRegistered: (dev) => `Você já tinha um perfil cadastrado (${Array.isArray(dev.techs) ? dev.techs.join(', ') : ''}). `
+    + 'Os dados que você digitou estão no formulário: clique em "Atualizar" para salvá-los.',
 };
+
+// `profile` (the signed-in user's own dev, GET /devs/me):
+//   undefined  not known yet (loading): the form is not shown
+//   null       no profile: registration form ("Salvar")
+//   object     registered: update form ("Atualizar") with "Excluir meu perfil" (US-6)
+const PROFILE_UNKNOWN = undefined;
 
 const SIGNED_OUT = { status: 'signedOut', user: null };
 
@@ -49,6 +61,81 @@ function hasStatus(err, status) {
   return Boolean(err && err.response && err.response.status === status);
 }
 
+/**
+ * The text to show for a failed save or delete: the backend's `{ error, details }`, or "server
+ * unreachable" when there is no answer.
+ * @param {unknown} err
+ * @returns {string}
+ */
+function requestErrorMessage(err) {
+  const body = err && err.response && err.response.data;
+  if (!body || typeof body.error !== 'string') return MESSAGES.serverUnreachableShort;
+  const details = Array.isArray(body.details) && body.details.length > 0 ? `: ${body.details.join('; ')}` : '';
+  return `${body.error}${details}`;
+}
+
+/**
+ * True only for the backend's "you have no profile" answer. Any other 404 (`not_found` from a
+ * backend without these routes, a proxy or path prefix that does not route /devs/me, ...) means
+ * nothing happened to the profile and is shown as an error (QA-AUTH5-1).
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+function isDevNotFound(err) {
+  return hasStatus(err, 404) && Boolean(err.response.data) && err.response.data.code === 'dev_not_found';
+}
+
+/**
+ * Same dev: same _id, or the same GitHub login in any letter case (a profile deleted and
+ * registered again in another tab has a new _id).
+ * @param {{ _id?: string, github_username?: string }} a
+ * @param {{ _id?: string, github_username?: string }} b
+ * @returns {boolean}
+ */
+function isSameDev(a, b) {
+  if (a._id && b._id && a._id === b._id) return true;
+  return typeof a.github_username === 'string' && typeof b.github_username === 'string'
+    && a.github_username.toLowerCase() === b.github_username.toLowerCase();
+}
+
+/**
+ * The list with `dev` in place of its entry (and without other entries for the same dev), or
+ * appended if it is not there.
+ * @param {object[]} devs
+ * @param {object} dev
+ * @returns {object[]}
+ */
+function upsertDev(devs, dev) {
+  let replaced = false;
+  const next = [];
+  devs.forEach(item => {
+    if (!isSameDev(item, dev)) next.push(item);
+    else if (!replaced) {
+      next.push(dev);
+      replaced = true;
+    }
+  });
+  if (!replaced) next.push(dev);
+  return next;
+}
+
+/**
+ * Whether the dev POST /devs answered holds what the user submitted. If not, the user already
+ * had a profile (another tab registered, or GET /devs/me failed) and POST returned it unchanged.
+ * Compared the way the backend stores the input: techs trimmed without empty entries, numbers.
+ * @param {{ techs: string[], location: { coordinates: number[] } }} dev
+ * @param {{ techs: string, latitude: unknown, longitude: unknown }} submitted
+ * @returns {boolean}
+ */
+function holdsSubmittedValues(dev, submitted) {
+  const techs = String(submitted.techs).split(',').map(tech => tech.trim()).filter(Boolean);
+  const coordinates = (dev.location && dev.location.coordinates) || [];
+  return Array.isArray(dev.techs)
+    && dev.techs.join(',') === techs.join(',')
+    && coordinates[1] === Number(submitted.latitude)
+    && coordinates[0] === Number(submitted.longitude);
+}
+
 // Session states:
 //   "loading"     restoring or re-validating the session, or finishing sign-in
 //   "signedOut"   only the sign-in button (no token stored)
@@ -63,13 +150,23 @@ function App() {
   const [notice, setNotice] = useState(null);
   const [devs, setDevs] = useState([]);
   const [formError, setFormError] = useState(null);
+  const [formNotice, setFormNotice] = useState(null);
+  const [profile, setProfile] = useState(PROFILE_UNKNOWN);
+  // Bumped on every save or delete: remounts DevForm so it shows the saved values (or an empty
+  // registration form after a delete).
+  const [formRevision, setFormRevision] = useState(0);
+  // What the user typed, carried into the remounted form when the mode changes under their input.
+  const [formDraft, setFormDraft] = useState(null);
   const sessionTokenRef = useRef(null);
 
   const showSignedOut = useCallback((message) => {
     sessionTokenRef.current = null;
     setSession(SIGNED_OUT);
     setDevs([]);
+    setProfile(PROFILE_UNKNOWN);
+    setFormDraft(null);
     setFormError(null);
+    setFormNotice(null);
     setNotice(message);
   }, []);
 
@@ -170,20 +267,46 @@ function App() {
     start();
   }, [restoreStoredSession, showSignedOut]);
 
+  // Signed in: load the dev list and the user's own profile (GET /devs/me), which decides between
+  // the registration and the update form. Answers that arrive after the session changed are
+  // dropped.
   useEffect(() => {
-    if (session.status !== 'signedIn') return;
+    if (session.status !== 'signedIn') return undefined;
+    let current = true;
+    setProfile(PROFILE_UNKNOWN);
+    setFormDraft(null);
+    setFormError(null);
+    setFormNotice(null);
 
     async function loadDevs(){
       try {
         const response = await api.get('/devs');
 
-        setDevs(response.data);
+        if (current) setDevs(response.data);
       } catch (err) {
         if (!hasStatus(err, 401)) console.warn('Could not load developers:', err.message);
       }
     }
 
+    async function loadProfile() {
+      try {
+        const response = await api.get('/devs/me');
+        if (current) setProfile(response.data);
+      } catch (err) {
+        // A 401 already went through handleUnauthorized. 404: not registered yet. Anything else
+        // (server unreachable): offer registration anyway, since POST /devs answers with the
+        // existing profile if there is one, which then switches the form to update mode.
+        if (!current || hasStatus(err, 401)) return;
+        if (!hasStatus(err, 404)) console.warn('Could not load your profile:', err.message);
+        setProfile(null);
+      }
+    }
+
     loadDevs();
+    loadProfile();
+    return () => {
+      current = false;
+    };
   }, [session.status, session.user]);
 
   async function handleSignIn() {
@@ -197,38 +320,98 @@ function App() {
     }
   }
 
-  async function handleAddDev(data) {
+  // Every change acts only as the user this tab shows: if another tab changed the stored
+  // session, re-validate first instead of sending someone else's token (QA-AUTH2-3).
+  function startProfileRequest() {
     setFormError(null);
-
-    // Only register as the user this tab shows: if another tab changed the stored session,
-    // re-validate first instead of sending someone else's token (QA-AUTH2-3).
+    setFormNotice(null);
     if (getToken() !== sessionTokenRef.current) {
       restoreStoredSession();
       throw new Error('The session changed in another tab');
     }
+  }
 
+  /** Shows a failed save or delete; any 401 already switched to the signed-out view. */
+  function showRequestError(err) {
+    if (!hasStatus(err, 401)) setFormError(requestErrorMessage(err));
+  }
+
+  /**
+   * The saved profile replaces its entry in the list, and the form is remounted in update mode
+   * with the saved values, or with `draft` (the user's input) if given.
+   */
+  function showSavedProfile(dev, notice = null, draft = null) {
+    setProfile(dev);
+    setDevs(current => upsertDev(current, dev));
+    setFormDraft(draft);
+    setFormRevision(revision => revision + 1);
+    setFormNotice(notice);
+  }
+
+  /**
+   * The profile is gone: out of the list, and the form is remounted for registration, empty or
+   * with `draft` (the user's input) if given.
+   */
+  function showProfileRemoved(removed, notice, draft = null) {
+    setProfile(null);
+    if (removed) setDevs(current => current.filter(dev => !isSameDev(dev, removed)));
+    setFormDraft(draft);
+    setFormRevision(revision => revision + 1);
+    setFormNotice(notice);
+  }
+
+  // Failures are rethrown so DevForm keeps the user's input.
+  async function handleAddDev(data) {
+    startProfileRequest();
+    let dev;
     try {
-      const response = await api.post('/devs', data);
-
       // The backend returns the existing record when the dev is already registered.
-      if (!devs.some(dev => dev._id === response.data._id)) {
-        setDevs([...devs, response.data]);
-      }
+      const response = await api.post('/devs', data);
+      dev = response.data;
     } catch (err) {
-      // Any 401 switches to the signed-out view (handleUnauthorized).
-      if (!hasStatus(err, 401)) {
-        const body = err.response && err.response.data;
-        const details = body && Array.isArray(body.details) && body.details.length > 0
-          ? `: ${body.details.join('; ')}`
-          : '';
-        setFormError(body && body.error
-          ? `${body.error}${details}`
-          : 'Could not reach the server, try again later');
-      }
-
-      // Rethrow so DevForm keeps the user's input instead of clearing it.
+      showRequestError(err);
       throw err;
     }
+
+    if (holdsSubmittedValues(dev, data)) {
+      showSavedProfile(dev);
+      return;
+    }
+    // Already registered (another tab registered, or GET /devs/me failed): the stored profile
+    // is in the list, and the user's input stays in the update form, one click from saving.
+    showSavedProfile(dev, MESSAGES.alreadyRegistered(dev), data);
+  }
+
+  async function handleUpdateDev(data) {
+    startProfileRequest();
+    try {
+      const response = await api.put('/devs/me', data);
+      showSavedProfile(response.data, MESSAGES.profileUpdated);
+    } catch (err) {
+      // Deleted meanwhile (another tab or device): offer registration again, with the input kept.
+      if (isDevNotFound(err)) {
+        showProfileRemoved(profile, null, data);
+        setFormError(MESSAGES.profileGone);
+        return;
+      }
+      showRequestError(err);
+      throw err;
+    }
+  }
+
+  async function handleDeleteDev() {
+    startProfileRequest();
+    try {
+      await api.delete('/devs/me');
+    } catch (err) {
+      // dev_not_found: already deleted (another tab, or a repeated request), which is what the
+      // user wants. Any other failure, including another 404, deleted nothing (QA-AUTH5-1).
+      if (!isDevNotFound(err)) {
+        showRequestError(err);
+        throw err;
+      }
+    }
+    showProfileRemoved(profile, MESSAGES.profileDeleted);
   }
 
   if (session.status === 'loading') {
@@ -259,8 +442,19 @@ function App() {
     <div id="app">
       <aside>
         <SessionUser user={session.user} onSignOut={endSession} />
-        <strong>Cadastro</strong>
-        <DevForm onSubmit={handleAddDev} />
+        <strong>{profile ? 'Meu perfil' : 'Cadastro'}</strong>
+        {profile === PROFILE_UNKNOWN ? (
+          <p className="form-loading">Carregando seu perfil...</p>
+        ) : (
+          <DevForm
+            key={`${profile ? profile._id : 'new'}-${formRevision}`}
+            dev={profile}
+            draft={formDraft}
+            onSubmit={profile ? handleUpdateDev : handleAddDev}
+            onDelete={handleDeleteDev}
+          />
+        )}
+        {formNotice && <p className="form-notice" role="status">{formNotice}</p>}
         {formError && <p className="form-error" role="alert">{formError}</p>}
       </aside>
 

@@ -5,7 +5,14 @@ import { requestForegroundPermissionsAsync, getCurrentPositionAsync } from 'expo
 import { MaterialIcons } from '@expo/vector-icons';
 
 import api from '../services/api';
-import { connect, disconnect, subscribeToNewDevs } from '../services/socket';
+import {
+  connect,
+  disconnect,
+  subscribeToNewDevs,
+  subscribeToDevUpdates,
+  subscribeToDevDeletions,
+} from '../services/socket';
+import { upsertDev, removeDev } from '../services/devList';
 import { getToken } from '../services/session';
 import { MESSAGES } from '../services/authErrors';
 
@@ -63,10 +70,17 @@ function Main({ navigation }) {
     loadInitialPosition();
   }, [loadInitialPosition]);
 
-  // One listener for the screen's lifetime (it used to add another on every change of `devs`).
-  useEffect(() => subscribeToNewDevs(dev => {
-    setDevs(current => (current.some(item => item._id === dev._id) ? current : [...current, dev]));
-  }), []);
+  // One listener per event for the screen's lifetime (it used to add another on every change of
+  // `devs`). Live pushes change the markers without a new search: a new or updated dev replaces
+  // its marker in place (or is added), a deleted dev's marker is removed (services/devList.js).
+  useEffect(() => {
+    const unsubscribers = [
+      subscribeToNewDevs(dev => setDevs(current => upsertDev(current, dev))),
+      subscribeToDevUpdates(dev => setDevs(current => upsertDev(current, dev))),
+      subscribeToDevDeletions(dev => setDevs(current => removeDev(current, dev))),
+    ];
+    return () => unsubscribers.forEach(unsubscribe => unsubscribe());
+  }, []);
 
   // Leaving the map (sign-out, session ended) closes the live subscription.
   useEffect(() => () => disconnect(), []);

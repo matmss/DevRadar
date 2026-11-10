@@ -27,7 +27,8 @@ Defines how functional, regression, integration, and exploratory testing are run
 ## 3. Functional testing
 - Scope: one layer at a time, dependencies faked (GitHub API via `nock`/mock server, Mongo via `mongodb-memory-server`, browser geolocation mocked via Playwright, device location/permissions mocked via Detox).
 - **Authentication (since auth slice 4):** every route that shows or changes developers and the Socket.io handshake need a session token, so scenarios sign in first. Backend: `Given I am signed in as "<login>"` (test-only token, `backend-tests/features/support/session.js`) or `I signed in through GitHub as` (full mocked OAuth); socket steps connect "signed-in clients" with the token in the handshake `auth` payload. Web: `I am signed in with GitHub as` (real backend flow, GitHub faked); steps that inspect the backend over HTTP use a test-only inspector token (`web-tests/features/support/auth-fixtures.js`). Mobile: Jest mocks the native modules; Maestro flows that need the map sign in with a real GitHub test account (`mobile-tests/README.md`). Each protected surface also has explicit `@smoke`/`@regression` scenarios for the missing/expired/invalid token cases.
-- **Mobile unit tests** (`dev/tests/mobile/`, `npm test` in `dev/mobile`) cover the sign-in services and session handling; they are the fast feedback layer while Detox is blocked (BUG-009).
+- **Own-profile routes and live pushes (since auth slice 5):** `GET`/`PUT`/`DELETE /devs/me` are covered by `backend-tests/features/profile.feature` (`I request my profile`, `I update my profile with ...`, `I delete my profile`; seed the user's profile with `a developer already exists with github_username ...`). The backend's socket test clients record every pushed event (`socket.onAny`), so a scenario can assert `new-dev`, `dev-updated` and `dev-deleted` independently, including that an event did *not* arrive (`should receive exactly 0 "<event>" events within N seconds`). Web: `web-tests/features/profile.feature` seeds the signed-in user's profile through the harness-only `POST /__test__/seed-dev` (any letter case) and watches for native dialogs, which the app must never open.
+- **Mobile unit tests** (`dev/tests/mobile/`, `npm test` in `dev/mobile`) cover the sign-in services, session handling and the live marker updates (`dev-updated`/`dev-deleted`); they are the fast feedback layer while Detox is blocked (BUG-009).
 - Entry criteria: feature code merged to branch; `.feature` file exists.
 - Exit criteria: all `@smoke` + relevant `@edge` scenarios pass; no P1 defect open against the feature.
 
@@ -43,7 +44,7 @@ Defines how functional, regression, integration, and exploratory testing are run
 ## 6. Exploratory testing
 - Session-based test management (SBTM): each charter from `02-test-scenarios.md` is time-boxed (30–45 min), notes captured in the Bug Tracker doc under "Exploratory session log," and any defect found gets a bug entry plus, if it represents a real gap, a new automated scenario.
 - Cadence: at least one charter per sprint/week, and a full charter pass before any release.
-- Charters are refreshed whenever a new feature lands (e.g., if update/delete endpoints are ever implemented, add charters for them immediately).
+- Charters are refreshed whenever a new feature lands (e.g., the update/delete endpoints of auth slice 5 got the "profile update/delete" charter in `02-test-scenarios.md`).
 
 ## 7. Entry / exit criteria summary
 

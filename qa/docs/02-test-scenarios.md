@@ -92,6 +92,67 @@ Feature: List all developers
     And the response should contain 3 developers
 ```
 
+## Feature: Update and delete my profile (Backend) — covers FR-1.7 to FR-1.9, FR-4.5, FR-4.6, US-4, BUG-008
+
+Automated in `qa/backend-tests/features/profile.feature` (auth slice 5).
+
+```gherkin
+Feature: Update and delete my own developer profile (US-4, BUG-008)
+
+  Scenario: I can read my own profile (GET /devs/me); 404 dev_not_found without one; 401 without a token
+
+  Scenario: Update my techs and location
+    Given a developer already exists with github_username "gaearon" and techs "Node.js"
+    And I am signed in as "gaearon"
+    When I update my profile with techs " Elixir ,, Go ", latitude "-22.9068" and longitude "-43.1729"
+    Then the response status should be 200
+    And the developer's techs should be "Elixir,Go"
+    And the stored developer "gaearon" should be at latitude "-22.9068" and longitude "-43.1729"
+
+  Scenario: An updated profile shows up in search at its new location only
+  Scenario: An update refreshes name, avatar and bio from the profile captured at sign-in
+  Scenario: Updating when I have no profile is a 404 and creates nothing
+  Scenario: Updating without a token (401 token_missing) or with an expired one (token_expired) changes nothing
+  Scenario Outline: Invalid update input is rejected with the same 400 as registration
+  Scenario: An update with only some of the fields is rejected (no partial PUT)
+  Scenario: Identity fields in the update body (github_username, _id, name, avatar_url, bio, location) are ignored (Q9)
+  Scenario Outline: The owner of a legacy profile in another letter case can update it (US-8)
+  Scenario: Another user's profile cannot be changed or deleted through a /devs/<username> path (404 not_found)
+
+  Scenario: Delete my profile: it is gone from the list and search, and I can register again
+    Given a developer already exists with github_username "gaearon" and techs "ReactJS"
+    And I am signed in as "gaearon"
+    When I delete my profile
+    Then the response status should be 204
+    And GET /devs, GET /search and GET /devs/me no longer return it
+    And registering again creates a new profile with the new techs
+
+  Scenario: Deleting a legacy profile in another letter case; deleting without a profile (404); deleting twice (204, then 404)
+  Scenario: Deleting without a token, with an invalid or an expired one is rejected (401) and deletes nothing
+
+  @edge
+  Scenario: Updates racing a delete do not crash or resurrect the profile
+  @edge
+  Scenario: An update applied just after a delete answers 404 and does not resurrect the profile
+
+  # Live pushes (Q4)
+  Scenario: An update is pushed as dev-updated, never as new-dev, to subscribers matching the new position and techs
+  Scenario: Subscribers that only matched the old position or the old techs get no dev-updated
+  Scenario: A rejected or not-found update pushes nothing
+  Scenario: A delete is pushed as dev-deleted, with only the id and login, to subscribers matching the last position and techs
+
+  # Slice 5 review hardening (QA-AUTH5)
+  @edge
+  Scenario: A slow update followed by a delete announces dev-updated before dev-deleted
+  @edge
+  Scenario: Two updates are announced in the order they were applied
+  @edge
+  Scenario: Profile changes are rate limited per GitHub login (429 rate_limited; other logins unaffected)
+  @edge
+  Scenario Outline: A techs list over the caps (31 techs, a tech over 50 characters) is rejected with 400, on registration and on update
+  # Radius-edge guards for dev-updated / dev-deleted (BUG-002): features/auth-slice5-review.feature (QA)
+```
+
 ## Feature: Reads and live updates require sign-in (Backend) — covers FR-2.1, FR-3.1, FR-4.1, US-5, Q6
 
 ```gherkin
@@ -200,7 +261,7 @@ Feature: Register as the signed-in developer from the web app
     Given I am signed in with GitHub as "alice"
     When I fill in techs "Elixir" and submit
     Then a new entry for "alice" should appear in the developer list without a page reload
-    And the techs field should be cleared
+    And the form should switch to update mode ("Atualizar") with the saved techs (since auth slice 5)
 
   @edge
   Scenario: Geolocation permission denied still allows manual entry
@@ -220,6 +281,38 @@ Feature: Register as the signed-in developer from the web app
   Scenario: A 401 on the developer list signs me out ("Sessão expirada, entre novamente")
   Scenario: A 401 for a token another tab has replaced keeps the new session
   Scenario: A session check that never answers shows the "unavailable" view instead of loading forever
+
+Feature: Update and delete my profile from the web app (US-6 "Already registered", US-4)
+
+  # Auth slice 5, automated in qa/web-tests/features/profile.feature
+  Scenario: An already registered developer sees the form prefilled with the saved profile
+    Given I have a profile with techs "ReactJS,Redux" in São Paulo
+    And the browser reports a position in Rio de Janeiro
+    When I sign in with GitHub
+    Then the form shows "ReactJS, Redux" and the saved São Paulo coordinates, with "Atualizar" and "Excluir meu perfil"
+
+  Scenario: Updating my profile changes the list and the backend ("Perfil atualizado", survives a reload)
+  @edge
+  Scenario: A rejected update shows the server's error and keeps the input
+  @edge
+  Scenario: Double-clicking "Atualizar" sends one update (buttons disabled while in flight)
+  Scenario: Deleting my profile after confirming in the page returns the form to registration ("Perfil excluído"), no native dialog
+  Scenario: Cancelling the confirmation keeps my profile
+  Scenario: After deleting my profile I can register again
+  Scenario: Registering switches the form to update mode
+  Scenario: A legacy profile in another letter case is shown as mine
+  @edge
+  Scenario: Updating a profile that was deleted elsewhere offers registration again, with my input kept
+  @edge
+  Scenario: "Salvar" when another device already registered me keeps my input, one click from saving
+  @edge
+  Scenario: A profile deleted and registered again elsewhere is listed once after I update it
+
+  # QA review of slice 5 (qa/web-tests/features/auth-slice5-review.feature)
+  @edge
+  Scenario: A 404 that is not dev_not_found on delete (or update) is not reported as a deletion (QA-AUTH5-1)
+  @edge
+  Scenario: Saving the update form unchanged works for a location the backend accepted, e.g. 0.0000001 (QA-AUTH5-2)
 ```
 
 ## Feature: Mobile — Sign-in — covers FR-6.0, US-7
@@ -278,6 +371,16 @@ Feature: Search and view developers on the map
     When a new developer matching "ReactJS" registers within 10km
     Then a new marker should appear on the map without me tapping search again
 
+  # Auth slice 5 (US-7 "Live profile update"). Covered by Jest (dev/tests/mobile/pages/Main.test.js,
+  # services/devList.test.js); on a device it needs a second, web-registered account (manual).
+  Scenario: A live "dev-updated" event moves or updates a marker without re-searching
+    Given a developer's marker is on my map
+    When that developer updates their techs or location and still matches my search
+    Then their marker moves/updates in place, without me tapping search again
+
+  Scenario: A "dev-updated" event for a developer not on my map adds their marker
+  Scenario: A live "dev-deleted" event removes the marker of a developer who deleted their profile
+
   @edge
   Scenario: Location permission denied
     Given location permission is denied
@@ -311,3 +414,4 @@ Feature: End-to-end real-time propagation across layers
 | Explore map behavior when panning/zooming rapidly while a search is in flight | Mobile | 30 min |
 | Explore WebSocket behavior across app backgrounding/foregrounding and connectivity loss | Mobile | 45 min |
 | Explore GitHub sign-in failure modes (rate limit, consent denied, renamed account between sign-in and registration, stale sign-in profile) | Backend + Web | 30 min |
+| Explore profile update/delete (auth slice 5): two tabs or devices editing and deleting the same profile, updating with an old token whose sign-in profile is stale, moving a profile out of a watcher's region (stale marker until the next search), and markers on a real device after `dev-updated`/`dev-deleted` | Web + Mobile + Backend | 45 min |

@@ -20,7 +20,10 @@ Feature: Register as the signed-in developer from the web app
     And I am signed in with GitHub as "gaearon"
     When I fill in techs "ReactJS,Redux" and submit
     Then a new entry for "gaearon" should appear in the developer list
-    And the techs field should be empty
+    # Since auth slice 5 a registered user gets the update form with the saved values (US-6
+    # "Already registered"), instead of an empty form.
+    And the form should be in update mode
+    And the techs field should contain "ReactJS, Redux"
 
   @edge @P2
   Scenario: Geolocation permission denied still allows manual entry

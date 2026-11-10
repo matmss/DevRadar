@@ -4,7 +4,7 @@ const DevController = require('./controllers/DevController');
 const SearchController = require('./controllers/SearchController');
 const AuthController = require('./controllers/AuthController');
 const { requireAuth } = require('./middleware/auth');
-const { signInRateLimiter, sessionRateLimiter } = require('./middleware/rateLimit');
+const { signInRateLimiter, sessionRateLimiter, profileRateLimiter } = require('./middleware/rateLimit');
 
 const routes = Router();
 
@@ -13,6 +13,14 @@ const routes = Router();
 // subscription is authenticated at handshake in websocket.js.
 routes.get('/devs', requireAuth, DevController.index);
 routes.post('/devs', requireAuth, DevController.store);
+
+// The signed-in user's own dev (US-4, BUG-008): the dev is the token's login, so these take no
+// username or id and cannot reach anyone else's profile. No profile: 404 dev_not_found.
+// Registered before any future `/devs/:param` route so "me" can never be read as an id.
+routes.get('/devs/me', requireAuth, DevController.show);
+// Changes are rate limited per login (each one is pushed to every matching socket).
+routes.put('/devs/me', requireAuth, profileRateLimiter, DevController.update);
+routes.delete('/devs/me', requireAuth, profileRateLimiter, DevController.destroy);
 
 routes.get('/search', requireAuth, SearchController.index);
 

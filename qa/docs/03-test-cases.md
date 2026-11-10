@@ -113,7 +113,7 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 - **Requirement:** FR-5.2, FR-5.3, US-6
 - **Type:** Functional | **P1**
 - **Steps:** Sign in with GitHub. Fill techs (the form has no username field) and submit.
-- **Expected result:** New `<li class="dev-item">` appears for the signed-in user with correct avatar/name/techs/bio/profile link; no full navigation occurs; the techs field resets to empty.
+- **Expected result:** New `<li class="dev-item">` appears for the signed-in user with correct avatar/name/techs/bio/profile link; no full navigation occurs. Since auth slice 5 the form then switches to update mode ("Atualizar") with the saved techs (it used to reset to empty), see TC-033.
 
 ## TC-016 (Web) — Developer list loads on mount
 - **Requirement:** FR-5.3
@@ -195,6 +195,42 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
   - "Sair": sign-in screen, token removed, socket closed; a relaunch stays signed out.
 - **Automated:** `dev/tests/mobile/**` (Jest: PKCE, secure storage, error mapping, api/socket wiring, sign-in flow, scheme consistency, `SessionProvider`); Maestro `qa/mobile-tests/maestro/00`, `04` (no backend/GitHub needed), `01`, `02`, `03`, `05` (sign in with a real GitHub test account). Expiry on device is manual (see `qa/mobile-tests/README.md`).
 
+## TC-031 — Update my own profile: PUT /devs/me (US-4, BUG-008)
+- **Requirement:** FR-1.7, FR-1.8, FR-4.5, US-4, Q4, Q9
+- **Type:** Functional / Security | **P1**
+- **Preconditions:** Signed in as `gaearon` (session token), `gaearon` registered with techs `Node.js` in São Paulo.
+- **Steps / expected result:**
+  - `GET /devs/me`: 200 with the profile. Signed in as a user without one: 404 `{ error, code: "dev_not_found", details }`. No token: 401 `token_missing`.
+  - `PUT /devs/me` `{ techs: " Elixir ,, Go ", latitude: -22.9068, longitude: -43.1729 }`: 200 with techs `["Elixir", "Go"]` and `location.coordinates` `[-43.1729, -22.9068]`; `name`/`avatar_url`/`bio` are the sign-in profile; `GET /search` finds it in Rio, not in São Paulo.
+  - Missing/invalid `techs`, `latitude` or `longitude` (including a body with only `techs`): 400 `{ error, details }`, same messages as `POST /devs`, nothing changed.
+  - A body with `github_username`/`_id` of another dev, `name`, `avatar_url`, `bio`, `location`: ignored; only the signed-in user's profile changes.
+  - Signed in as `gaearon`, profile stored as `GAEARON`: updated, `github_username` stays `GAEARON`.
+  - No profile: 404 `dev_not_found`, nothing created. No/expired token: 401, nothing changed. `PUT /devs/bob`: 404 `not_found`.
+  - Socket clients: a client matching the new position and techs gets `dev-updated` with the updated dev and no `new-dev`; clients that only matched the old position or techs get nothing; a 400/404 pushes nothing.
+- **Automated:** `qa/backend-tests/features/profile.feature`.
+
+## TC-032 — Delete my own profile: DELETE /devs/me (US-4, Q7)
+- **Requirement:** FR-1.9, FR-4.6, US-4
+- **Type:** Functional / Security | **P1**
+- **Steps / expected result:**
+  - `DELETE /devs/me`: 204 with an empty body; the profile is gone from `GET /devs`, `GET /search` and `GET /devs/me` (404); `POST /devs` then registers a new profile with the new techs.
+  - Legacy profile in another letter case: deleted. No profile, or a second `DELETE`: 404 `dev_not_found`. No/invalid/expired token: 401, nothing deleted.
+  - A socket client matching the deleted dev's last position and techs gets `dev-deleted` with only `{ _id, github_username }`; others get nothing.
+  - 6 `PUT`s racing one `DELETE`: the delete answers 204, each update 200 or 404 `dev_not_found`, never 500, and the profile stays deleted. An update applied just after the delete: 404, not resurrected.
+  - Since the slice 5 review: a slow `PUT` followed by a `DELETE` announces `dev-updated` before `dev-deleted`, and two `PUT`s are announced in the order applied; `PUT`/`DELETE` over `PROFILE_RATE_LIMIT_MAX` for one login answer 429 `rate_limited` (other logins unaffected); 31 techs, or a tech over 50 characters, answer 400 on `POST /devs` and `PUT /devs/me`.
+- **Automated:** `qa/backend-tests/features/profile.feature`, `qa/backend-tests/features/auth-slice5-review.feature` (radius edge); `unit/keyedQueue.test.js`, `unit/validateDevInputLimits.test.js`.
+
+## TC-033 (Web) — Update and delete my profile (US-6 "Already registered")
+- **Requirement:** FR-5.4, US-6
+- **Type:** Functional | **P1**
+- **Steps / expected result:**
+  - Signed in with a profile (also a legacy one in another letter case): the form shows the saved techs ("ReactJS, Redux") and the saved coordinates even when the browser reports another position; "Atualizar" and "Excluir meu perfil", no "Salvar".
+  - Change techs/location and click "Atualizar": "Perfil atualizado", the list entry shows the new techs, the backend has them, a reload still shows them. A 400 shows the error and keeps the input. A double-click sends one `PUT` (buttons disabled while in flight).
+  - "Excluir meu perfil": an in-page confirmation ("Confirmar exclusão" / "Cancelar"), never a native dialog. "Cancelar" keeps the profile. "Confirmar exclusão": "Perfil excluído", registration form ("Salvar", empty techs), the entry leaves the list, the backend no longer has it; registering again works.
+  - Profile deleted on another device, then "Atualizar": "Seu perfil não existe mais, cadastre-se novamente" and the registration form.
+  - Since the slice 5 review: a 404 that is not `dev_not_found` on update or delete shows the error and keeps the update form (QA-AUTH5-1); a stored coordinate like 1e-7 is prefilled as "0.0000001" and an unchanged "Atualizar" succeeds (QA-AUTH5-2); after `dev_not_found` on update the typed values stay in the registration form; "Salvar" answered with an existing profile shows "Você já tinha um perfil cadastrado (...)" and keeps the typed values in the update form; a profile re-created elsewhere is listed once.
+- **Automated:** `qa/web-tests/features/profile.feature`, `qa/web-tests/features/auth-slice5-review.feature`; `dev/web/src/components/DevForm/DevForm.test.js`, `dev/web/src/services/coordinates.test.js`.
+
 ## TC-017 (Mobile) — Map centers on current location
 - **Requirement:** FR-6.1
 - **Type:** Functional | **P2**
@@ -212,6 +248,7 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 - **Type:** Integration | **P1**
 - **Steps:** After a search, register a new matching developer via a direct API call while the app is foregrounded.
 - **Expected result:** A new marker appears without the user tapping search again.
+- **Since auth slice 5 (FR-6.6, US-7 "Live profile update"):** a matching developer on the map then updates their techs/location (`PUT /devs/me`): their marker moves/updates in place (callout shows the new techs) without a new search; a matching developer not on the map is added; a developer who deletes their profile (`DELETE /devs/me`) disappears. Automated with Jest (`dev/tests/mobile/pages/Main.test.js`, `services/devList.test.js`, `services/socket.test.js`); on a device it is manual (needs a second account updating from the web).
 
 ## TC-020 (Mobile) — Profile WebView navigation
 - **Requirement:** FR-6.5
@@ -238,15 +275,16 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 
 | Requirement | Test Cases |
 |---|---|
-| FR-1 | TC-001, TC-002, TC-003, TC-004, TC-011, TC-012, TC-013 |
+| FR-1 | TC-001, TC-002, TC-003, TC-004, TC-011, TC-012, TC-013, TC-031, TC-032 |
 | US-3 (auth) | TC-001, TC-002, TC-011, TC-012, TC-025 |
-| US-6 (auth) | TC-015, TC-016, TC-023, TC-024, TC-025, TC-026, TC-029 |
+| US-4 (auth) | TC-031, TC-032, TC-033 |
+| US-6 (auth) | TC-015, TC-016, TC-023, TC-024, TC-025, TC-026, TC-029, TC-033 |
 | US-5 (auth) | TC-027, TC-028 |
-| US-7 (auth) | TC-030 |
+| US-7 (auth) | TC-019, TC-030 |
 | FR-2 | TC-007, TC-027 |
 | FR-3 | TC-008, TC-009, TC-010, TC-027 |
-| FR-4 | TC-004, TC-005, TC-006, TC-019, TC-028 |
-| FR-5 | TC-014, TC-015, TC-016, TC-029 |
+| FR-4 | TC-004, TC-005, TC-006, TC-019, TC-028, TC-031, TC-032 |
+| FR-5 | TC-014, TC-015, TC-016, TC-029, TC-033 |
 | FR-6 | TC-017, TC-018, TC-019, TC-020, TC-021, TC-030 |
 | FR-7 | TC-012 |
 | NFR-1/2 | TC-010 |

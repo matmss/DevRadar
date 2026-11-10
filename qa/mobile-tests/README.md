@@ -73,3 +73,18 @@ The app shows "Entrar com GitHub" instead of the map until the user signs in (US
   with another `JWT_SECRET` to see "Sua sessão não é mais válida, entre novamente" on the next
   launch or search).
 - The Detox scenarios (`e2e/`) do not sign in yet; they are blocked by BUG-009 anyway.
+
+## Live marker updates (auth slice 5)
+
+`dev-updated` and `dev-deleted` (US-7 "Live profile update") are covered by Jest in
+`dev/tests/mobile` (`pages/Main.test.js`, `services/devList.test.js`, `services/socket.test.js`).
+On a device it is a manual check, since it needs a second account changing its profile from the
+web app while the map is open:
+
+1. Sign in on the device, search for a tech near a second account's registered location.
+2. From the web app, signed in as that second account, change its location (still within 10 km)
+   and click "Atualizar": the marker moves and its callout shows the new techs, without tapping
+   search.
+3. Click "Excluir meu perfil" and confirm: the marker disappears.
+4. Moving the second account more than 10 km away leaves its old marker on the device until the
+   next search (expected: `dev-updated` only goes to maps matching the new position, Q4).

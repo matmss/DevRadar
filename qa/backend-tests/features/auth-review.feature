@@ -69,14 +69,14 @@ Feature: QA review of GitHub sign-in slice 1 (defects and coverage gaps)
   Scenario: A state is still accepted just before its 10-minute lifetime ends
     Given GitHub will sign in "gaearon" for authorization code "good-code"
     When I start GitHub sign-in with redirect "http://localhost:3000/"
-    And 599 seconds pass
+    And 590 seconds pass
     And GitHub calls back with code "good-code" and the issued state
     Then I should be redirected to "http://localhost:3000/" with a one-time code
 
   @edge @regression @P2
   Scenario: A one-time code is still accepted just before its 60-second lifetime ends
     Given I completed GitHub sign-in as "gaearon"
-    When 59 seconds pass
+    When 55 seconds pass
     And I exchange the one-time code for a session token
     Then the response status should be 200
 

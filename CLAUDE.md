@@ -83,8 +83,8 @@ Routes (`dev/backend/src/routes.js`):
   (`code` + `code_verifier`) → 7-day HS256 JWT. `GET /auth/me` is behind `requireAuth`
   (`middleware/auth.js`; 401 codes `token_missing`/`token_expired`/`token_invalid`). State,
   codes and rate-limit counters are in memory (single instance). Env: see `dev/backend/.env.example`.
-  **As of auth slice 4, every dev-facing surface requires a token: `POST /devs`, `GET /devs`,
-  `GET /search` and the Socket.io handshake** (only `/auth/*` is public). Backend and web tests
+  **Every dev-facing surface requires a token: `POST /devs`, `GET /devs`, `GET /search`,
+  `GET`/`PUT`/`DELETE /devs/me` and the Socket.io handshake** (only `/auth/*` is public). Backend and web tests
   must sign in first (use the harnesses' test sign-in helpers). The JWT carries a sanitized, size-capped `profile` claim
   (`utils/githubProfile.js`; keep tokens well under 2048 bytes, the `expo-secure-store` limit).
 
@@ -98,6 +98,18 @@ Routes (`dev/backend/src/routes.js`):
   request that created the dev pushes `new-dev` (`websocket.findConnections()` + `sendMessage()`)
   to nearby, tech-matching sockets. An already registered user gets their dev back unchanged.
   If legacy case-duplicates block the index build, `index.js` logs it and keeps running.
+- `GET /devs/me`, `PUT /devs/me`, `DELETE /devs/me` (`DevController`, BUG-008 fixed) — the signed-in
+  user's own profile; there is no `/devs/:username` route, so nobody can touch another profile.
+  `GET` → 200 or 404 `dev_not_found`. `PUT` needs techs + latitude + longitude (same validation as
+  POST, no partial update), refreshes name/avatar/bio from the token, ignores body identity fields,
+  404 `dev_not_found` without a profile, and pushes **`dev-updated`** to sockets matching the *new*
+  location/techs (never `new-dev`; sockets that only matched the old values get nothing). `DELETE`
+  is a hard delete → 204 (404 `dev_not_found` without a profile) and pushes **`dev-deleted`**
+  `{ _id, github_username }` to sockets matching the old location/techs. PUT/DELETE are rate
+  limited per login (`PROFILE_RATE_LIMIT_MAX`, default 30/15 min, 429 `rate_limited`).
+  **Writes for one login (POST, PUT, DELETE) are serialized** by `utils/keyedQueue.js` so the DB
+  write and its live event happen in arrival order — route new per-user writes through it.
+  `validateDevInput` caps techs at 30 entries of 50 characters (POST and PUT).
 - `GET /devs` and `GET /search` are behind `requireAuth` (auth is checked before query params, so
   anonymous calls get 401, not 400).
 - `GET /search` (`SearchController.index`) — Mongo `$near` geo query on the `Dev.location`
@@ -124,8 +136,10 @@ Routes (`dev/backend/src/routes.js`):
 ### Client responsibilities
 - `dev/web/` (`dev/web/src/App.js`): GitHub sign-in (PKCE, `services/auth.js`; token in
   localStorage `devradar.session_token`, followed across tabs via the `storage` event; callback
-  route `/auth/callback`), then the registration form (no username field) and a flat list from
-  `/devs` — no map. Every 401 signs out. A deployed build needs an SPA fallback so
+  route `/auth/callback`), then the profile form (no username field): "Salvar" to register, or,
+  when `GET /devs/me` finds a profile, prefilled "Atualizar" plus "Excluir meu perfil" behind an
+  in-page confirmation (never `window.confirm`; the tests can't drive native dialogs). Only a 404
+  with `code: 'dev_not_found'` means "no profile". Plus a flat list from `/devs` — no map. Every 401 signs out. A deployed build needs an SPA fallback so
   `/auth/callback` serves `index.html` (see `dev/web/.env.example`). "Sair" is local only: tokens
   can't be revoked server-side.
 - `dev/mobile/`: `SessionContext.js` gates the app — no session shows `pages/SignIn.js`
@@ -140,7 +154,8 @@ Routes (`dev/backend/src/routes.js`):
 - `dev/mobile/src/pages/Main.js` is the map experience: `expo-location` for device position →
   `GET /search` (Bearer token) → renders `react-native-maps` markers → opens a Socket.io connection
   scoped to the current map region (`services/socket.js`, token in the handshake `auth` payload)
-  to receive live `new-dev` pushes. It only connects if still mounted and the token the search
+  to receive live `new-dev`, `dev-updated` and `dev-deleted` pushes (merged by `services/devList.js`:
+  replace by `_id` or case-insensitive login, add if new, remove on delete). It only connects if still mounted and the token the search
   used is still the session's (QA-AUTH4-1).
   `dev/mobile/src/pages/Profile.js` is just a `WebView` pointed at the dev's GitHub profile URL —
   there's no native profile screen.
@@ -180,10 +195,9 @@ rather than a single cross-language framework:
   was reverse-engineered from the code (there's no separate product spec), so treat it as
   descriptive, not aspirational.
 - Known **open** issues worth checking before you "fix" related behavior yourself:
-  BUG-006 (GitHub sign-in in progress, delivered in slices per `dev/docs/03-auth-spec.md`; slices 1-4 done,
-  slice 5 = `PUT`/`DELETE /devs/me` + `dev-updated`, slice 6 = legacy profiles. CORS is already
+  BUG-006 (GitHub sign-in in progress, delivered in slices per `dev/docs/03-auth-spec.md`; slices 1-5 done,
+  slice 6 = legacy profiles + closure. CORS is already
   restricted: browser origins must be in `CORS_ORIGINS`, see `dev/backend/src/config/cors.js`,
   which both Express and Socket.io use. Requests with no `Origin`, like the native mobile app,
-  are unaffected. If you add a web client origin, add it there), BUG-008 (`update`/`destroy` are stubbed/commented out in `SearchController`,
-  not implemented), BUG-009 (Detox timeout, above). Full detail and status in
+  are unaffected. If you add a web client origin, add it there), BUG-009 (Detox timeout, above). Full detail and status in
   `qa/docs/05-bug-tracker.md`.

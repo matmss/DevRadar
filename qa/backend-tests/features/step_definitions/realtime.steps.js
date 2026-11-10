@@ -21,8 +21,9 @@ async function ensureListening(server) {
 }
 
 /**
- * Opens a socket and records its `new-dev` events under `alias`. Never auto-reconnects, so a
- * refused handshake stays refused. Closed by the After hook in hooks.js.
+ * Opens a socket and records every pushed event (`new-dev`, `dev-updated`, `dev-deleted`, ...)
+ * under `alias`. Never auto-reconnects, so a refused handshake stays refused. Closed by the After
+ * hook in hooks.js.
  * @param {object} world
  * @param {string} alias
  * @param {object} options - socket.io-client options (auth, query, extraHeaders)
@@ -37,8 +38,9 @@ async function openSocket(world, alias, options) {
     ...options,
   });
   world.receivedEvents[alias] = [];
-  socket.on('new-dev', (payload) => {
-    world.receivedEvents[alias].push({ event: 'new-dev', payload });
+  // onAny only sees server pushes, not connect/connect_error.
+  socket.onAny((event, payload) => {
+    world.receivedEvents[alias].push({ event, payload });
   });
   world.sockets.push(socket);
   world.socketsByAlias = { ...(world.socketsByAlias || {}), [alias]: socket };
@@ -177,8 +179,8 @@ Then('client {string} should receive exactly {int} {string} event(s) within {int
 });
 
 Then('the event payload for {string} should contain github_username {string}', function (alias, username) {
-  const match = this.receivedEvents[alias].find((e) => e.payload.github_username === username);
-  expect(match, `No "new-dev" event with github_username "${username}" found for "${alias}"`).to.not.be.undefined;
+  const match = this.receivedEvents[alias].find((e) => e.payload && e.payload.github_username === username);
+  expect(match, `No event with github_username "${username}" found for "${alias}"`).to.not.be.undefined;
 });
 
 // --- Subscriptions ----------------------------------------------------------------------------

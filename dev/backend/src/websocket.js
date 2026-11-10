@@ -1,5 +1,11 @@
-// Real-time `new-dev` pushes (Socket.io). A client subscribes at handshake time with its map
-// position and techs, and must be signed in (dev/docs/03-auth-spec.md, Q1 and US-5).
+// Real-time pushes (Socket.io). A client subscribes at handshake time with its map position and
+// techs, and must be signed in (dev/docs/03-auth-spec.md, Q1 and US-5). Events, all sent only to
+// subscribers whose position and techs match the dev (findConnections, DevController):
+//   new-dev      a dev registered (POST /devs created it)               payload: the dev
+//   dev-updated  a dev changed techs/position (PUT /devs/me), matched
+//                against the NEW position and techs (Q4)                  payload: the dev
+//   dev-deleted  a dev deleted their profile (DELETE /devs/me), matched
+//                against its last position and techs                     payload: { _id, github_username }
 //
 // Handshake contract:
 //   auth:  { token: "<session token>" }            (socket.io-client `auth` option)
