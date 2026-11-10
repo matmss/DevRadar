@@ -2,6 +2,7 @@ const Dev = require('../models/Dev');
 const parseStringAsArray = require('../utils/parseStringAsArray');
 const validateDevInput = require('../utils/validateDevInput');
 const { GITHUB_USERNAME_COLLATION } = require('../utils/githubUsername');
+const { createKeyedQueue } = require('../utils/keyedQueue');
 const { findConnections, sendMessage } = require('../websocket')
 
 // MongoDB duplicate-key error: the unique github_username index rejected an insert.
@@ -113,6 +114,21 @@ function announce(event, position, techs, payload) {
   sendMessage(findConnections(position, techs), event, payload);
 }
 
+// Writes for one login (POST /devs, PUT and DELETE /devs/me) run one at a time, each with its
+// announcement, so the live events reach subscribers in the same order as the database changes
+// (utils/keyedQueue.js). Keyed case-insensitively, like the unique index.
+const writesByLogin = createKeyedQueue();
+
+/**
+ * @template T
+ * @param {string} github_username
+ * @param {() => Promise<T>} task - the database write and its announcement
+ * @returns {Promise<T>}
+ */
+function inLoginOrder(github_username, task) {
+  return writesByLogin.run(github_username.toLowerCase(), task);
+}
+
 // Every handler requires requireAuth (routes.js). The identity is always the session token's
 // GitHub login (req.user); a github_username, _id, name, avatar_url or bio in the body is ignored
 // (auth spec Q9). The /devs/me routes take no username, so nobody can touch another user's dev.
@@ -136,19 +152,22 @@ module.exports = {
     const { techs, latitude, longitude } = value;
     const techsArray = parseStringAsArray(techs);
 
-    // An existing dev, including a legacy one created before sign-in existed with different
-    // letter case, belongs to this login and is returned unchanged (US-8, Q5). github_username
-    // itself comes from the upsert filter.
-    const { dev, created } = await findOrCreateDev(github_username, {
-      ...profileFields(github_username, profile),
-      techs: techsArray,
-      location: point(latitude, longitude),
-    });
+    const dev = await inLoginOrder(github_username, async () => {
+      // An existing dev, including a legacy one created before sign-in existed with different
+      // letter case, belongs to this login and is returned unchanged (US-8, Q5).
+      // github_username itself comes from the upsert filter.
+      const result = await findOrCreateDev(github_username, {
+        ...profileFields(github_username, profile),
+        techs: techsArray,
+        location: point(latitude, longitude),
+      });
 
-    // Only the request that created the dev announces it.
-    if (created) {
-      announce(EVENT.NEW_DEV, { latitude, longitude }, techsArray, dev);
-    }
+      // Only the request that created the dev announces it.
+      if (result.created) {
+        announce(EVENT.NEW_DEV, { latitude, longitude }, techsArray, result.dev);
+      }
+      return result.dev;
+    });
 
     return res.json(dev);
     },
@@ -176,22 +195,25 @@ module.exports = {
       const { techs, latitude, longitude } = value;
       const techsArray = parseStringAsArray(techs);
 
-      const dev = await Dev.findOneAndUpdate(
-        { github_username },
-        {
-          $set: {
-            ...profileFields(github_username, profile),
-            techs: techsArray,
-            location: point(latitude, longitude),
+      const dev = await inLoginOrder(github_username, async () => {
+        const updated = await Dev.findOneAndUpdate(
+          { github_username },
+          {
+            $set: {
+              ...profileFields(github_username, profile),
+              techs: techsArray,
+              location: point(latitude, longitude),
+            },
           },
-        },
-        { returnDocument: 'after', collation: GITHUB_USERNAME_COLLATION, runValidators: true }
-      );
-      if (!dev) return sendDevNotFound(res);
+          { returnDocument: 'after', collation: GITHUB_USERNAME_COLLATION, runValidators: true }
+        );
 
-      // Q4: to the subscribers the dev matches NOW (new position and techs). A subscriber that
-      // only matched the old ones gets nothing and keeps the old marker until it searches again.
-      announce(EVENT.DEV_UPDATED, { latitude, longitude }, techsArray, dev);
+        // Q4: to the subscribers the dev matches NOW (new position and techs). A subscriber that
+        // only matched the old ones gets nothing and keeps the old marker until it searches again.
+        if (updated) announce(EVENT.DEV_UPDATED, { latitude, longitude }, techsArray, updated);
+        return updated;
+      });
+      if (!dev) return sendDevNotFound(res);
 
       return res.json(dev);
     },
@@ -200,26 +222,28 @@ module.exports = {
     // PUT and GET /devs/me (a repeated DELETE, e.g. a double click, gets 404; clients treat it
     // as "already gone"). The user can register again with POST /devs.
     async destroy(req, res) {
-      const dev = await Dev.findOneAndDelete(
-        { github_username: req.user.github_username },
-        { collation: GITHUB_USERNAME_COLLATION }
-      );
-      if (!dev) return sendDevNotFound(res);
+      const { github_username } = req.user;
+      const dev = await inLoginOrder(github_username, async () => {
+        const deleted = await Dev.findOneAndDelete({ github_username }, { collation: GITHUB_USERNAME_COLLATION });
 
-      // Subscribers that could show the dev (its last position and techs) remove the marker.
-      // Only the id and login: nothing else about a deleted profile is sent. A malformed legacy
-      // record without a position or techs cannot match any subscriber, so nothing is sent.
-      const coordinates = dev.location && dev.location.coordinates;
-      if (Array.isArray(coordinates) && coordinates.length === 2 && Array.isArray(dev.techs)) {
-        const [longitude, latitude] = coordinates;
-        announce(EVENT.DEV_DELETED, { latitude, longitude }, dev.techs, {
-          _id: dev._id,
-          github_username: dev.github_username,
-        });
-      }
+        // Subscribers that could show the dev (its last position and techs) remove the marker.
+        // Only the id and login: nothing else about a deleted profile is sent. A malformed
+        // legacy record without a position or techs cannot match any subscriber.
+        const coordinates = deleted && deleted.location && deleted.location.coordinates;
+        if (Array.isArray(coordinates) && coordinates.length === 2 && Array.isArray(deleted.techs)) {
+          const [longitude, latitude] = coordinates;
+          announce(EVENT.DEV_DELETED, { latitude, longitude }, deleted.techs, {
+            _id: deleted._id,
+            github_username: deleted.github_username,
+          });
+        }
+        return deleted;
+      });
+      if (!dev) return sendDevNotFound(res);
 
       return res.status(204).end();
     },
 };
 
 module.exports.EVENT = EVENT;
+module.exports.pendingWriteLogins = () => writesByLogin.size();

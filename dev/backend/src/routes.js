@@ -4,7 +4,7 @@ const DevController = require('./controllers/DevController');
 const SearchController = require('./controllers/SearchController');
 const AuthController = require('./controllers/AuthController');
 const { requireAuth } = require('./middleware/auth');
-const { signInRateLimiter, sessionRateLimiter } = require('./middleware/rateLimit');
+const { signInRateLimiter, sessionRateLimiter, profileRateLimiter } = require('./middleware/rateLimit');
 
 const routes = Router();
 
@@ -18,8 +18,9 @@ routes.post('/devs', requireAuth, DevController.store);
 // username or id and cannot reach anyone else's profile. No profile: 404 dev_not_found.
 // Registered before any future `/devs/:param` route so "me" can never be read as an id.
 routes.get('/devs/me', requireAuth, DevController.show);
-routes.put('/devs/me', requireAuth, DevController.update);
-routes.delete('/devs/me', requireAuth, DevController.destroy);
+// Changes are rate limited per login (each one is pushed to every matching socket).
+routes.put('/devs/me', requireAuth, profileRateLimiter, DevController.update);
+routes.delete('/devs/me', requireAuth, profileRateLimiter, DevController.destroy);
 
 routes.get('/search', requireAuth, SearchController.index);
 

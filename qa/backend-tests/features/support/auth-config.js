@@ -14,6 +14,7 @@ function applyTestAuthEnv() {
   process.env.MOBILE_APP_SCHEME = 'devradar';
   delete process.env.AUTH_RATE_LIMIT_MAX;
   delete process.env.AUTH_SESSION_RATE_LIMIT_MAX;
+  delete process.env.PROFILE_RATE_LIMIT_MAX;
   delete process.env.TRUST_PROXY;
 }
 
