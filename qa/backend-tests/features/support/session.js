@@ -28,13 +28,39 @@ function testSessionToken(username, githubId = githubIdFor(username)) {
 }
 
 /**
- * The claims of a well-formed session token for `username`, without iat/exp.
+ * The claims of a well-formed session token for `username`, for a session whose GitHub read and
+ * issue were at `iat` (seconds), without exp.
  * @param {string} username
- * @returns {{ sub: string, login: string, iss: string, profile: object }}
+ * @param {number} iat
+ * @returns {{ sub: string, login: string, login_read_at: number, iss: string, iat: number, profile: object }}
  */
-function wellFormedClaims(username) {
+function wellFormedClaims(username, iat) {
   const { name, avatar_url, bio } = githubUserFixture(username);
-  return { sub: String(githubIdFor(username)), login: username, iss: 'devradar', profile: { name, avatar_url, bio } };
+  return {
+    sub: String(githubIdFor(username)),
+    login: username,
+    login_read_at: iat * 1000,
+    iss: 'devradar',
+    iat,
+    profile: { name, avatar_url, bio },
+  };
+}
+
+/**
+ * A valid session token for `username` and GitHub account `githubId` whose GitHub read and issue
+ * were `seconds` ago (still within its 7 days).
+ * @param {string} username
+ * @param {number} githubId
+ * @param {number} seconds
+ * @returns {string}
+ */
+function sessionTokenFromSecondsAgo(username, githubId, seconds) {
+  const iat = Math.floor(Date.now() / 1000) - seconds;
+  return jwt.sign(
+    { ...wellFormedClaims(username, iat), sub: String(githubId), exp: iat + SEVEN_DAYS_SECONDS },
+    TEST_JWT_SECRET,
+    { algorithm: 'HS256' }
+  );
 }
 
 /**
@@ -47,7 +73,7 @@ function wellFormedClaims(username) {
 function expiredSessionToken(username, hours = 1, { otherSecret = false } = {}) {
   const exp = Math.floor(Date.now() / 1000) - hours * 3600;
   return jwt.sign(
-    { ...wellFormedClaims(username), iat: exp - SEVEN_DAYS_SECONDS, exp },
+    { ...wellFormedClaims(username, exp - SEVEN_DAYS_SECONDS), exp },
     otherSecret ? OTHER_SECRET : TEST_JWT_SECRET,
     { algorithm: 'HS256' }
   );
@@ -73,12 +99,14 @@ function decodeJwtPart(part) {
  *                    there is no GitHub id and no `login` claim
  *  - login-less:     correctly signed, the subject is an id but there is no `login` claim
  *  - non-canonical-id: correctly signed, the subject is "0810438" (a leading zero)
+ *  - read-time-less: correctly signed, no `login_read_at` claim (when GitHub was read)
+ *  - read-after-issue: correctly signed, `login_read_at` later than the token's iat
  * @param {string} kind
  * @returns {string}
  */
 function forgedSessionToken(kind) {
   const now = Math.floor(Date.now() / 1000);
-  const claims = { ...wellFormedClaims('gaearon'), iat: now, exp: now + SEVEN_DAYS_SECONDS };
+  const claims = { ...wellFormedClaims('gaearon', now), exp: now + SEVEN_DAYS_SECONDS };
   const sign = (payload) => jwt.sign(payload, TEST_JWT_SECRET, { algorithm: 'HS256' });
 
   if (kind === 'tampered') {
@@ -97,7 +125,7 @@ function forgedSessionToken(kind) {
     return sign({ ...claims, profile: { name: 'Eve', avatar_url: 'javascript:alert(1)', bio: null } });
   }
   if (kind === 'id-less') {
-    const { login, ...rest } = claims;
+    const { login, login_read_at, ...rest } = claims;
     return sign({ ...rest, sub: 'gaearon' });
   }
   if (kind === 'login-less') {
@@ -105,6 +133,11 @@ function forgedSessionToken(kind) {
     return sign(rest);
   }
   if (kind === 'non-canonical-id') return sign({ ...claims, sub: `0${claims.sub}` });
+  if (kind === 'read-time-less') {
+    const { login_read_at, ...rest } = claims;
+    return sign(rest);
+  }
+  if (kind === 'read-after-issue') return sign({ ...claims, login_read_at: (now + 5) * 1000 });
   throw new Error(`Unknown token kind: ${kind}`);
 }
 
@@ -123,6 +156,7 @@ function withSession(req, world) {
 module.exports = {
   SEVEN_DAYS_SECONDS,
   testSessionToken,
+  sessionTokenFromSecondsAgo,
   expiredSessionToken,
   forgedSessionToken,
   decodeJwtPart,

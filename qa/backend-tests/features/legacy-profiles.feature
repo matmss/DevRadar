@@ -8,12 +8,16 @@ Feature: Profiles belong to a GitHub account, and legacy profiles are claimed by
   # not by its login, which can be renamed and later registered by someone else. Rules
   # (dev/backend/src/services/devOwnership.js), for every /devs/me route and POST /devs:
   #   1. a dev with my github_id is mine; my writes and sign-ins refresh its login
-  #   2. else a dev WITHOUT a github_id whose login matches mine (any letter case) is a legacy
-  #      profile: my first write claims it atomically (github_id set only if still absent);
-  #      GET /devs/me reads it without claiming
+  #   2. else a dev WITHOUT a github_id (missing or null) whose login matches mine (any letter
+  #      case) is a legacy profile: my first write claims it atomically; GET /devs/me reads it
+  #      without claiming
   #   3. else a dev with ANOTHER github_id and my login is never mine: GET/PUT/DELETE 404,
-  #      POST 409 github_username_conflict; freed when its owner signs in under their new login
+  #      POST 409 github_username_conflict
   #   4. else nothing is mine: 404, and POST creates a dev with my github_id
+  # Logins stay unique. A sign-in is GitHub's fresh answer: another dev still showing my login
+  # with an older state is DISPLACED (login "_stale_<_id>", github_username_stale true, nothing
+  # else changes, dev-updated pushed); its owner's next sign-in gives it their current login back.
+  # Logins are ordered by when GitHub was read (the token's login_read_at), never set back.
   # No migration: deploying never rewrites a document; legacy profiles stay visible.
   #
   # "a developer already exists with github_username" seeds a legacy profile (no github_id) at
@@ -187,10 +191,11 @@ Feature: Profiles belong to a GitHub account, and legacy profiles are claimed by
   # to DevRadar again. GitHub then let account 502 take the login "alice".
 
   @smoke @P1
-  Scenario: The new holder of a renamed login cannot read, update or delete the previous owner's profile
+  Scenario: The new holder of a renamed login signs in: the previous owner's profile is displaced, never handed over
     Given a developer "alice" owned by GitHub account 501 already exists with techs "Node.js"
     And I remember the stored developer "alice"
     And I signed in through GitHub as "alice" with GitHub account 502
+    Then the remembered developer should be displaced, with everything else unchanged
     When I request my profile
     Then the response status should be 404
     And the response should be a JSON error with code "dev_not_found"
@@ -200,10 +205,18 @@ Feature: Profiles belong to a GitHub account, and legacy profiles are claimed by
     When I delete my profile
     Then the response status should be 404
     And the response should be a JSON error with code "dev_not_found"
-    And the stored developer "alice" should be unchanged
+    And the remembered developer should be displaced, with everything else unchanged
+    When I submit a registration with techs "Go", latitude "-22.9068" and longitude "-43.1729"
+    Then the response status should be 200
+    And the stored developer "alice" should belong to GitHub account 502
+    And the database should contain exactly 2 developers
+    When I request the list of all developers
+    Then the remembered developer should be listed as displaced, with no GitHub login
 
+  # A session whose GitHub read did not displace the dev (here a test-only token: no sign-in ran)
+  # cannot register over it: logins stay unique.
   @smoke @P1
-  Scenario: The new holder of a renamed login gets a 409 on registration, and the previous profile is untouched
+  Scenario: The new holder of a renamed login gets a 409 on registration until a sign-in displaces the previous profile
     Given a developer "alice" owned by GitHub account 501 already exists with techs "Node.js"
     And I remember the stored developer "alice"
     And I am signed in as "alice" with GitHub account 502
@@ -267,6 +280,134 @@ Feature: Profiles belong to a GitHub account, and legacy profiles are claimed by
     Then client "watcher" should receive a "dev-updated" event within 2 seconds
     And the event payload for "watcher" should contain github_username "alice2"
 
+  # --- Displacement (QA-AUTH6-1: logins stay unique, a fresh GitHub read wins) ---------------------
+
+  @integration @regression @P1
+  Scenario: A displaced profile is pushed as dev-updated without its old login
+    Given a developer "alice" owned by GitHub account 501 already exists with techs "ReactJS"
+    And a signed-in client "watcher" is connected via WebSocket at latitude "-23.5505", longitude "-46.6333" watching techs "ReactJS"
+    When I signed in through GitHub as "alice" with GitHub account 502
+    Then client "watcher" should receive a "dev-updated" event within 2 seconds
+    And the "dev-updated" event for "watcher" should show a displaced developer with no GitHub login
+    And client "watcher" should receive exactly 0 "dev-deleted" events within 1 seconds
+
+  @regression @P1
+  Scenario: A displaced profile gets its owner's current login back at the owner's next sign-in
+    Given a developer "alice" owned by GitHub account 501 already exists with techs "Node.js"
+    And I remember the stored developer "alice"
+    And I signed in through GitHub as "alice" with GitHub account 502
+    When I signed in through GitHub as "alice2" with GitHub account 501
+    Then the developer of GitHub account 501 should show github_username "alice2"
+    And the developer of GitHub account 501 should not be marked stale
+    When I request my profile
+    Then the response should be the remembered developer
+    And the registered developer should be "alice2"
+
+  # An old token of the displaced account (read before the displacement) cannot put the login back.
+  @edge @regression @P1
+  Scenario: An older session of a displaced account does not take the login back
+    Given a developer "alice" owned by GitHub account 501 already exists with techs "Node.js"
+    And I signed in through GitHub as "alice" with GitHub account 502
+    And I am signed in as "alice" with GitHub account 501, in a session that began 1 days ago
+    When I update my profile with techs "Go", latitude "-23.5505" and longitude "-46.6333"
+    Then the response status should be 200
+    And the developer of GitHub account 501 should be displaced
+    And the developer of GitHub account 501 should have techs "Go"
+
+  # Only a newer GitHub read displaces: here 502's sign-in read GitHub ("alice") before 501's
+  # sign-in confirmed "alice" for 501, and redeemed its code after. 502's answer is the older one.
+  @edge @regression @P1
+  Scenario: A sign-in whose GitHub read is older than the holder's confirmed login displaces nothing
+    Given a developer "alice" owned by GitHub account 501 already exists with techs "Node.js"
+    And another device of GitHub account 502 reached the sign-in callback as "alice" and holds its one-time code
+    When 1 seconds pass
+    And I signed in through GitHub as "alice" with GitHub account 501
+    And the other device redeems its one-time code
+    Then the other device's sign-in should succeed
+    And the developer of GitHub account 501 should show github_username "alice"
+    And the developer of GitHub account 501 should not be marked stale
+
+  # A legacy profile is displaced only by an account that already owns a dev (otherwise it is that
+  # account's to claim). It stays listed and is never deleted; it can no longer be claimed by login.
+  @regression @P1
+  Scenario: A legacy profile showing a login whose holder already owns a profile is displaced, not deleted
+    Given a developer "alice" owned by GitHub account 501 already exists with techs "Node.js"
+    And a developer already exists with github_username "alice2" and techs "Go"
+    And I remember the stored developer "alice2"
+    When I signed in through GitHub as "alice2" with GitHub account 501
+    Then the remembered developer should be displaced, with everything else unchanged
+    And the developer of GitHub account 501 should show github_username "alice2"
+    And the database should contain exactly 2 developers
+    When I request the list of all developers
+    Then the remembered developer should be listed as displaced, with no GitHub login
+
+  @regression @P1
+  Scenario: A sign-in does not displace a legacy profile its account can still claim
+    Given a developer already exists with github_username "alice" and techs "Node.js"
+    And I remember the stored developer "alice"
+    When I signed in through GitHub as "alice" with GitHub account 501
+    Then the stored developer "alice" should be unchanged
+    When I update my profile with techs "Go", latitude "-23.5505" and longitude "-46.6333"
+    Then the response status should be 200
+    And the response should be the remembered developer
+    And the stored developer "alice" should belong to GitHub account 501
+
+  # Logins moved around a cycle: 501 "ann" -> "ben", 502 "ben" -> "cat", 503 "cat" -> "ann".
+  @edge @regression @P1
+  Scenario Outline: Three accounts that rotated their logins converge once each signs in, in any order
+    Given a developer "ann" owned by GitHub account 501 already exists with techs "Node.js"
+    And a developer "ben" owned by GitHub account 502 already exists with techs "Go"
+    And a developer "cat" owned by GitHub account 503 already exists with techs "Elixir"
+    When GitHub accounts sign in one after another in the order <order>, with 501 as "ben", 502 as "cat" and 503 as "ann"
+    Then the developer of GitHub account 501 should show github_username "ben"
+    And the developer of GitHub account 502 should show github_username "cat"
+    And the developer of GitHub account 503 should show github_username "ann"
+    And no developer should be marked stale
+    And the database should contain exactly 3 developers
+
+    Examples:
+      | order       |
+      | 501,502,503 |
+      | 503,502,501 |
+      | 502,501,503 |
+
+  # Both sign-ins run at the same time: each one locks both accounts (sorted), so no deadlock.
+  @edge @regression @P1
+  Scenario: Two accounts that swapped logins sign in at the same time: both converge, nothing hangs
+    Given a developer "alice" owned by GitHub account 501 already exists with techs "Node.js"
+    And a developer "carol" owned by GitHub account 503 already exists with techs "Go"
+    When GitHub accounts 501 as "carol" and 503 as "alice" complete their sign-ins at the same time
+    Then both concurrent sign-ins should succeed
+    And no write should be queued for any login
+    When I signed in through GitHub as "carol" with GitHub account 501
+    And I signed in through GitHub as "alice" with GitHub account 503
+    Then the developer of GitHub account 501 should show github_username "carol"
+    And the developer of GitHub account 503 should show github_username "alice"
+    And no developer should be marked stale
+
+  # --- QA note 2: a legacy profile stored with github_id null -------------------------------------
+
+  @edge @regression @P1
+  Scenario Outline: A legacy profile stored with a null github_id is claimed like one without the field
+    Given a developer already exists with github_username "alice", a null github_id and techs "Node.js"
+    And I remember the stored developer "alice"
+    And I am signed in as "alice" with GitHub account 501
+    When I <action>
+    Then the response status should be <status>
+    And the database should contain exactly <count> developer
+
+    Examples:
+      | action                                                                              | status | count |
+      | update my profile with techs "Go", latitude "-23.5505" and longitude "-46.6333"     | 200    | 1     |
+      | submit a registration with techs "Go", latitude "-23.5505" and longitude "-46.6333" | 200    | 1     |
+      | delete my profile                                                                   | 204    | 0     |
+
+  @regression @P2
+  Scenario: Two legacy profiles stored with a null github_id coexist under the unique index
+    Given a developer already exists with github_username "alice", a null github_id and techs "Node.js"
+    And a developer already exists with github_username "bob", a null github_id and techs "Go"
+    Then the database should contain exactly 2 developers
+
   @regression @P2
   Scenario: The API never exposes when a login was last refreshed
     Given I am signed in as "gaearon"
@@ -295,6 +436,8 @@ Feature: Profiles belong to a GitHub account, and legacy profiles are claimed by
       | id-less          | /auth/me  |
       | login-less       | /devs     |
       | non-canonical-id | /devs/me  |
+      | read-time-less   | /devs/me  |
+      | read-after-issue | /auth/me  |
 
   @regression @P1
   Scenario: Writes with a token issued before auth slice 6 are rejected and change nothing

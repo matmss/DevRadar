@@ -31,19 +31,21 @@ function sendDevNotFound(res) {
 
 /**
  * 409 for POST /devs when another account's dev still holds the signed-in login (rule 3 in
- * services/devOwnership.js). Names only the login, which is the caller's own; nothing about the
- * other dev is revealed.
+ * services/devOwnership.js). Signing in displaces such a dev when GitHub's answer is newer than
+ * that dev's login, so this means the other dev's login was confirmed by GitHub after this
+ * session read it: signing in again settles it. Names only the login, which is the caller's own;
+ * nothing about the other dev is revealed.
  * @param {import('express').Response} res
  * @param {string} github_username
  * @returns {import('express').Response}
  */
 function sendUsernameConflict(res, github_username) {
   return res.status(409).json({
-    error: 'Another DevRadar profile still uses this GitHub login',
+    error: 'Another DevRadar profile uses this GitHub login',
     code: 'github_username_conflict',
     details: [
-      `The GitHub login "${github_username}" belonged to another GitHub account, whose DevRadar profile `
-      + 'still shows it. It is released when that account signs in to DevRadar again.',
+      `Another GitHub account's DevRadar profile shows the login "${github_username}", confirmed by GitHub `
+      + 'after this session signed in. Sign in again: if GitHub gives you this login now, that profile is released.',
     ],
   });
 }
@@ -85,7 +87,7 @@ function point(latitude, longitude) {
 /**
  * Creates the account's dev, atomically: an upsert on github_id, so it can never create a second
  * dev for the account.
- * @param {{ github_id: number, github_username: string, issued_at: number }} user
+ * @param {{ github_id: number, github_username: string, login_read_at: number }} user
  * @param {object} fields - everything else the new dev stores
  * @returns {Promise<{ dev: object, created: boolean }>}
  */

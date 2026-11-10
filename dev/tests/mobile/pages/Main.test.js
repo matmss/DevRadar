@@ -223,6 +223,33 @@ describe('Main', () => {
       expect(markers().map(marker => marker.id)).toEqual(['a1', 'g1', 'c1']);
     });
 
+    // Auth slice 6 (QA-AUTH6-1): a dev whose login GitHub gave to another account is displaced:
+    // the backend pushes dev-updated with a placeholder login and github_username_stale.
+    it('opens the GitHub profile of a dev with a current login from its callout', async () => {
+      await searchAndShow();
+      await press(renderer, 'callout-g1');
+      expect(renderer.root.props.navigation.navigate).toHaveBeenCalledWith('Profile', { github_username: 'gaearon' });
+      expect(calloutText('callout-no-profile')).toEqual([]);
+    });
+
+    it('keeps a displaced dev on the map, says its GitHub profile is unavailable, and never opens it', async () => {
+      await searchAndShow();
+      await push('dev-updated', {
+        ...SEARCHED[1], github_id: 810438, github_username: '_stale_g1', github_username_stale: true,
+      });
+      expect(markers().map(marker => marker.id)).toEqual(['a1', 'g1']);
+      expect(calloutText('callout-no-profile')).toEqual(['Perfil do GitHub indisponível']);
+      await press(renderer, 'callout-g1');
+      expect(renderer.root.props.navigation.navigate).not.toHaveBeenCalled();
+    });
+
+    it('never opens a login that is not a GitHub login, even without the stale flag', async () => {
+      await searchAndShow();
+      await push('dev-updated', { ...SEARCHED[1], github_username: '../orgs/x' });
+      await press(renderer, 'callout-g1');
+      expect(renderer.root.props.navigation.navigate).not.toHaveBeenCalled();
+    });
+
     it('ignores a malformed dev-updated push instead of crashing', async () => {
       await searchAndShow();
       await push('dev-updated', { _id: 'g1', github_username: 'gaearon' });

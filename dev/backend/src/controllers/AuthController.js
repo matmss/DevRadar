@@ -13,8 +13,9 @@
 // read the identity and public profile, then dropped (never stored, logged or returned). The
 // identity is GitHub's numeric account id (auth spec Q10) plus the login; the profile (name,
 // avatar_url, bio) is signed into the session token as a snapshot as of sign-in; POST /devs
-// registers new devs from it (utils/githubProfile.js). Completing a sign-in also refreshes the
-// login of the account's dev, if it has one (services/devOwnership.js).
+// registers new devs from it (utils/githubProfile.js). Completing a sign-in also gives the
+// account's dev its current login, displacing any other dev that still shows it
+// (services/devOwnership.js).
 //
 // JSON error bodies: { error, code, details }. See dev/docs/00-architecture.md for every code.
 const { createOneTimeStore } = require('../utils/oneTimeStore');
@@ -37,7 +38,7 @@ const SIGN_IN_FAILED = 'sign_in_failed';
 
 // In-memory, per process: see the multi-instance note in utils/oneTimeStore.js.
 // stateStore payload:      { redirect, codeChallenge }
-// signInCodeStore payload: { githubId, githubUsername, profile: { name, avatar_url, bio }, codeChallenge }
+// signInCodeStore payload: { githubId, githubUsername, loginReadAt, profile: { name, avatar_url, bio }, codeChallenge }
 const stateStore = createOneTimeStore({ ttlMs: STATE_TTL_MS });
 const signInCodeStore = createOneTimeStore({ ttlMs: SIGN_IN_CODE_TTL_MS });
 
@@ -166,6 +167,8 @@ module.exports = {
     const signInCode = signInCodeStore.issue({
       githubId: id,
       githubUsername: login,
+      // When GitHub said this login is this account's: orders login refreshes (QA-AUTH6-3).
+      loginReadAt: Date.now(),
       profile,
       codeChallenge: attempt.codeChallenge,
     });
@@ -198,12 +201,18 @@ module.exports = {
       ]);
     }
 
-    const user = { github_id: pending.githubId, github_username: pending.githubUsername, profile: pending.profile };
-    const { token, expiresIn, issuedAt } = signSessionToken(user);
+    const user = {
+      github_id: pending.githubId,
+      github_username: pending.githubUsername,
+      profile: pending.profile,
+      login_read_at: pending.loginReadAt,
+    };
+    const { token, expiresIn } = signSessionToken(user);
 
-    // A renamed account's dev shows its new login from now on, which also frees the old login
-    // for whoever holds it now (auth spec Q10). Best effort: never fails the sign-in.
-    await refreshLoginAtSignIn({ ...user, issued_at: issuedAt });
+    // GitHub's fresh answer is authoritative (auth spec Q10): a dev of another account still
+    // showing this login is displaced, and this account's dev takes it (a renamed account shows
+    // its new login, and frees its old one). Best effort: never fails the sign-in.
+    await refreshLoginAtSignIn(user);
 
     return res.json({
       token,

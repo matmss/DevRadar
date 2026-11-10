@@ -4,13 +4,11 @@
 const { Given, When, Then, After } = require('@cucumber/cucumber');
 const { expect } = require('chai');
 const request = require('supertest');
-const jwt = require('../../../../dev/backend/node_modules/jsonwebtoken');
 const Dev = require('../../../../dev/backend/src/models/Dev');
-const { githubIdFor, githubUserFixture } = require('../support/github-mock');
+const { githubIdFor } = require('../support/github-mock');
 const { mockGithubOAuthTokenExchange, mockGithubAuthenticatedUser } = require('../support/github-mock');
-const { testSessionToken, decodeJwtPart, SEVEN_DAYS_SECONDS } = require('../support/session');
-const { TEST_JWT_SECRET } = require('../support/auth-config');
-const { signInThroughGithub } = require('./auth.steps');
+const { testSessionToken, sessionTokenFromSecondsAgo, decodeJwtPart } = require('../support/session');
+const { signInThroughGithub, completeSignIn } = require('./auth.steps');
 
 /**
  * The raw stored document (what MongoDB holds, not what the API shows), as JSON for exact
@@ -85,13 +83,7 @@ Given('I am signed in as {string} with GitHub account {int}', function (username
 Given(
   'I am signed in as {string} with GitHub account {int}, in a session that began {int} days ago',
   function (username, githubId, days) {
-    const iat = Math.floor(Date.now() / 1000) - days * 24 * 60 * 60;
-    const { name, avatar_url, bio } = githubUserFixture(username);
-    this.sessionToken = jwt.sign(
-      { sub: String(githubId), login: username, iss: 'devradar', iat, exp: iat + SEVEN_DAYS_SECONDS, profile: { name, avatar_url, bio } },
-      TEST_JWT_SECRET,
-      { algorithm: 'HS256' }
-    );
+    this.sessionToken = sessionTokenFromSecondsAgo(username, githubId, days * 24 * 60 * 60);
   }
 );
 
@@ -112,19 +104,19 @@ Given(
 
 // Makes another GitHub account win the claim race deterministically: its claim lands after my
 // read of the legacy dev and before my own conditional claim (the next findOneAndUpdate that
-// requires github_id to be absent).
+// requires the dev to have no github_id, missing or null, and sets one).
 const realFindOneAndUpdate = Dev.findOneAndUpdate;
 After(function () {
   Dev.findOneAndUpdate = realFindOneAndUpdate;
 });
 
 Given('GitHub account {int} claims the legacy developer {string} just before my claim', function (githubId, username) {
-  Dev.findOneAndUpdate = function claimedFirst(filter, ...rest) {
-    const isClaim = filter && filter.github_id && filter.github_id.$exists === false;
-    if (!isClaim) return realFindOneAndUpdate.call(Dev, filter, ...rest);
+  Dev.findOneAndUpdate = function claimedFirst(filter, update, ...rest) {
+    const isClaim = Boolean(filter && filter.github_id === null && update && update.$set && update.$set.github_id);
+    if (!isClaim) return realFindOneAndUpdate.call(Dev, filter, update, ...rest);
     Dev.findOneAndUpdate = realFindOneAndUpdate;
-    return Dev.updateOne({ github_username: username, github_id: { $exists: false } }, { $set: { github_id: githubId } })
-      .then(() => realFindOneAndUpdate.call(Dev, filter, ...rest));
+    return Dev.updateOne({ github_username: username, github_id: null }, { $set: { github_id: githubId } })
+      .then(() => realFindOneAndUpdate.call(Dev, filter, update, ...rest));
   };
 });
 
@@ -194,7 +186,7 @@ Then('the developers collection should have a unique index on github_id that lea
   expect(index, 'github_id_unique index').to.not.be.undefined;
   expect(index.key).to.deep.equal({ github_id: 1 });
   expect(index.unique).to.equal(true);
-  expect(index.partialFilterExpression).to.deep.equal({ github_id: { $exists: true } });
+  expect(index.partialFilterExpression).to.deep.equal({ github_id: { $gt: 0 } });
 });
 
 Then('the developers collection should still have the unique case-insensitive index on github_username', async function () {
@@ -233,6 +225,113 @@ Then('the response should be the remembered developer', function () {
 Then('the response should carry github_id of {string} and no internal field', function (login) {
   expect(this.response.body.github_id).to.equal(githubIdFor(login));
   expect(this.response.body).to.not.have.property('github_username_seen_at');
+});
+
+// --- Displacement (QA-AUTH6-1) ------------------------------------------------------------------
+
+const LOGIN_FIELDS = ['github_username', 'github_username_stale', 'github_username_seen_at'];
+const STALE_LOGIN = /^_stale_[a-f\d]{24}$/;
+
+/** @param {object} dev - a stored or API dev @returns {void} asserts it is displaced */
+function expectDisplaced(dev) {
+  expect(dev.github_username, 'a displaced dev shows a placeholder, never a GitHub login').to.match(STALE_LOGIN);
+  expect(dev.github_username).to.equal(`_stale_${String(dev._id)}`);
+  expect(dev.github_username_stale).to.equal(true);
+}
+
+Given(
+  'a developer already exists with github_username {string}, a null github_id and techs {string}',
+  async function (username, techs) {
+    await Dev.create({
+      github_id: null,
+      github_username: username,
+      name: username,
+      avatar_url: 'https://example.com/avatar.png',
+      bio: 'seed fixture',
+      techs: techs.split(','),
+      location: { type: 'Point', coordinates: [-46.6333, -23.5505] },
+    });
+    const stored = await Dev.collection.findOne({ github_username: username });
+    expect(stored.github_id, 'the seed must store github_id as null').to.equal(null);
+  }
+);
+
+Then('the remembered developer should be displaced, with everything else unchanged', async function () {
+  const before = JSON.parse(this.rememberedDev.raw);
+  const now = JSON.parse(await rawDocument({ _id: this.rememberedDev._id }));
+  expect(now, 'the displaced developer must not be deleted').to.not.equal(null);
+  expectDisplaced(now);
+  LOGIN_FIELDS.forEach((field) => {
+    delete before[field];
+    delete now[field];
+  });
+  expect(now).to.deep.equal(before);
+});
+
+Then('the remembered developer should be listed as displaced, with no GitHub login', function () {
+  const listed = this.response.body.find((dev) => dev._id === String(this.rememberedDev._id));
+  expect(listed, 'the displaced developer stays listed').to.not.equal(undefined);
+  expectDisplaced(listed);
+  expect(listed).to.not.have.property('github_username_seen_at');
+});
+
+Then('the {string} event for {string} should show a displaced developer with no GitHub login', function (event, alias) {
+  const payloads = this.receivedEvents[alias].filter((e) => e.event === event).map((e) => e.payload);
+  expect(payloads, `"${event}" events for "${alias}"`).to.have.lengthOf(1);
+  expectDisplaced(payloads[0]);
+  expect(payloads[0].github_id).to.equal(501);
+});
+
+Then('the developer of GitHub account {int} should be displaced', async function (githubId) {
+  const dev = await Dev.findOne({ github_id: githubId }).lean();
+  expect(dev, `GitHub account ${githubId} should own a developer`).to.not.be.null;
+  expectDisplaced(dev);
+});
+
+Then('the developer of GitHub account {int} should not be marked stale', async function (githubId) {
+  const dev = await Dev.findOne({ github_id: githubId }).lean();
+  expect(dev, `GitHub account ${githubId} should own a developer`).to.not.be.null;
+  expect(dev.github_username_stale == null, 'github_username_stale should be unset').to.equal(true);
+  expect(dev.github_username).to.not.match(STALE_LOGIN);
+});
+
+Then('the developer of GitHub account {int} should have techs {string}', async function (githubId, techs) {
+  const dev = await Dev.findOne({ github_id: githubId }).lean();
+  expect(dev.techs.join(',')).to.equal(techs);
+});
+
+Then('no developer should be marked stale', async function () {
+  expect(await Dev.countDocuments({ github_username_stale: true })).to.equal(0);
+});
+
+When(
+  'GitHub accounts sign in one after another in the order {word}, with {int} as {string}, {int} as {string} and {int} as {string}',
+  async function (order, id1, login1, id2, login2, id3, login3) {
+    const logins = { [id1]: login1, [id2]: login2, [id3]: login3 };
+    for (const id of order.split(',').map(Number)) {
+      await signInThroughGithub(this, logins[id], { id });
+    }
+  }
+);
+
+// Both sign-ins reach the callback first (GitHub read), then both redeem their codes at once, so
+// their login refreshes (each locking both accounts) run concurrently.
+When(
+  'GitHub accounts {int} as {string} and {int} as {string} complete their sign-ins at the same time',
+  async function (firstId, firstLogin, secondId, secondLogin) {
+    const devices = [{ app: this.app, signInCount: 700 }, { app: this.app, signInCount: 800 }];
+    await completeSignIn(devices[0], firstLogin, { id: firstId });
+    await completeSignIn(devices[1], secondLogin, { id: secondId });
+    this.concurrentSignIns = await Promise.all(devices.map((device) => request(this.app)
+      .post('/auth/token')
+      .send({ code: device.oneTimeCode, code_verifier: device.pkceVerifier })));
+  }
+);
+
+Then('both concurrent sign-ins should succeed', function () {
+  this.concurrentSignIns.forEach((response) => {
+    expect(response.status, JSON.stringify(response.body)).to.equal(200);
+  });
 });
 
 Then(

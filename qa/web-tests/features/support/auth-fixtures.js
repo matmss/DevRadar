@@ -56,7 +56,7 @@ function signHarnessToken(login, { iat, exp }) {
   const jwt = require('../../../../dev/backend/node_modules/jsonwebtoken');
   const { id, name, avatar_url, bio } = githubUserFixture(login);
   return jwt.sign(
-    { sub: String(id), login, iss: 'devradar', iat, exp, profile: { name, avatar_url, bio } },
+    { sub: String(id), login, login_read_at: iat * 1000, iss: 'devradar', iat, exp, profile: { name, avatar_url, bio } },
     TEST_JWT_SECRET,
     { algorithm: 'HS256' }
   );

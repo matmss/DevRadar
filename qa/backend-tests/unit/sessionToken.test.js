@@ -25,6 +25,7 @@ function claimsFor(overrides = {}) {
   return {
     sub: '810438',
     login: 'gaearon',
+    login_read_at: now * 1000 - 5000,
     iss: 'devradar',
     iat: now,
     exp: now + 60,
@@ -44,26 +45,39 @@ describe('session tokens', () => {
   });
 
   it('signs an HS256 JWT whose subject is the GitHub id, with the login as a claim, valid 7 days', () => {
-    const { token, expiresIn, issuedAt } = signSessionToken(GAEARON);
+    const readAt = Date.now() - 30000;
+    const { token, expiresIn, loginReadAt } = signSessionToken({ ...GAEARON, login_read_at: readAt });
     const [header, payload] = token.split('.');
 
     expect(expiresIn).toBe(SEVEN_DAYS);
     expect(SESSION_TTL_SECONDS).toBe(SEVEN_DAYS);
+    expect(loginReadAt).toBe(readAt);
     expect(decode(header).alg).toBe('HS256');
     const claims = decode(payload);
     expect(claims.sub).toBe('810438');
     expect(claims.login).toBe('gaearon');
+    expect(claims.login_read_at).toBe(readAt);
     expect(claims.iss).toBe('devradar');
-    expect(claims.iat).toBe(issuedAt);
     expect(claims.exp - claims.iat).toBe(SEVEN_DAYS);
   });
 
-  it('round-trips a valid token to the GitHub id, the login, the sign-in profile and its start', () => {
-    const { token, issuedAt } = signSessionToken({ github_id: 810438, github_username: 'Gaearon', profile: PROFILE });
+  it('round-trips a valid token to the GitHub id, the login, the sign-in profile and the GitHub read time', () => {
+    const readAt = Date.now() - 1000;
+    const { token } = signSessionToken({ github_id: 810438, github_username: 'Gaearon', profile: PROFILE, login_read_at: readAt });
     expect(verifySessionToken(token)).toEqual({
       ok: true,
-      user: { github_id: 810438, github_username: 'Gaearon', profile: PROFILE, issued_at: issuedAt },
+      user: { github_id: 810438, github_username: 'Gaearon', profile: PROFILE, login_read_at: readAt },
     });
+  });
+
+  // QA-AUTH6-3: logins are ordered by when GitHub was read, which happens before the code is
+  // redeemed (iat), never after.
+  it.each([0, -1, 1.5, '1', null])('refuses to sign GitHub read time %p', (readAt) => {
+    expect(() => signSessionToken({ ...GAEARON, login_read_at: readAt })).toThrow(TypeError);
+  });
+
+  it('refuses to sign a GitHub read time after the token is issued', () => {
+    expect(() => signSessionToken({ ...GAEARON, login_read_at: Date.now() + 5000 })).toThrow(TypeError);
   });
 
   it('keeps the largest GitHub ids exact', () => {
@@ -174,6 +188,10 @@ describe('session tokens', () => {
     ['no login claim', { login: undefined }],
     ['a login claim that is not a GitHub login', { login: '../admin' }],
     ['no iat', { iat: undefined }],
+    ['no login_read_at', { login_read_at: undefined }],
+    ['a login_read_at in seconds as a string', { login_read_at: '1762780000' }],
+    ['a login_read_at after the token was issued', { login_read_at: Date.now() + 60000 }],
+    ['a fractional login_read_at', { login_read_at: 1.5 }],
   ])('rejects a correctly signed token with %s as invalid', (_label, overrides) => {
     const claims = claimsFor(overrides);
     Object.keys(claims).forEach((key) => claims[key] === undefined && delete claims[key]);

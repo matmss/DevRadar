@@ -18,7 +18,7 @@ owner. This is the source of truth for DEV and QA on this feature; how it is bui
 | Q7 | Delete is a **hard delete**. |
 | Q8 | The product owner registers the GitHub OAuth App. Scope: **public profile only, no email** (`read:user` not needed; no scope = public data). Development and tests mock GitHub, so they don't wait for it. |
 | Q9 | A `github_username` in the request body is **ignored**; the token's identity always wins. |
-| Q10 | (Added for slice 6.) **A DevRadar profile belongs to a GitHub account by its numeric id** (`id` from GitHub `GET /user`), not by its login. Logins can be renamed and then registered by someone else; matching by login would let the new holder of a login take over, move or delete the previous owner's profile. The login stays as display data, refreshed from GitHub on every sign-in, and is how a legacy profile (no id yet) is matched, case-insensitively (Q5): its owner's first write claims it for their id. A profile of another id that still shows the user's login is never theirs (`POST /devs` answers 409 `github_username_conflict`; it is freed when its owner signs in under their new login). Session tokens issued before this decision carry no id and are rejected, so each user signs in again once. |
+| Q10 | (Added for slice 6.) **A DevRadar profile belongs to a GitHub account by its numeric id** (`id` from GitHub `GET /user`), not by its login. Logins can be renamed and then registered by someone else; matching by login would let the new holder of a login take over, move or delete the previous owner's profile. The login stays as display data, refreshed from GitHub on every sign-in, and is how a legacy profile (no id yet) is matched, case-insensitively (Q5): its owner's first write claims it for their id. A profile of another id that shows the user's login is never theirs. **Logins stay unique across all profiles** (product decision on QA-AUTH6-1): a sign-in is GitHub's fresh answer, so another profile still showing that login from an older GitHub read is **displaced** (placeholder login, marked stale, nothing else changed, never deleted; shown without a GitHub link) and the signer's profile takes the login; the displaced owner's next sign-in gives them their current login. Logins are ordered by when GitHub was read, so an older session never sets one back. `POST /devs` answers 409 `github_username_conflict` only while the other profile's login is confirmed by a newer read than the session's. Session tokens issued before this decision carry no id and are rejected, so each user signs in again once. |
 
 ## Access matrix
 
@@ -210,9 +210,12 @@ Scenario: A renamed login does not hand over a profile (Q10)
   Given account A registered as "alice", then renamed itself to "alice2" on GitHub without signing in again
   And account B now holds the login "alice"
   When B signs in as "alice"
-  Then B cannot read, update or delete A's profile (404), and registering answers 409 github_username_conflict
+  Then A's profile is displaced (no login shown, no GitHub link, nothing else changed, not deleted)
+  And B cannot read, update or delete A's profile (404), and B can register as "alice"
   When A signs in as "alice2"
-  Then the profile is still A's, now showing "alice2", and B can register as "alice"
+  Then the profile is still A's, now showing "alice2"
+  # Without B's sign-in (e.g. A signs in first) A's sign-in alone frees "alice". Swaps and cycles
+  # of logins converge once each owner signs in, in any order.
 
 Scenario: Old sessions
   Given a session token issued before GitHub ids were captured

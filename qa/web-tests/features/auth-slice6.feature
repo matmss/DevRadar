@@ -36,3 +36,19 @@ Feature: Old sessions and legacy profiles in the web app (auth slice 6)
     And the entry for "gaearon" in the developer list should show techs "Elixir"
     And the backend should have "gaearon" with techs "Elixir" at latitude "-22.9068" and longitude "-43.1729"
     And the backend's developer "gaearon" should belong to the GitHub account of "gaearon"
+
+  # QA-AUTH6-1: another GitHub account's profile still shows "alice", a login GitHub now gives to
+  # me. My sign-in displaces it (placeholder login, github_username_stale): it stays listed with
+  # its name, but without a GitHub link (its old link would open my profile), and I can register.
+  @smoke @P1
+  Scenario: A profile displaced from my login stays listed without a GitHub link, and I can register as that login
+    Given the backend has no registered developers
+    And the browser grants geolocation permission at latitude "-23.5505" and longitude "-46.6333"
+    And the backend has a developer "alice" named "Previous Alice", owned by another GitHub account, with techs "Go" at latitude "-23.5505" and longitude "-46.6333"
+    And I am signed in with GitHub as "alice"
+    Then the developer list should show 1 entries
+    And the entry named "Previous Alice" should have no GitHub link and say "Perfil do GitHub indisponível"
+    When I fill in techs "ReactJS" and submit
+    Then the developer list should show 2 entries
+    And exactly one entry should link to "https://github.com/alice"
+    And the entry named "Previous Alice" should have no GitHub link and say "Perfil do GitHub indisponível"

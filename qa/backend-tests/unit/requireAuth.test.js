@@ -29,12 +29,12 @@ describe('requireAuth', () => {
     else process.env.JWT_SECRET = originalSecret;
   });
 
-  it('sets req.user (GitHub id, login, sign-in profile, session start) and continues for a valid token', () => {
+  it('sets req.user (GitHub id, login, sign-in profile, GitHub read time) and continues for a valid token', () => {
     const profile = { name: 'Dan Abramov', avatar_url: 'https://avatars.githubusercontent.com/u/810438?v=4', bio: null };
-    const { token, issuedAt } = signSessionToken({ ...GAEARON, profile });
+    const { token, loginReadAt } = signSessionToken({ ...GAEARON, profile });
     const { req, res, next } = run(`Bearer ${token}`);
     expect(next).toHaveBeenCalledTimes(1);
-    expect(req.user).toEqual({ github_id: 810438, github_username: 'gaearon', profile, issued_at: issuedAt });
+    expect(req.user).toEqual({ github_id: 810438, github_username: 'gaearon', profile, login_read_at: loginReadAt });
     expect(res.body).toBeUndefined();
   });
 

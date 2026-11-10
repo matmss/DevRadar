@@ -5,7 +5,34 @@ const { expect } = require('@playwright/test');
 const { INTEGRATION_BACKEND_PORT } = require('../support/global-setup');
 const { githubIdFor, inspectorAuthHeaders } = require('../support/auth-fixtures');
 
-const { Then } = createBdd();
+const { Given, Then } = createBdd();
+
+// A GitHub account id that no fixture login maps to (auth-fixtures.js githubIdFor is >= 1000000).
+const OTHER_GITHUB_ACCOUNT = 4242;
+
+Given(
+  'the backend has a developer {string} named {string}, owned by another GitHub account, with techs {string} at latitude {string} and longitude {string}',
+  async function ({}, github_username, name, techs, latitude, longitude) {
+    const res = await fetch(`${BACKEND_URL}/__test__/seed-dev`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ github_username, github_id: OTHER_GITHUB_ACCOUNT, name, techs, latitude, longitude }),
+    });
+    if (!res.ok) throw new Error(`Failed to seed developer "${github_username}": ${res.status}`);
+  }
+);
+
+Then('the entry named {string} should have no GitHub link and say {string}', async function ({ page }, name, text) {
+  const entry = page.locator('.dev-item', { has: page.locator('strong', { hasText: name }) });
+  await expect(entry).toHaveCount(1);
+  await expect(entry.getByRole('link')).toHaveCount(0);
+  await expect(entry).toContainText(text);
+  await expect(entry).not.toContainText('_stale_');
+});
+
+Then('exactly one entry should link to {string}', async function ({ page }, href) {
+  await expect(page.locator(`.dev-item a[href="${href}"]`)).toHaveCount(1);
+});
 
 const BACKEND_URL = `http://localhost:${INTEGRATION_BACKEND_PORT}`;
 

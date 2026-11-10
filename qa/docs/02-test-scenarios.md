@@ -198,18 +198,44 @@ Feature: Profiles belong to a GitHub account, and legacy profiles are claimed by
   Scenario Outline: A claim that loses the race leaves the profile to the winner (update/delete 404, register 409)
 
   # Q10: account 501 registered as "alice", renamed to "alice2" without signing in; 502 now holds "alice"
-  Scenario: The new holder of a renamed login cannot read, update or delete the previous owner's profile (404)
-  Scenario: The new holder of a renamed login gets a 409 github_username_conflict on registration, and the previous profile is untouched
+  Scenario: The new holder of a renamed login signs in: the previous owner's profile is displaced, never handed over
+    # displaced = login "_stale_<_id>", github_username_stale, nothing else changed, not deleted, still listed
+    # 502: GET/PUT/DELETE /devs/me 404; POST /devs registers "alice"
+  Scenario: The new holder of a renamed login gets a 409 on registration until a sign-in displaces the previous profile
   Scenario: The previous owner signs in under the new login: the profile is still theirs, and the old login is freed
   Scenario: The previous owner's next update also refreshes the login
   @edge
   Scenario: An older session of the same account does not set a refreshed login back
   Scenario: A login refreshed at sign-in is pushed as dev-updated
+
+  # Displacement (QA-AUTH6-1, product decision: logins stay unique; a fresh GitHub read wins)
+  Scenario: A displaced profile is pushed as dev-updated without its old login
+  Scenario: A displaced profile gets its owner's current login back at the owner's next sign-in
+  @edge
+  Scenario: An older session of a displaced account does not take the login back
+  @edge
+  Scenario: A sign-in whose GitHub read is older than the holder's confirmed login displaces nothing
+  Scenario: A legacy profile showing a login whose holder already owns a profile is displaced, not deleted
+  Scenario: A sign-in does not displace a legacy profile its account can still claim
+  @edge
+  Scenario Outline: Three accounts that rotated their logins converge once each signs in, in any order
+  @edge
+  Scenario: Two accounts that swapped logins sign in at the same time: both converge, nothing hangs
+  @edge
+  Scenario Outline: A legacy profile stored with a null github_id is claimed like one without the field (PUT, POST, DELETE)
+  Scenario: Two legacy profiles stored with a null github_id coexist under the unique index
   Scenario: The API never exposes when a login was last refreshed
+
+  # QA review (auth-slice6-review.feature, QA-AUTH6-1..3)
+  Scenario: Two accounts that swapped logins both sign in: each profile shows its account's current login
+  Scenario: The previous owner signs in under a new login that a legacy profile shows: the old login is still freed
+  Scenario: An older session does not set back the login of a claimed legacy profile (update, and registration)
+  Scenario: A sign-in that read GitHub before a rename, redeemed after a newer sign-in, does not set the old login back
 
   # Q10: the session identity is the GitHub id
   Scenario Outline: A session token without a GitHub id (issued before auth slice 6) is rejected as invalid
-    # id-less, login-less, non-canonical-id -> 401 token_invalid on /devs, /devs/me, /auth/me
+    # id-less, login-less, non-canonical-id, read-time-less (no login_read_at), read-after-issue
+    # -> 401 token_invalid on /devs, /devs/me, /auth/me
   Scenario: Writes with a token issued before auth slice 6 are rejected and change nothing
   Scenario: Sign-in issues a token whose subject is the GitHub id, and GET /auth/me returns it
   Scenario Outline: A GitHub user lookup without a valid account id fails the sign-in
@@ -390,6 +416,8 @@ Feature: Old sessions and legacy profiles in the web app (auth slice 6, qa/web-t
     And signing in with GitHub works again
   Scenario: The owner of a legacy profile in another letter case sees it, claims it by updating, and it is listed once
     # GET /devs/me reads the legacy profile without claiming it; the update claims it for my GitHub id
+  Scenario: A profile displaced from my login stays listed without a GitHub link, and I can register as that login
+    # "Perfil do GitHub indisponível" instead of "Acessar Perfil no GitHub"; the placeholder is never shown
 ```
 
 ## Feature: Mobile — Sign-in — covers FR-6.0, US-7
@@ -495,4 +523,4 @@ Feature: End-to-end real-time propagation across layers
 | Explore WebSocket behavior across app backgrounding/foregrounding and connectivity loss | Mobile | 45 min |
 | Explore GitHub sign-in failure modes (rate limit, consent denied, renamed account between sign-in and registration, stale sign-in profile) | Backend + Web | 30 min |
 | Explore profile update/delete (auth slice 5): two tabs or devices editing and deleting the same profile, updating with an old token whose sign-in profile is stale, moving a profile out of a watcher's region (stale marker until the next search), and markers on a real device after `dev-updated`/`dev-deleted` | Web + Mobile + Backend | 45 min |
-| Explore renamed GitHub logins (auth slice 6, Q10) with two real GitHub test accounts: rename A away, give its login to B, then B signs in (409 on registration, nothing of A's reachable), A signs in under the new login (A's login refreshed, B can register); old tokens on another device during and after the rename; a legacy profile claimed from two browsers at once, and how the mobile map shows a renamed dev | Web + Mobile + Backend | 45 min |
+| Explore renamed GitHub logins (auth slice 6, Q10) with two real GitHub test accounts: rename A away, give its login to B, then B signs in (A's profile displaced, nothing of A's reachable, B can register), A signs in under the new login (A's login back); swaps and cycles of logins between three accounts; old tokens on another device during and after the rename; a legacy profile claimed from two browsers at once, and how the mobile map shows a renamed dev | Web + Mobile + Backend | 45 min |

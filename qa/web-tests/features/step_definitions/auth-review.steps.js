@@ -31,7 +31,7 @@ function validSessionToken(login) {
   const iat = Math.floor(Date.now() / 1000);
   const { name, avatar_url, bio } = githubUserFixture(login);
   return jwt.sign(
-    { sub: String(githubUserFixture(login).id), login, iss: 'devradar', iat, exp: iat + 3600, profile: { name, avatar_url, bio } },
+    { sub: String(githubUserFixture(login).id), login, login_read_at: iat * 1000, iss: 'devradar', iat, exp: iat + 3600, profile: { name, avatar_url, bio } },
     TEST_JWT_SECRET,
     { algorithm: 'HS256' }
   );

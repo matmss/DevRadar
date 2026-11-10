@@ -13,6 +13,7 @@ import {
   subscribeToDevDeletions,
 } from '../services/socket';
 import { upsertDev, removeDev } from '../services/devList';
+import { githubLoginOf } from '../services/githubLogin';
 import { getToken } from '../services/session';
 import { MESSAGES } from '../services/authErrors';
 
@@ -138,21 +139,27 @@ function Main({ navigation }) {
   return(
     <>
       <MapView testID="map-view" onRegionChangeComplete={handleRegionChanged} initialRegion={currentRegion} style={styles.map}>
-        {devs.map(dev => (
+        {devs.map(dev => {
+          // A displaced dev (its login now belongs to another GitHub account, auth slice 6) has no
+          // GitHub profile to open until its owner signs in again.
+          const githubLogin = githubLoginOf(dev);
+          return (
         <Marker testID={`marker-${dev._id}`} key={dev._id} coordinate={{ latitude: dev.location.coordinates[1], longitude: dev.location.coordinates[0] }}>
           <Image style={styles.avatar} source={{ uri:dev.avatar_url }} />
 
-          <Callout onPress={() =>{
-            navigation.navigate('Profile', { github_username: dev.github_username });
+          <Callout testID={`callout-${dev._id}`} onPress={() =>{
+            if (githubLogin) navigation.navigate('Profile', { github_username: githubLogin });
           }}>
             <View style={styles.callout}>
               <Text testID="callout-name" style={styles.devName}>{dev.name}</Text>
         <Text testID="callout-bio" style={styles.devBio}>{dev.bio}</Text>
         <Text testID="callout-techs" style={styles.devTechs}>{dev.techs.join(', ')}</Text>
+              {!githubLogin && <Text testID="callout-no-profile" style={styles.devBio}>Perfil do GitHub indisponível</Text>}
             </View>
           </Callout>
         </Marker>
-        ))}
+          );
+        })}
       </MapView>
       <View style={styles.searchForm}>
           <TextInput

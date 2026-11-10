@@ -43,8 +43,8 @@ function readBearerToken(header) {
 /**
  * Express middleware: rejects the request with 401 unless it carries a valid session token,
  * otherwise sets `req.user = { github_id, github_username, profile: { name, avatar_url, bio },
- * issued_at }` (GitHub's numeric account id, then the login and profile as of sign-in, and when
- * that sign-in happened) and continues.
+ * login_read_at }` (GitHub's numeric account id, then the login and profile as of sign-in, and
+ * when GitHub was read for them, ms) and continues.
  * @param {import('express').Request} req
  * @param {import('express').Response} res
  * @param {import('express').NextFunction} next

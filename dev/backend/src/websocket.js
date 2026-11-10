@@ -5,7 +5,10 @@
 //   dev-updated  a dev changed techs/position (PUT /devs/me), matched
 //                against the NEW position and techs (Q4); or its login
 //                changed (a renamed GitHub account signing in or
-//                registering again), matched against its position/techs payload: the dev
+//                registering again, or a dev displaced from a login
+//                GitHub gave to someone else: placeholder login and
+//                github_username_stale), matched against its
+//                position/techs                                          payload: the dev
 //   dev-deleted  a dev deleted their profile (DELETE /devs/me), matched
 //                against its last position and techs                     payload: { _id, github_id, github_username }
 // (Events are sent from services/devEvents.js.)

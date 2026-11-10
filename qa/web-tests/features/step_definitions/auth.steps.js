@@ -72,7 +72,7 @@ function expiredSessionToken(login, secondsAgo = 3600) {
   const exp = Math.floor(Date.now() / 1000) - secondsAgo;
   const { name, avatar_url, bio } = githubUserFixture(login);
   return jwt.sign(
-    { sub: String(githubUserFixture(login).id), login, iss: 'devradar', iat: exp - SEVEN_DAYS_SECONDS, exp, profile: { name, avatar_url, bio } },
+    { sub: String(githubUserFixture(login).id), login, login_read_at: (exp - SEVEN_DAYS_SECONDS) * 1000, iss: 'devradar', iat: exp - SEVEN_DAYS_SECONDS, exp, profile: { name, avatar_url, bio } },
     TEST_JWT_SECRET,
     { algorithm: 'HS256' }
   );
