@@ -21,9 +21,16 @@ Added during the auth slices 2+3 review (2026-11-08):
 
 Added during the auth slice 4 review (2026-11-09):
 
-- No package-lock.json is checked in anywhere: `npm ci` fails, use `npm install` in dev/backend, dev/web, dev/mobile and qa (a fresh worktree has no node_modules at all; about 5 min total).
+- dev/backend, dev/web, dev/mobile have no lockfile: `npm install --no-audit --no-fund`. qa/backend-tests, qa/web-tests, qa/mobile-tests DO have lockfiles: `npm ci --workspaces=false` inside each (plain `npm ci` resolves the qa workspace root and fails); their deps then live in each suite's own node_modules. All six in parallel in the background take about 5 min.
 - QA mobile Jest tests live in `qa/mobile-tests/unit/` (`npm run unit` there) and run with dev/mobile's jest binary + jest-expo via `unit/jest.config.js` (rootDir = dev/mobile). qa/node_modules has its own `axios` and `socket.io-client`, so that config pins them (and react) to dev/mobile/node_modules with moduleNameMapper; without it a `jest.mock('socket.io-client')` in a qa test silently mocks the wrong copy.
 - To check the web Playwright ports are free before a run (reuseExistingServer would silently test another worktree's server): `lsof -nP -iTCP -sTCP:LISTEN`. Port 5000 is macOS ControlCenter, not ours.
+
+Added during the auth slice 5 review (2026-11-10):
+
+- "Do DEV's tests fail on main?" and mutation checks without touching dev/: build a scratch tree with `git archive main dev/backend | tar -x -C <scratch>` (or `cp -R` of a mutated src), `cp -R` qa/backend-tests features + cucumber.js + package.json, symlink both node_modules dirs from the worktree, `mkdir <scratch>/qa/reports`, then `npm test` there. The relative `../../../../dev/backend/src` requires resolve inside the scratch tree.
+- Bash also refuses `cd ../../dev/...` (relative paths into dev/) and `rsync`/`cp` whose path args are shell variables. Spell out absolute paths, one plain command each.
+- Probes with mongodb-memory-server: pass `{ instance: { launchTimeout: 60000 } }`; the 10 s default fails while installs or Playwright load the machine.
+- qa/web-tests/.features-gen/** is tracked: commit the generated spec of a new feature with it.
 
 **Why:** each cost a wasted run or produced a false pass.
 **How to apply:** use this when writing backend probes or log-assertion steps; see [[auth-review-findings]] if it is ever written.

@@ -1,1 +1,1 @@
-- [QA harness quirks](qa-harness-quirks.md) — cucumber path merging, sandbox rejects GITHUB_ in bash, hoisted qa/node_modules, no lockfiles, qa mobile Jest harness
+- [QA harness quirks](qa-harness-quirks.md) — cucumber path merging, sandbox path rules, install (npm ci --workspaces=false in qa/*), scratch-tree main/mutant checks
