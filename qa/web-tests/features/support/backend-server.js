@@ -55,6 +55,8 @@ function applyTestAuthEnv(port) {
   // Every scenario signs in (3 sign-in requests) and reloads (GET /auth/me), from one IP.
   process.env.AUTH_RATE_LIMIT_MAX = '100000';
   process.env.AUTH_SESSION_RATE_LIMIT_MAX = '100000';
+  // One login (e.g. gaearon) updates and deletes across many scenarios in one backend process.
+  process.env.PROFILE_RATE_LIMIT_MAX = '100000';
   delete process.env.TRUST_PROXY;
 }
 

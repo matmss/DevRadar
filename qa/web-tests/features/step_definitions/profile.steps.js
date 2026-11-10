@@ -75,6 +75,29 @@ Given('my profile is deleted from another device', async function ({ page }) {
   expect(res.status).toBe(204);
 });
 
+/** Calls the real API as the signed-in user from "another device" (a fresh harness token). */
+async function asOtherDevice(page, method, path, body) {
+  const login = await page.getByTestId('signed-in-username').textContent();
+  const res = await fetch(`${BACKEND_URL}${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${harnessSessionToken(login)}`, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return res.status;
+}
+
+Given('my profile is registered from another device with techs {string}', async function ({ page }, techs) {
+  // Wait until this tab has decided it has no profile (registration form), then register elsewhere.
+  await expect(page.getByRole('button', { name: 'Salvar' })).toBeVisible();
+  expect(await asOtherDevice(page, 'POST', '/devs', { techs, latitude: '-23.5505', longitude: '-46.6333' })).toBe(200);
+});
+
+Given('my profile is deleted and registered again from another device with techs {string}', async function ({ page }, techs) {
+  await expect(page.getByRole('button', { name: 'Atualizar' })).toBeVisible();
+  expect(await asOtherDevice(page, 'DELETE', '/devs/me')).toBe(204);
+  expect(await asOtherDevice(page, 'POST', '/devs', { techs, latitude: '-23.5505', longitude: '-46.6333' })).toBe(200);
+});
+
 // --- When --------------------------------------------------------------------------------------
 
 When(
@@ -120,6 +143,10 @@ Then('the form should be in registration mode', async function ({ page }) {
 
 Then('I should see the status {string}', async function ({ page }, message) {
   await expect(page.getByRole('status')).toHaveText(message);
+});
+
+Then('I should see a status containing {string}', async function ({ page }, message) {
+  await expect(page.getByRole('status')).toContainText(message);
 });
 
 Then('the entry for {string} in the developer list should show techs {string}', async function ({ page }, login, techs) {

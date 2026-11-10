@@ -126,7 +126,45 @@ Feature: Update and delete my profile from the web app (US-6 "Already registered
     Given the backend has a developer "gaearon" with techs "ReactJS" at latitude "-23.5505" and longitude "-46.6333"
     And I am signed in with GitHub as "gaearon"
     And my profile is deleted from another device
-    When I change techs to "Elixir", latitude to "-23.5505" and longitude to "-46.6333" and update
+    When I change techs to "Elixir", latitude to "-22.9068" and longitude to "-43.1729" and update
     Then I should see the error "Seu perfil não existe mais, cadastre-se novamente"
     And the form should be in registration mode
     And there should be no entry for "gaearon" in the developer list
+    # QA-AUTH5 hardening 3: what I typed is kept, so "Salvar" registers it.
+    And the techs field should contain "Elixir"
+    And the latitude field should contain "-22.9068"
+    And the longitude field should contain "-43.1729"
+    When I click "Salvar"
+    Then the entry for "gaearon" in the developer list should show techs "Elixir"
+    And the backend should have "gaearon" with techs "Elixir" at latitude "-22.9068" and longitude "-43.1729"
+
+  # QA-AUTH5 hardening 3: POST /devs returns an existing profile unchanged. The user is told,
+  # the stored profile is in the list, and their input waits in the update form.
+  @edge @regression @P2
+  Scenario: "Salvar" when another device already registered me keeps my input, one click from saving
+    Given the browser denies geolocation permission
+    And I am signed in with GitHub as "gaearon"
+    And my profile is registered from another device with techs "ReactJS"
+    When I manually fill in latitude "-22.9068" and longitude "-43.1729"
+    And I fill in techs "Go" and submit
+    Then I should see a status containing "Você já tinha um perfil cadastrado (ReactJS)"
+    And the form should be in update mode
+    And the techs field should contain "Go"
+    And the latitude field should contain "-22.9068"
+    And the entry for "gaearon" in the developer list should show techs "ReactJS"
+    When I click "Atualizar"
+    Then I should see the status "Perfil atualizado"
+    And the entry for "gaearon" in the developer list should show techs "Go"
+    And the backend should have "gaearon" with techs "Go" at latitude "-22.9068" and longitude "-43.1729"
+
+  # QA-AUTH5 hardening 3: the list matches entries by login too, so a profile re-created with a
+  # new _id elsewhere replaces the old entry instead of being listed twice.
+  @edge @regression @P2
+  Scenario: A profile deleted and registered again elsewhere is listed once after I update it
+    Given the backend has a developer "gaearon" with techs "ReactJS" at latitude "-23.5505" and longitude "-46.6333"
+    And I am signed in with GitHub as "gaearon"
+    And my profile is deleted and registered again from another device with techs "Elixir"
+    When I change techs to "Go", latitude to "-23.5505" and longitude to "-46.6333" and update
+    Then I should see the status "Perfil atualizado"
+    And the developer list should show 1 entries
+    And the entry for "gaearon" in the developer list should show techs "Go"

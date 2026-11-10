@@ -41,6 +41,15 @@ describe('DevForm', () => {
       expect(value('Latitude')).toBe('-22.9');
       expect(value('Longitude')).toBe('-43.2');
     });
+
+    it('keeps a draft with coordinates instead of asking the browser', () => {
+      render(<DevForm draft={{ techs: 'Go', latitude: 1e-7, longitude: '-46.6' }} onSubmit={jest.fn()} onDelete={jest.fn()} />);
+      expect(button('Salvar')).toBeEnabled();
+      expect(value('Tecnologias')).toBe('Go');
+      expect(value('Latitude')).toBe('0.0000001');
+      expect(value('Longitude')).toBe('-46.6');
+      expect(getCurrentPosition).not.toHaveBeenCalled();
+    });
   });
 
   describe('with a profile (US-6 "Already registered")', () => {
@@ -53,6 +62,25 @@ describe('DevForm', () => {
       expect(value('Longitude')).toBe('-46.6333');
       // The saved location is kept, not replaced by the browser's position.
       expect(getCurrentPosition).not.toHaveBeenCalled();
+    });
+
+    // QA-AUTH5-2: String(1e-7) is "1e-7", which the backend rejects.
+    it('prefills tiny and negative coordinates as plain decimals the backend accepts', async () => {
+      const onSubmit = jest.fn().mockResolvedValue(undefined);
+      const tiny = { ...DEV, location: { type: 'Point', coordinates: [-2.5e-8, 1e-7] } };
+      render(<DevForm dev={tiny} onSubmit={onSubmit} onDelete={jest.fn()} />);
+      expect(value('Latitude')).toBe('0.0000001');
+      expect(value('Longitude')).toBe('-0.000000025');
+      await act(async () => { fireEvent.click(button('Atualizar')); });
+      expect(onSubmit).toHaveBeenCalledWith({ techs: 'ReactJS, Redux', latitude: '0.0000001', longitude: '-0.000000025' });
+    });
+
+    it('shows a draft (the user\'s input) instead of the saved values', () => {
+      render(<DevForm dev={DEV} draft={{ techs: 'Go', latitude: '1.5', longitude: '-2' }} onSubmit={jest.fn()} onDelete={jest.fn()} />);
+      expect(button('Atualizar')).toBeEnabled();
+      expect(value('Tecnologias')).toBe('Go');
+      expect(value('Latitude')).toBe('1.5');
+      expect(value('Longitude')).toBe('-2');
     });
 
     it('submits the edited values', async () => {

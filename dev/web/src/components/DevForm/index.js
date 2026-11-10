@@ -1,19 +1,35 @@
 import React, { useState, useEffect, useRef } from 'react';
 
+import { formatCoordinate } from '../../services/coordinates';
 import './styles.css';
 
 /**
- * The form's initial values: the saved profile's techs and location, or empty for registration.
+ * @param {unknown} value - typed text, or a number (browser geolocation, stored coordinate)
+ * @returns {string}
+ */
+function fieldText(value) {
+  if (typeof value === 'number') return formatCoordinate(value);
+  return typeof value === 'string' ? value : '';
+}
+
+/**
+ * The form's initial values: what the user typed (`draft`, kept across a switch between
+ * registration and update), else the saved profile's techs and location, else empty.
+ * Coordinates are written as plain decimals, never "1e-7", which the backend rejects (QA-AUTH5-2).
  * @param {object | null} dev - the signed-in user's dev (GET /devs/me), or null
+ * @param {{ techs?: unknown, latitude?: unknown, longitude?: unknown } | null} draft
  * @returns {{ techs: string, latitude: string, longitude: string }}
  */
-function initialValues(dev) {
+function initialValues(dev, draft) {
+  if (draft) {
+    return { techs: fieldText(draft.techs), latitude: fieldText(draft.latitude), longitude: fieldText(draft.longitude) };
+  }
   if (!dev) return { techs: '', latitude: '', longitude: '' };
   const coordinates = dev.location && Array.isArray(dev.location.coordinates) ? dev.location.coordinates : [];
   return {
     techs: Array.isArray(dev.techs) ? dev.techs.join(', ') : '',
-    latitude: coordinates.length === 2 ? String(coordinates[1]) : '',
-    longitude: coordinates.length === 2 ? String(coordinates[0]) : '',
+    latitude: coordinates.length === 2 ? formatCoordinate(coordinates[1]) : '',
+    longitude: coordinates.length === 2 ? formatCoordinate(coordinates[0]) : '',
   };
 }
 
@@ -23,11 +39,14 @@ function initialValues(dev) {
 //   - with a profile (US-6 "Already registered"): pre-filled with the saved techs and location,
 //     "Atualizar", and "Excluir meu perfil" behind an in-page confirmation (no window.confirm:
 //     native dialogs block the page and browser automation).
-// The parent remounts the form (React `key`) after every save or delete, so it always starts
-// from the saved values.
-function DevForm({ dev = null, onSubmit, onDelete }) {
+// The parent remounts the form (React `key`) after every save or delete, so it starts from the
+// saved values, or from `draft` when the mode changed under the user's input (profile deleted
+// elsewhere, or "Salvar" found an existing profile).
+function DevForm({ dev = null, draft = null, onSubmit, onDelete }) {
   const editing = Boolean(dev);
-  const [initial] = useState(() => initialValues(dev));
+  const [initial] = useState(() => initialValues(dev, draft));
+  // The browser's position only fills an empty registration form, never over saved or typed values.
+  const [askBrowserLocation] = useState(() => !editing && initial.latitude === '' && initial.longitude === '');
   const [techs, setTechs] = useState(initial.techs);
   const [latitude, setLatitude] = useState(initial.latitude);
   const [longitude, setLongitude] = useState(initial.longitude);
@@ -38,9 +57,9 @@ function DevForm({ dev = null, onSubmit, onDelete }) {
   const [pending, setPending] = useState(null);
   const pendingRef = useRef(null);
 
-  // An update keeps the saved location: only registration asks the browser where it is.
+  // An update keeps the saved location: only an empty registration form asks the browser.
   useEffect(() => {
-    if (editing) return;
+    if (!askBrowserLocation) return;
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const { latitude, longitude } = position.coords;
@@ -52,7 +71,7 @@ function DevForm({ dev = null, onSubmit, onDelete }) {
         console.log(err);
       }
     );
-  }, [editing]);
+  }, [askBrowserLocation]);
 
   /**
    * Runs `request` unless another one is in flight. A failure is already shown by the parent;
