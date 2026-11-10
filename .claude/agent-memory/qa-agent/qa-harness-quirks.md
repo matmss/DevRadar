@@ -36,3 +36,9 @@ Added during the auth slice 5 review (2026-11-10):
 
 **Why:** each cost a wasted run or produced a false pass.
 **How to apply:** use this when writing backend probes or log-assertion steps; see [[auth-review-findings]] if it is ever written.
+
+Added during the auth slice 6 review (2026-11-10):
+
+- `dev/mobile` `npm test` failed 12/159 once while the Playwright web suite ran at the same time, then passed 159/159 alone. Run mobile Jest after (not alongside) Playwright before calling a failure real.
+- A second, parallel sign-in of the same account (two devices): call `completeSignIn` from auth.steps.js with a detached world `{ app: this.app, signInCount: 900 }` (distinct mock codes), keep its `oneTimeCode` + `pkceVerifier`, and POST /auth/token later. Combine with the `{int} seconds pass` clock-shift step (auth.steps.js) to order token `iat`s without sleeping.
+- Login-refresh bugs are easiest to assert straight on Mongo by account: `Dev.findOne({ github_id }).lean()` (step "the developer of GitHub account N should show github_username X" in auth-slice6-review.steps.js).
