@@ -140,6 +140,17 @@ Feature: Update and delete my own developer profile (US-4, BUG-008)
   Scenario: Subscribers that only matched the old position or the old techs get no dev-updated
   Scenario: A rejected or not-found update pushes nothing
   Scenario: A delete is pushed as dev-deleted, with only the id and login, to subscribers matching the last position and techs
+
+  # Slice 5 review hardening (QA-AUTH5)
+  @edge
+  Scenario: A slow update followed by a delete announces dev-updated before dev-deleted
+  @edge
+  Scenario: Two updates are announced in the order they were applied
+  @edge
+  Scenario: Profile changes are rate limited per GitHub login (429 rate_limited; other logins unaffected)
+  @edge
+  Scenario Outline: A techs list over the caps (31 techs, a tech over 50 characters) is rejected with 400, on registration and on update
+  # Radius-edge guards for dev-updated / dev-deleted (BUG-002): features/auth-slice5-review.feature (QA)
 ```
 
 ## Feature: Reads and live updates require sign-in (Backend) — covers FR-2.1, FR-3.1, FR-4.1, US-5, Q6
@@ -291,7 +302,17 @@ Feature: Update and delete my profile from the web app (US-6 "Already registered
   Scenario: Registering switches the form to update mode
   Scenario: A legacy profile in another letter case is shown as mine
   @edge
-  Scenario: Updating a profile that was deleted elsewhere offers registration again
+  Scenario: Updating a profile that was deleted elsewhere offers registration again, with my input kept
+  @edge
+  Scenario: "Salvar" when another device already registered me keeps my input, one click from saving
+  @edge
+  Scenario: A profile deleted and registered again elsewhere is listed once after I update it
+
+  # QA review of slice 5 (qa/web-tests/features/auth-slice5-review.feature)
+  @edge
+  Scenario: A 404 that is not dev_not_found on delete (or update) is not reported as a deletion (QA-AUTH5-1)
+  @edge
+  Scenario: Saving the update form unchanged works for a location the backend accepted, e.g. 0.0000001 (QA-AUTH5-2)
 ```
 
 ## Feature: Mobile — Sign-in — covers FR-6.0, US-7

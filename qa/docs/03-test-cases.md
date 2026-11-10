@@ -217,7 +217,8 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
   - Legacy profile in another letter case: deleted. No profile, or a second `DELETE`: 404 `dev_not_found`. No/invalid/expired token: 401, nothing deleted.
   - A socket client matching the deleted dev's last position and techs gets `dev-deleted` with only `{ _id, github_username }`; others get nothing.
   - 6 `PUT`s racing one `DELETE`: the delete answers 204, each update 200 or 404 `dev_not_found`, never 500, and the profile stays deleted. An update applied just after the delete: 404, not resurrected.
-- **Automated:** `qa/backend-tests/features/profile.feature`.
+  - Since the slice 5 review: a slow `PUT` followed by a `DELETE` announces `dev-updated` before `dev-deleted`, and two `PUT`s are announced in the order applied; `PUT`/`DELETE` over `PROFILE_RATE_LIMIT_MAX` for one login answer 429 `rate_limited` (other logins unaffected); 31 techs, or a tech over 50 characters, answer 400 on `POST /devs` and `PUT /devs/me`.
+- **Automated:** `qa/backend-tests/features/profile.feature`, `qa/backend-tests/features/auth-slice5-review.feature` (radius edge); `unit/keyedQueue.test.js`, `unit/validateDevInputLimits.test.js`.
 
 ## TC-033 (Web) — Update and delete my profile (US-6 "Already registered")
 - **Requirement:** FR-5.4, US-6
@@ -227,7 +228,8 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
   - Change techs/location and click "Atualizar": "Perfil atualizado", the list entry shows the new techs, the backend has them, a reload still shows them. A 400 shows the error and keeps the input. A double-click sends one `PUT` (buttons disabled while in flight).
   - "Excluir meu perfil": an in-page confirmation ("Confirmar exclusão" / "Cancelar"), never a native dialog. "Cancelar" keeps the profile. "Confirmar exclusão": "Perfil excluído", registration form ("Salvar", empty techs), the entry leaves the list, the backend no longer has it; registering again works.
   - Profile deleted on another device, then "Atualizar": "Seu perfil não existe mais, cadastre-se novamente" and the registration form.
-- **Automated:** `qa/web-tests/features/profile.feature`; `dev/web/src/components/DevForm/DevForm.test.js`.
+  - Since the slice 5 review: a 404 that is not `dev_not_found` on update or delete shows the error and keeps the update form (QA-AUTH5-1); a stored coordinate like 1e-7 is prefilled as "0.0000001" and an unchanged "Atualizar" succeeds (QA-AUTH5-2); after `dev_not_found` on update the typed values stay in the registration form; "Salvar" answered with an existing profile shows "Você já tinha um perfil cadastrado (...)" and keeps the typed values in the update form; a profile re-created elsewhere is listed once.
+- **Automated:** `qa/web-tests/features/profile.feature`, `qa/web-tests/features/auth-slice5-review.feature`; `dev/web/src/components/DevForm/DevForm.test.js`, `dev/web/src/services/coordinates.test.js`.
 
 ## TC-017 (Mobile) — Map centers on current location
 - **Requirement:** FR-6.1

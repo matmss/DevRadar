@@ -248,12 +248,30 @@ matrix is enforced. Slice 6 (legacy verification, closure) remains.
     would mean a second event (e.g. `dev-deleted`) to the old-only sockets; not in the spec.
   - Legacy duplicates (same login in another letter case, possible only if the unique index
     could not be built, see `index.js`) are not merged: `PUT` and `DELETE` act on one of them.
+  - **Writes are serialized per login** (QA-AUTH5 review; `utils/keyedQueue.js`). `POST /devs`,
+    `PUT` and `DELETE /devs/me` run their database write *and* its socket announcement inside a
+    per-login queue (key: the login in lower case), one at a time in arrival order. Without it a
+    `PUT` whose database reply was slow could announce `dev-updated` after a later `DELETE` had
+    announced `dev-deleted`, and mobile re-added the deleted marker (same for PUT/PUT and
+    POST/DELETE). Different logins never wait for each other, and a key is dropped as soon as its
+    last task settles. The queue is in process memory, which matches the single-instance
+    assumption below; several instances would need a shared lock or per-dev versions on the events.
+  - **Push amplification limits** (QA-AUTH5 review): each change is pushed to every matching
+    socket, so `PUT`/`DELETE /devs/me` are rate limited **per GitHub login** (not per IP, so an
+    account cannot spread changes over addresses and users behind one NAT do not share a budget):
+    `PROFILE_RATE_LIMIT_MAX`, default 30 per 15 minutes, then 429 `rate_limited`. And `techs`
+    (`POST /devs` and `PUT /devs/me`, `utils/validateDevInput.js`) is capped at **30 entries of at
+    most 50 characters** each (counted after trimming and dropping empty entries; characters are
+    code points), else 400 with "techs must list at most 30 technologies (got N)" / "each tech
+    must be at most 50 characters". `GET /devs/me` and `POST /devs` are not rate limited (a
+    `POST` for an existing dev changes and announces nothing).
 
   | Status | `code` | When |
   |---|---|---|
-  | 400 | (none, `{ error, details }`) | `PUT /devs/me` techs/latitude/longitude missing or invalid |
+  | 400 | (none, `{ error, details }`) | `PUT /devs/me` techs/latitude/longitude missing or invalid, or techs over the caps |
   | 401 | `token_missing`, `token_expired`, `token_invalid` | `requireAuth` |
   | 404 | `dev_not_found` | `GET`/`PUT`/`DELETE /devs/me` without a profile |
+  | 429 | `rate_limited` | `PUT`/`DELETE /devs/me` over `PROFILE_RATE_LIMIT_MAX` for this login |
 - **JSON error codes** on `/auth/*` (body `{ error, code, details }`):
 
   | Status | `code` | When |
@@ -273,7 +291,9 @@ matrix is enforced. Slice 6 (legacy verification, closure) remains.
   (`req.ip`, see `TRUST_PROXY`) per 15 minutes, two independent limiters:
   sign-in (`GET /auth/github`, the callback, `POST /auth/token`): `AUTH_RATE_LIMIT_MAX`,
   default 60 (a sign-in uses 3); session checks (`GET /auth/me`, called on every client
-  load): `AUTH_SESSION_RATE_LIMIT_MAX`, default 600.
+  load): `AUTH_SESSION_RATE_LIMIT_MAX`, default 600. A third limiter is keyed on the signed-in
+  login instead of the IP: profile changes (`PUT`/`DELETE /devs/me`, after `requireAuth`):
+  `PROFILE_RATE_LIMIT_MAX`, default 30 (see "Own profile").
 - **Config** (`config/auth.js`, read from env on each use): `GITHUB_CLIENT_ID`,
   `GITHUB_CLIENT_SECRET`, `GITHUB_CALLBACK_URL` (default
   `http://localhost:3333/auth/github/callback`), `JWT_SECRET`, `MOBILE_APP_SCHEME` (default
@@ -290,7 +310,8 @@ matrix is enforced. Slice 6 (legacy verification, closure) remains.
   redirects, and startup logs a warning that does not print the value. It must equal the
   mobile app's scheme (see Mobile, "App scheme").
 - **Single-instance limitation:** the `state` store, the one-time code store
-  (`utils/oneTimeStore.js`) and the rate-limit counters live in process memory. Running more
+  (`utils/oneTimeStore.js`), the rate-limit counters and the per-login write queue
+  (`utils/keyedQueue.js`) live in process memory. Running more
   than one backend instance needs sticky sessions or a shared store (e.g. Redis) first.
 
 ## Web (`web/`)
@@ -357,14 +378,25 @@ matrix is enforced. Slice 6 (legacy verification, closure) remains.
   Redux") and saved coordinates (the browser's position is not asked for), "Atualizar"
   (`PUT /devs/me`) and "Excluir meu perfil". Deleting needs an in-page confirmation ("Confirmar
   exclusão" / "Cancelar"), never `window.confirm`, which blocks the page and browser automation.
-  After a save the list entry is replaced by `_id` (or appended) and the form is remounted with the
-  saved values ("Perfil atualizado"; registering also switches to update mode); after a delete the
-  entry leaves the list and the form returns to registration ("Perfil excluído"). Every button is
-  disabled while a save or delete is in flight. Update answered 404 (deleted on another device):
-  registration form with "Seu perfil não existe mais, cadastre-se novamente". Delete answered 404:
-  treated as done. If `GET /devs/me` fails otherwise (server unreachable), the registration form
-  is shown: `POST /devs` answers with the existing profile if there is one, which then switches
-  to update mode. As with registration, a change is only sent for the user this tab shows
+  After a save the list entry is replaced (matched by `_id` or by login in any letter case, so a
+  profile deleted and registered again elsewhere is not listed twice; or appended) and the form
+  is remounted with the saved values ("Perfil atualizado"; registering also switches to update
+  mode); after a delete the entry leaves the list and the form returns to registration ("Perfil
+  excluído"). Every button is disabled while a save or delete is in flight. Coordinates are
+  written into the form as plain decimals (`services/coordinates.js`): `String(1e-7)` is "1e-7",
+  which the backend rejects, so an unchanged "Atualizar" used to fail (QA-AUTH5-2).
+  **Only a 404 with `code: "dev_not_found"` means "no profile"** (QA-AUTH5-1): any other 404
+  (e.g. `not_found` from a backend without these routes, or a proxy that does not route
+  `/devs/me`) changed nothing, so it is shown as an error and the form stays in update mode.
+  Update answered `dev_not_found` (deleted on another device): registration form with "Seu
+  perfil não existe mais, cadastre-se novamente" and the values the user typed, so "Salvar"
+  registers them. Delete answered `dev_not_found`: treated as done. If `GET /devs/me` fails
+  otherwise (server unreachable), or another tab registered meanwhile, the registration form is
+  shown and `POST /devs` answers with the existing profile unchanged. The app notices because
+  the answer does not hold what was submitted (techs as the backend parses them, coordinates as
+  numbers): it then says "Você já tinha um perfil cadastrado (<saved techs>). Os dados que você
+  digitou estão no formulário: clique em "Atualizar" para salvá-los.", lists the stored profile
+  and keeps the typed values in the update form. As with registration, a change is only sent for the user this tab shows
   (QA-AUTH2-3), and a 401 ends the session. If the stored session cannot be checked (server
   unreachable or timed out, or `GET /auth/me` answers 429), the token is kept and the app shows why ("Muitas
   tentativas em pouco tempo, tente novamente mais tarde" for 429) with "Tentar novamente" and
