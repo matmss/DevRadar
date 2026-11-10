@@ -24,7 +24,8 @@ Feature: Developer registration as the signed-in GitHub user (US-3)
     Given I have a <kind> session token
     When I submit a registration with techs "ReactJS", latitude "-23.5505" and longitude "-46.6333"
     Then the response status should be 401 with code "<code>"
-    # expired -> token_expired; tampered, foreign-signed, alg-none, malformed, profile-less, forged-profile -> token_invalid
+    # expired -> token_expired; tampered, foreign-signed, alg-none, malformed, profile-less, forged-profile,
+    # id-less (issued before auth slice 6: subject = login, no GitHub id) -> token_invalid
 
   Scenario: Register as the signed-in user with the profile captured at sign-in
     Given I am signed in as "gaearon"
@@ -50,7 +51,9 @@ Feature: Developer registration as the signed-in GitHub user (US-3)
     Given a developer already exists with github_username "gaearon" and techs "Node.js"
     And I signed in through GitHub as "Gaearon"
     When I submit a registration with techs "ReactJS", latitude "-23.5505" and longitude "-46.6333"
-    Then the registered developer should be "gaearon" and the database should contain exactly 1 developer
+    Then the registered developer should be "Gaearon" (the login as GitHub spells it, since auth slice 6)
+    And the stored developer should belong to the GitHub account of "Gaearon" and keep techs "Node.js"
+    And the database should contain exactly 1 developer
 
   Scenario: Registration triggers a real-time notification to a matching nearby listener
     Given I am signed in as "gaearon"
@@ -139,7 +142,7 @@ Feature: Update and delete my own developer profile (US-4, BUG-008)
   Scenario: An update is pushed as dev-updated, never as new-dev, to subscribers matching the new position and techs
   Scenario: Subscribers that only matched the old position or the old techs get no dev-updated
   Scenario: A rejected or not-found update pushes nothing
-  Scenario: A delete is pushed as dev-deleted, with only the id and login, to subscribers matching the last position and techs
+  Scenario: A delete is pushed as dev-deleted, with only the _id, github_id and login, to subscribers matching the last position and techs
 
   # Slice 5 review hardening (QA-AUTH5)
   @edge
@@ -147,11 +150,75 @@ Feature: Update and delete my own developer profile (US-4, BUG-008)
   @edge
   Scenario: Two updates are announced in the order they were applied
   @edge
-  Scenario: Profile changes are rate limited per GitHub login (429 rate_limited; other logins unaffected)
+  Scenario: Profile changes are rate limited per GitHub account (429 rate_limited; other accounts unaffected)
   @edge
   Scenario Outline: A techs list over the caps (31 techs, a tech over 50 characters) is rejected with 400, on registration and on update
   # Radius-edge guards for dev-updated / dev-deleted (BUG-002): features/auth-slice5-review.feature (QA)
 ```
+
+## Feature: Profiles belong to a GitHub account; legacy profiles (Backend) — covers FR-7.1, FR-7.3, US-8, Q5, Q10
+
+Automated in `qa/backend-tests/features/legacy-profiles.feature` (auth slice 6). A profile belongs
+to a GitHub account by its numeric id (`github_id`); a legacy profile (no id) is matched by login in
+any letter case and claimed by its owner's first write; a profile of another id that shows my login
+is never mine.
+
+```gherkin
+Feature: Profiles belong to a GitHub account, and legacy profiles are claimed by their owner (US-8, Q10)
+
+  Background:
+    Given the developer database is empty
+
+  # US-8
+  Scenario Outline: A legacy owner claims their profile on the first update, in any letter case
+    Given a developer already exists with github_username "<legacy username>" and techs "Node.js"
+    And I am signed in as "<github login>"
+    When I update my profile with techs "Go", latitude "-22.9068" and longitude "-43.1729"
+    Then the response is the same record (same _id), now showing "<github login>"
+    And the stored developer belongs to the GitHub account of "<github login>"
+  Scenario Outline: A legacy owner claims their profile on the first registration, and its data is kept
+  Scenario Outline: A legacy owner can delete their profile, in any letter case
+  Scenario: Deleting a claimed legacy profile is pushed with its new GitHub id
+  Scenario: Reading my legacy profile finds it without claiming or changing it
+  Scenario: Legacy profiles remain visible in the authenticated list and search
+
+  Scenario: Deploying onto a database with legacy profiles rewrites no document
+    Given the database holds legacy developers stored by the pre-auth backend, without the new indexes
+    When the backend builds its indexes at startup
+    Then every legacy document is byte-for-byte as it was stored
+    And the github_id index is unique and partial; the login index is still there
+    And list, search and GET /devs/me (a read) still rewrite nothing
+
+  # Concurrent claims: the current holder of a login and an account that renamed away (valid old token)
+  @edge
+  Scenario: Two accounts updating a legacy profile with the same login at once: one 200, the other 404, no 500
+  @edge
+  Scenario: Two accounts registering over a legacy profile with the same login at once: one 200, the other 409
+  @edge
+  Scenario Outline: A claim that loses the race leaves the profile to the winner (update/delete 404, register 409)
+
+  # Q10: account 501 registered as "alice", renamed to "alice2" without signing in; 502 now holds "alice"
+  Scenario: The new holder of a renamed login cannot read, update or delete the previous owner's profile (404)
+  Scenario: The new holder of a renamed login gets a 409 github_username_conflict on registration, and the previous profile is untouched
+  Scenario: The previous owner signs in under the new login: the profile is still theirs, and the old login is freed
+  Scenario: The previous owner's next update also refreshes the login
+  @edge
+  Scenario: An older session of the same account does not set a refreshed login back
+  Scenario: A login refreshed at sign-in is pushed as dev-updated
+  Scenario: The API never exposes when a login was last refreshed
+
+  # Q10: the session identity is the GitHub id
+  Scenario Outline: A session token without a GitHub id (issued before auth slice 6) is rejected as invalid
+    # id-less, login-less, non-canonical-id -> 401 token_invalid on /devs, /devs/me, /auth/me
+  Scenario: Writes with a token issued before auth slice 6 are rejected and change nothing
+  Scenario: Sign-in issues a token whose subject is the GitHub id, and GET /auth/me returns it
+  Scenario Outline: A GitHub user lookup without a valid account id fails the sign-in
+    # id missing, null, "810438" (a string), 0, -5, 1.5, above 2^53, true
+    # -> redirect with error=sign_in_failed&reason=github_user_invalid, no sign-in code
+```
+
+The socket handshake refuses the same old tokens (`realtime-auth.feature`, kinds `id-less`,
+`login-less`, `non-canonical-id`).
 
 ## Feature: Reads and live updates require sign-in (Backend) — covers FR-2.1, FR-3.1, FR-4.1, US-5, Q6
 
@@ -313,6 +380,16 @@ Feature: Update and delete my profile from the web app (US-6 "Already registered
   Scenario: A 404 that is not dev_not_found on delete (or update) is not reported as a deletion (QA-AUTH5-1)
   @edge
   Scenario: Saving the update form unchanged works for a location the backend accepted, e.g. 0.0000001 (QA-AUTH5-2)
+
+Feature: Old sessions and legacy profiles in the web app (auth slice 6, qa/web-tests/features/auth-slice6.feature)
+
+  Scenario: A session stored before auth slice 6 shows the signed-out view, and signing in again works
+    Given a session token without a GitHub id is stored
+    When I open the web app
+    Then I see the signed-out view with no message and the token is cleared
+    And signing in with GitHub works again
+  Scenario: The owner of a legacy profile in another letter case sees it, claims it by updating, and it is listed once
+    # GET /devs/me reads the legacy profile without claiming it; the update claims it for my GitHub id
 ```
 
 ## Feature: Mobile — Sign-in — covers FR-6.0, US-7
@@ -333,6 +410,9 @@ Feature: Sign in to the mobile app with GitHub
   Scenario: The session survives a relaunch (token in expo-secure-store, not AsyncStorage)
   Scenario: An auth failure from /search or the socket returns to sign-in with a message
     ("Sessão expirada, entre novamente" when expired), not an empty map
+  Scenario: A token stored before auth slice 6 (no GitHub id) returns to sign-in on launch
+    ("Sua sessão não é mais válida, entre novamente"), and signing in again works
+    # Jest: dev/tests/mobile/SessionContext.test.js (also the socket refusing it as token_invalid)
   Scenario: "Sair" clears the token and closes the socket
 ```
 
@@ -415,3 +495,4 @@ Feature: End-to-end real-time propagation across layers
 | Explore WebSocket behavior across app backgrounding/foregrounding and connectivity loss | Mobile | 45 min |
 | Explore GitHub sign-in failure modes (rate limit, consent denied, renamed account between sign-in and registration, stale sign-in profile) | Backend + Web | 30 min |
 | Explore profile update/delete (auth slice 5): two tabs or devices editing and deleting the same profile, updating with an old token whose sign-in profile is stale, moving a profile out of a watcher's region (stale marker until the next search), and markers on a real device after `dev-updated`/`dev-deleted` | Web + Mobile + Backend | 45 min |
+| Explore renamed GitHub logins (auth slice 6, Q10) with two real GitHub test accounts: rename A away, give its login to B, then B signs in (409 on registration, nothing of A's reachable), A signs in under the new login (A's login refreshed, B can register); old tokens on another device during and after the rename; a legacy profile claimed from two browsers at once, and how the mobile map shows a renamed dev | Web + Mobile + Backend | 45 min |

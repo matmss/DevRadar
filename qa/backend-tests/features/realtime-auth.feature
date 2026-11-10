@@ -48,14 +48,18 @@ Feature: The live subscription requires sign-in (US-5, Q6)
     And there should be 0 live subscriptions near latitude "1.3", longitude "2.3" for techs "Elixir"
 
     Examples:
-      # Kinds: see forgedSessionToken in features/support/session.js.
-      | kind           |
-      | tampered       |
-      | foreign-signed |
-      | alg-none       |
-      | malformed      |
-      | profile-less   |
-      | forged-profile |
+      # Kinds: see forgedSessionToken in features/support/session.js. id-less is a token as
+      # slices 1-5 issued it (subject = login, no GitHub id): refused since auth slice 6 (Q10).
+      | kind             |
+      | tampered         |
+      | foreign-signed   |
+      | alg-none         |
+      | malformed        |
+      | profile-less     |
+      | forged-profile   |
+      | id-less          |
+      | login-less       |
+      | non-canonical-id |
 
   # Tokens never travel in URLs (access logs), and there is one place to send it.
   @edge @regression @P2

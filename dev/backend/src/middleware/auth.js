@@ -5,7 +5,8 @@
 // 401 body: { error, code, details }. `code` is stable and lets clients tell the cases apart:
 //   token_missing  no `Authorization: Bearer <token>` header
 //   token_expired  a genuine DevRadar token past its 7-day expiry -> "Session expired, sign in again"
-//   token_invalid  malformed, tampered with, or signed with another key
+//   token_invalid  malformed, tampered with, signed with another key, or missing a required claim
+//                  (e.g. issued before GitHub ids were captured: those clients sign in again once)
 const { verifySessionToken, TOKEN_ERROR } = require('../utils/sessionToken');
 
 const BEARER_PATTERN = /^Bearer[ ]+(\S+)[ ]*$/i;
@@ -41,8 +42,9 @@ function readBearerToken(header) {
 
 /**
  * Express middleware: rejects the request with 401 unless it carries a valid session token,
- * otherwise sets `req.user = { github_username, profile: { name, avatar_url, bio } }` (the
- * sign-in snapshot from the token) and continues.
+ * otherwise sets `req.user = { github_id, github_username, profile: { name, avatar_url, bio },
+ * issued_at }` (GitHub's numeric account id, then the login and profile as of sign-in, and when
+ * that sign-in happened) and continues.
  * @param {import('express').Request} req
  * @param {import('express').Response} res
  * @param {import('express').NextFunction} next

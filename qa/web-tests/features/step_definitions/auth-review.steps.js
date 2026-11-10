@@ -6,7 +6,12 @@ const { expect } = require('@playwright/test');
 // Same copy dev/backend signs with, so the stored token is built like a real one.
 const jwt = require('../../../../dev/backend/node_modules/jsonwebtoken');
 const { INTEGRATION_BACKEND_PORT } = require('../support/global-setup');
-const { TEST_JWT_SECRET, githubUserFixture, inspectorAuthHeaders } = require('../support/auth-fixtures');
+const {
+  TEST_JWT_SECRET,
+  githubUserFixture,
+  inspectorAuthHeaders,
+  preSlice6SessionToken,
+} = require('../support/auth-fixtures');
 
 const { Given, When, Then } = createBdd();
 
@@ -26,7 +31,7 @@ function validSessionToken(login) {
   const iat = Math.floor(Date.now() / 1000);
   const { name, avatar_url, bio } = githubUserFixture(login);
   return jwt.sign(
-    { sub: login, iss: 'devradar', iat, exp: iat + 3600, profile: { name, avatar_url, bio } },
+    { sub: String(githubUserFixture(login).id), login, iss: 'devradar', iat, exp: iat + 3600, profile: { name, avatar_url, bio } },
     TEST_JWT_SECRET,
     { algorithm: 'HS256' }
   );
@@ -130,6 +135,16 @@ When('I open the DevRadar web app with a stored session token for {string}', asy
   await page.evaluate(([key, value]) => window.localStorage.setItem(key, value), [SESSION_TOKEN_KEY, validSessionToken(login)]);
   await page.reload();
 });
+
+// Auth slice 6: a token as slices 1-5 issued it (subject = login, no GitHub id) is token_invalid.
+When(
+  'I open the DevRadar web app with a session token for {string} stored before auth slice 6',
+  async function ({ page }, login) {
+    await page.goto('/');
+    await page.evaluate(([key, value]) => window.localStorage.setItem(key, value), [SESSION_TOKEN_KEY, preSlice6SessionToken(login)]);
+    await page.reload();
+  }
+);
 
 // --- Then --------------------------------------------------------------------------------------
 

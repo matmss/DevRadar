@@ -17,7 +17,8 @@ describe('Socket.io server options', () => {
 });
 const { signSessionToken } = require('../../../dev/backend/src/utils/sessionToken');
 
-const QUERY = { latitude: '-23.5505', longitude: '-46.6333', techs: 'ReactJS, Node.js' };
+const GAEARON = { github_id: 810438, github_username: 'gaearon' };
+const QUERY ={ latitude: '-23.5505', longitude: '-46.6333', techs: 'ReactJS, Node.js' };
 
 /** Runs the middleware against a fake socket and returns the socket and what `next` got. */
 function run(handshake) {
@@ -45,9 +46,10 @@ describe('authenticateHandshake', () => {
   });
 
   it('accepts a valid token from handshake.auth and stores the user and subscription', () => {
-    const { token } = signSessionToken('gaearon');
+    const { token } = signSessionToken(GAEARON);
     const { socket, err } = run({ auth: { token }, query: QUERY });
     expect(err).toBeUndefined();
+    expect(socket.data.user.github_id).toBe(810438);
     expect(socket.data.user.github_username).toBe('gaearon');
     expect(socket.data.subscription).toEqual({
       coordinates: { latitude: -23.5505, longitude: -46.6333 },
@@ -62,7 +64,7 @@ describe('authenticateHandshake', () => {
     ['a token only in the query string', { query: { ...QUERY, token: 'TOKEN' } }],
     ['a token only in an Authorization header', { headers: { authorization: 'Bearer TOKEN' } }],
   ])('refuses %s as token_missing', (_label, handshake) => {
-    const { token } = signSessionToken('gaearon');
+    const { token } = signSessionToken(GAEARON);
     const withToken = JSON.parse(JSON.stringify(handshake).replace('TOKEN', token));
     const { socket, err } = run({ query: QUERY, ...withToken });
     expect(err).toBeInstanceOf(Error);
@@ -75,8 +77,20 @@ describe('authenticateHandshake', () => {
     expect(err.data.code).toBe('token_invalid');
   });
 
+  // Auth slice 6 (Q10): tokens issued before GitHub ids were captured (subject = login, no
+  // `login` claim) are refused, so those clients sign in again once.
+  it('refuses a correctly signed token without a GitHub id as token_invalid', () => {
+    const jwt = require('../../../dev/backend/node_modules/jsonwebtoken');
+    const now = Math.floor(Date.now() / 1000);
+    const profile = { name: null, avatar_url: null, bio: null };
+    const token = jwt.sign({ sub: 'gaearon', iss: 'devradar', iat: now, exp: now + 60, profile }, process.env.JWT_SECRET);
+    const { socket, err } = run({ auth: { token }, query: QUERY });
+    expect(err.data.code).toBe('token_invalid');
+    expect(socket.data.user).toBeUndefined();
+  });
+
   it('refuses an expired token as token_expired', () => {
-    const { token } = signSessionToken('gaearon');
+    const { token } = signSessionToken(GAEARON);
     const realNow = Date.now;
     Date.now = () => realNow() + 8 * 24 * 60 * 60 * 1000;
     try {
@@ -94,14 +108,14 @@ describe('authenticateHandshake', () => {
   });
 
   it('refuses invalid subscription params with a valid token as subscription_invalid', () => {
-    const { token } = signSessionToken('gaearon');
+    const { token } = signSessionToken(GAEARON);
     const { socket, err } = run({ auth: { token }, query: { ...QUERY, latitude: 'abc' } });
     expect(err.data.code).toBe('subscription_invalid');
     expect(socket.data.subscription).toBeUndefined();
   });
 
   it('refuses with internal_error instead of throwing when verification itself fails', () => {
-    const { token } = signSessionToken('gaearon');
+    const { token } = signSessionToken(GAEARON);
     process.env.NODE_ENV = 'production';
     delete process.env.JWT_SECRET; // jwtSecret() throws in production without a secret
     const { err } = run({ auth: { token }, query: QUERY });
@@ -111,7 +125,7 @@ describe('authenticateHandshake', () => {
   });
 
   it('never puts the token in the refusal', () => {
-    const { token } = signSessionToken('gaearon');
+    const { token } = signSessionToken(GAEARON);
     const realNow = Date.now;
     Date.now = () => realNow() + 8 * 24 * 60 * 60 * 1000;
     try {

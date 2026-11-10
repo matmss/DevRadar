@@ -9,16 +9,17 @@ const { signInRateLimiter, sessionRateLimiter, profileRateLimiter } = require('.
 const routes = Router();
 
 // Everything that shows or changes devs needs a session token (dev/docs/03-auth-spec.md, Q1 and
-// the access matrix). Registration uses the signed-in GitHub login (US-3). The Socket.io
+// the access matrix). Registration uses the signed-in GitHub account (US-3, Q10). The Socket.io
 // subscription is authenticated at handshake in websocket.js.
 routes.get('/devs', requireAuth, DevController.index);
 routes.post('/devs', requireAuth, DevController.store);
 
-// The signed-in user's own dev (US-4, BUG-008): the dev is the token's login, so these take no
-// username or id and cannot reach anyone else's profile. No profile: 404 dev_not_found.
+// The signed-in user's own dev (US-4, BUG-008): the dev of the token's GitHub account (by id; a
+// legacy dev by login, services/devOwnership.js), so these take no username or id and cannot
+// reach anyone else's profile. No profile: 404 dev_not_found.
 // Registered before any future `/devs/:param` route so "me" can never be read as an id.
 routes.get('/devs/me', requireAuth, DevController.show);
-// Changes are rate limited per login (each one is pushed to every matching socket).
+// Changes are rate limited per GitHub account (each one is pushed to every matching socket).
 routes.put('/devs/me', requireAuth, profileRateLimiter, DevController.update);
 routes.delete('/devs/me', requireAuth, profileRateLimiter, DevController.destroy);
 

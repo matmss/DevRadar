@@ -23,7 +23,7 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
   1. Signed in as `gaearon`, register.
   2. Register again with different `techs`.
   3. `GET /devs` and count entries with `github_username: "gaearon"`.
-- **Expected result:** Step 2 returns 200 with the **original** record (techs unchanged). Step 3 shows exactly 1 matching entry. The match is case-insensitive, so a legacy record created before sign-in as `gaearon` is returned to the owner signing in as `Gaearon` (US-8).
+- **Expected result:** Step 2 returns 200 with the **original** record (techs unchanged). Step 3 shows exactly 1 matching entry. Since auth slice 6 the record is matched by the GitHub account id; a legacy record created before sign-in as `gaearon` (no id) is matched case-insensitively and claimed by the owner signing in as `Gaearon` (US-8, same `_id` and techs, login now `Gaearon`). See TC-034.
 
 ## TC-003 — Techs string parsing trims whitespace
 - **Requirement:** FR-1.4
@@ -204,7 +204,7 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
   - `PUT /devs/me` `{ techs: " Elixir ,, Go ", latitude: -22.9068, longitude: -43.1729 }`: 200 with techs `["Elixir", "Go"]` and `location.coordinates` `[-43.1729, -22.9068]`; `name`/`avatar_url`/`bio` are the sign-in profile; `GET /search` finds it in Rio, not in São Paulo.
   - Missing/invalid `techs`, `latitude` or `longitude` (including a body with only `techs`): 400 `{ error, details }`, same messages as `POST /devs`, nothing changed.
   - A body with `github_username`/`_id` of another dev, `name`, `avatar_url`, `bio`, `location`: ignored; only the signed-in user's profile changes.
-  - Signed in as `gaearon`, profile stored as `GAEARON`: updated, `github_username` stays `GAEARON`.
+  - Signed in as `gaearon`, legacy profile stored as `GAEARON` (no `github_id`): updated and claimed for the account (`github_id` set, same `_id`); since auth slice 6 its `github_username` becomes `gaearon`, the login as GitHub spells it (see TC-034).
   - No profile: 404 `dev_not_found`, nothing created. No/expired token: 401, nothing changed. `PUT /devs/bob`: 404 `not_found`.
   - Socket clients: a client matching the new position and techs gets `dev-updated` with the updated dev and no `new-dev`; clients that only matched the old position or techs get nothing; a 400/404 pushes nothing.
 - **Automated:** `qa/backend-tests/features/profile.feature`.
@@ -215,9 +215,9 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 - **Steps / expected result:**
   - `DELETE /devs/me`: 204 with an empty body; the profile is gone from `GET /devs`, `GET /search` and `GET /devs/me` (404); `POST /devs` then registers a new profile with the new techs.
   - Legacy profile in another letter case: deleted. No profile, or a second `DELETE`: 404 `dev_not_found`. No/invalid/expired token: 401, nothing deleted.
-  - A socket client matching the deleted dev's last position and techs gets `dev-deleted` with only `{ _id, github_username }`; others get nothing.
+  - A socket client matching the deleted dev's last position and techs gets `dev-deleted` with only `{ _id, github_id, github_username }`; others get nothing.
   - 6 `PUT`s racing one `DELETE`: the delete answers 204, each update 200 or 404 `dev_not_found`, never 500, and the profile stays deleted. An update applied just after the delete: 404, not resurrected.
-  - Since the slice 5 review: a slow `PUT` followed by a `DELETE` announces `dev-updated` before `dev-deleted`, and two `PUT`s are announced in the order applied; `PUT`/`DELETE` over `PROFILE_RATE_LIMIT_MAX` for one login answer 429 `rate_limited` (other logins unaffected); 31 techs, or a tech over 50 characters, answer 400 on `POST /devs` and `PUT /devs/me`.
+  - Since the slice 5 review: a slow `PUT` followed by a `DELETE` announces `dev-updated` before `dev-deleted`, and two `PUT`s are announced in the order applied; `PUT`/`DELETE` over `PROFILE_RATE_LIMIT_MAX` for one GitHub account (per login before slice 6) answer 429 `rate_limited` (other accounts unaffected); 31 techs, or a tech over 50 characters, answer 400 on `POST /devs` and `PUT /devs/me`.
 - **Automated:** `qa/backend-tests/features/profile.feature`, `qa/backend-tests/features/auth-slice5-review.feature` (radius edge); `unit/keyedQueue.test.js`, `unit/validateDevInputLimits.test.js`.
 
 ## TC-033 (Web) — Update and delete my profile (US-6 "Already registered")
@@ -229,7 +229,21 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
   - "Excluir meu perfil": an in-page confirmation ("Confirmar exclusão" / "Cancelar"), never a native dialog. "Cancelar" keeps the profile. "Confirmar exclusão": "Perfil excluído", registration form ("Salvar", empty techs), the entry leaves the list, the backend no longer has it; registering again works.
   - Profile deleted on another device, then "Atualizar": "Seu perfil não existe mais, cadastre-se novamente" and the registration form.
   - Since the slice 5 review: a 404 that is not `dev_not_found` on update or delete shows the error and keeps the update form (QA-AUTH5-1); a stored coordinate like 1e-7 is prefilled as "0.0000001" and an unchanged "Atualizar" succeeds (QA-AUTH5-2); after `dev_not_found` on update the typed values stay in the registration form; "Salvar" answered with an existing profile shows "Você já tinha um perfil cadastrado (...)" and keeps the typed values in the update form; a profile re-created elsewhere is listed once.
-- **Automated:** `qa/web-tests/features/profile.feature`, `qa/web-tests/features/auth-slice5-review.feature`; `dev/web/src/components/DevForm/DevForm.test.js`, `dev/web/src/services/coordinates.test.js`.
+- **Automated:** `qa/web-tests/features/profile.feature`, `qa/web-tests/features/auth-slice5-review.feature`, `qa/web-tests/features/auth-slice6.feature`; `dev/web/src/components/DevForm/DevForm.test.js`, `dev/web/src/services/coordinates.test.js`, `dev/web/src/services/devList.test.js` (list entries matched by `_id`, then `github_id`, then login for legacy entries).
+
+## TC-034 — Profiles belong to a GitHub account id; legacy profiles (US-8, Q5, Q10)
+- **Requirement:** FR-7.1, FR-7.3, FR-1.3, FR-1.8, FR-1.9, US-8, Q10
+- **Type:** Functional / Security | **P1**
+- **Preconditions:** Legacy profiles are documents without `github_id` (as stored before sign-in existed). Accounts are told apart by their GitHub id (fixtures: `gaearon` 810438, explicit ids 501/502 for the rename case).
+- **Steps / expected result:**
+  - Legacy `alice`/`ALICE`, signed in as `alice`/`Alice`: the first `PUT`, `POST` or `DELETE` claims it (`github_id` set, same `_id`; `POST` keeps techs, location, name, bio). `GET /devs/me` returns it but writes nothing. It is listed in `GET /devs` and found by `GET /search` for any signed-in user.
+  - Deploy: legacy documents inserted without the new indexes; building the indexes at startup leaves every document byte-for-byte unchanged; `github_id_unique` is unique with `partialFilterExpression: { github_id: { $exists: true } }`; `github_username_unique_ci` still exists.
+  - Two accounts (501 `alice`, 502 `ALICE`) writing to legacy `alice` at the same time: exactly one claims it; the other gets 404 `dev_not_found` (`PUT`/`DELETE`) or 409 `github_username_conflict` (`POST`); never 500.
+  - Renamed login: dev `alice` owned by 501; 502 signs in as `alice`: `GET`/`PUT`/`DELETE /devs/me` 404, `POST /devs` 409 `github_username_conflict` (body names only the login), the dev unchanged byte-for-byte.
+  - 501 signs in as `alice2`: the dev's login becomes `alice2` at sign-in (`dev-updated` pushed), same `_id`; 502 can then register `alice`. A `PUT` by 501 as `alice2` also refreshes it. A token of 501 issued 2 days before (login `alice`) can still update the dev but never sets the login back.
+  - Session tokens: `sub` is the GitHub id as a string and `login` a claim; `POST /auth/token` and `GET /auth/me` return `github_id`. Tokens without an id (subject = login, as before slice 6), without a `login` claim or with a non-canonical id: 401 `token_invalid` on every protected route and refused at the socket handshake. GitHub `GET /user` without a valid `id` (missing, null, a string, 0, negative, fractional, above 2^53, boolean): `sign_in_failed` with `reason=github_user_invalid`, no sign-in code.
+  - Clients: a stored pre-slice-6 token shows the web signed-out view (no message) and the mobile sign-in screen ("Sua sessão não é mais válida, entre novamente"); signing in again works. Lists and markers match by `_id`, then `github_id`, so two accounts showing the same login are never merged.
+- **Automated:** `qa/backend-tests/features/legacy-profiles.feature`, `realtime-auth.feature` (old tokens at the handshake), `registration.feature`/`profile.feature` (legacy letter case); `unit/{sessionToken,githubId,requireAuth,socketHandshake}.test.js`; `qa/web-tests/features/auth-slice6.feature`; `dev/web/src/services/devList.test.js`; `dev/tests/mobile/{SessionContext,services/devList}.test.js`.
 
 ## TC-017 (Mobile) — Map centers on current location
 - **Requirement:** FR-6.1
@@ -280,12 +294,13 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 | US-4 (auth) | TC-031, TC-032, TC-033 |
 | US-6 (auth) | TC-015, TC-016, TC-023, TC-024, TC-025, TC-026, TC-029, TC-033 |
 | US-5 (auth) | TC-027, TC-028 |
-| US-7 (auth) | TC-019, TC-030 |
+| US-7 (auth) | TC-019, TC-030, TC-034 |
+| US-8, Q10 (auth) | TC-002, TC-031, TC-032, TC-034 |
 | FR-2 | TC-007, TC-027 |
 | FR-3 | TC-008, TC-009, TC-010, TC-027 |
 | FR-4 | TC-004, TC-005, TC-006, TC-019, TC-028, TC-031, TC-032 |
 | FR-5 | TC-014, TC-015, TC-016, TC-029, TC-033 |
 | FR-6 | TC-017, TC-018, TC-019, TC-020, TC-021, TC-030 |
-| FR-7 | TC-012 |
+| FR-7 | TC-012, TC-034 |
 | NFR-1/2 | TC-010 |
 | NFR-7 | TC-022 |

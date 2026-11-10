@@ -2,7 +2,7 @@ const { Given, When, Then, After } = require('@cucumber/cucumber');
 const { expect } = require('chai');
 const request = require('supertest');
 const Dev = require('../../../../dev/backend/src/models/Dev');
-const { githubUserFixture } = require('../support/github-mock');
+const { githubUserFixture, githubIdFor } = require('../support/github-mock');
 const { testSessionToken, withSession } = require('../support/session');
 
 // POST /devs requires a session token (US-3). The registration steps send
@@ -34,9 +34,10 @@ Given('I am signed in as {string}', function (username) {
   this.sessionToken = testSessionToken(username);
 });
 
-// QA-AUTH2-1: makes the next registration lose a race deterministically. Another request inserts
-// `username` first, then the upsert fails with MongoDB's duplicate-key error (E11000), as when
-// the unique github_username index rejects the second of two simultaneous inserts.
+// QA-AUTH2-1: makes the next registration lose a race deterministically. Another request of the
+// same GitHub account (e.g. on another backend instance) inserts `username` first, then the upsert
+// fails with MongoDB's duplicate-key error (E11000), as when a unique index rejects the second of
+// two simultaneous inserts.
 const realFindOneAndUpdate = Dev.findOneAndUpdate;
 After(function () {
   Dev.findOneAndUpdate = realFindOneAndUpdate;
@@ -46,6 +47,7 @@ Given('another request registers {string} with techs {string} just before my ups
   Dev.findOneAndUpdate = function raceLost() {
     Dev.findOneAndUpdate = realFindOneAndUpdate;
     return Dev.create({
+      github_id: githubIdFor(username),
       github_username: username,
       name: username,
       avatar_url: 'https://example.com/avatar.png',

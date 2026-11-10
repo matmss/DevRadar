@@ -22,18 +22,21 @@ Three layers, one shared backend:
                                                   │
                                                   ▼
                                         GitHub OAuth + GET /user
-                                        (sign-in only: login, name,
-                                         avatar, bio)
+                                        (sign-in only: account id,
+                                         login, name, avatar, bio)
 ```
 
 ## Backend (`backend/`)
 
 - **Framework:** Express 5, no ORM abstraction beyond Mongoose itself.
 - **Data model:** single `Dev` collection (`backend/src/models/Dev.js`) —
-  `name`, `github_username`, `bio`, `avatar_url`, `techs: [String]`, and a
-  GeoJSON `location` field with a `2dsphere` index for radius queries, plus a
-  unique case-insensitive index on `github_username` (one dev per GitHub login,
-  see Authentication, "Registration identity and profile").
+  `name`, `github_id` (GitHub's numeric account id: who the profile belongs to),
+  `github_username` (the login, display data), `bio`, `avatar_url`,
+  `techs: [String]`, and a GeoJSON `location` field with a `2dsphere` index for
+  radius queries. Two unique indexes: `github_id` (partial: only documents that
+  have one, so legacy devs without an id are left out) and `github_username`,
+  case-insensitive. Plus an internal `github_username_seen_at` that the API never
+  returns. See Authentication, "Profile ownership".
 - **Routes** (`backend/src/routes.js`). Everything that shows or changes devs needs a session
   token (see Authentication); only `/auth/*` is public.
   - `GET /devs` — list all devs (`DevController.index`, session token required)
@@ -58,7 +61,10 @@ Three layers, one shared backend:
   |---|---|---|---|
   | `new-dev` | `POST /devs` created a dev | its position and techs | the dev |
   | `dev-updated` | `PUT /devs/me` succeeded | the **new** position and techs (Q4) | the updated dev |
-  | `dev-deleted` | `DELETE /devs/me` succeeded | the last position and techs | `{ _id, github_username }` only |
+  | `dev-updated` | a dev's login was refreshed (its owner renamed on GitHub, then signed in or registered again) | its position and techs | the dev |
+  | `dev-deleted` | `DELETE /devs/me` succeeded | the last position and techs | `{ _id, github_id, github_username }` only |
+
+  Events are sent from `services/devEvents.js`.
 - **External dependency:** GitHub is only called during sign-in (OAuth token
   exchange, then `GET https://api.github.com/user` with the user's access
   token). Registration makes no GitHub call, so the unauthenticated 60 req/hr
@@ -86,10 +92,12 @@ Three layers, one shared backend:
 
 ## Authentication
 
-GitHub sign-in, per `dev/docs/03-auth-spec.md`. **Status (slices 1-5):** the auth endpoints,
-the `requireAuth` middleware, web sign-in with profile update/delete (US-6), mobile sign-in
-with live marker updates (US-7) and the own-profile routes (US-4) exist, and the spec's access
-matrix is enforced. Slice 6 (legacy verification, closure) remains.
+GitHub sign-in, per `dev/docs/03-auth-spec.md` (delivered; BUG-006 closed). Everything that
+shows or changes devs needs a session token; only `/auth/*` is public. A user is a **GitHub
+account, identified by its numeric id** (GitHub `GET /user` `id`, auth spec Q10), never by its
+login: logins can be renamed and later registered by someone else. The login is display data,
+refreshed from GitHub at every sign-in, and is how a legacy profile (created before sign-in
+existed) is found (Q5, US-8).
 
 | Surface | Auth | Where |
 |---|---|---|
@@ -114,30 +122,50 @@ matrix is enforced. Slice 6 (legacy verification, closure) remains.
   2. `GET /auth/github/callback?code&state`: a missing, unknown, expired or reused `state`
      answers 400 JSON (the client's redirect is not known yet). Otherwise the state is
      consumed and the browser always goes back to the client with a 302:
-     - success: exchanges `code` at GitHub, reads `GET https://api.github.com/user` (login and
-       public profile), drops the GitHub access token, then `<redirect>?code=<one-time code>`
-       (single use, 60 s, carries the challenge and the sanitized profile);
+     - success: exchanges `code` at GitHub, reads `GET https://api.github.com/user` (account
+       `id`, login and public profile), drops the GitHub access token, then
+       `<redirect>?code=<one-time code>` (single use, 60 s, carries the challenge, the id, the
+       login and the sanitized profile);
      - `error=access_denied`: `<redirect>?error=sign_in_cancelled`;
      - any other failure: `<redirect>?error=sign_in_failed&reason=<reason>`, where `reason` is
        `github_error` (another GitHub `error`), `github_code_missing`, `github_unavailable`
-       (GitHub rejected the code, 5xx or unreachable) or `github_rate_limited`.
+       (GitHub rejected the code, 5xx or unreachable), `github_rate_limited`, or
+       `github_user_invalid` (`GET /user` answered without a valid `id`, a positive safe integer
+       given as a JSON number, or without a valid login).
   3. `POST /auth/token` `{ code, code_verifier }`: consumes the one-time code first, then
      checks `BASE64URL(SHA256(code_verifier))` against the stored challenge with a
      timing-safe compare. A missing or wrong verifier is a 400 and the code is spent (sign in
-     again). On success: `{ token, token_type: "Bearer", expires_in, user: { github_username,
-     name, avatar_url } }`. The session token never appears in a URL.
-  4. `GET /auth/me` (Bearer token): `{ github_username, name, avatar_url }`, answered from the
-     token alone (no database or GitHub call). Clients call it on load to show who is signed in.
-- **Session token** (`utils/sessionToken.js`): HS256 JWT signed with `JWT_SECRET`,
-  `sub` = GitHub login, `iss` = `devradar`, `exp` = 7 days, no refresh token, and a required
-  `profile` claim `{ name, avatar_url, bio }` (see "Registration identity and profile" below).
-  A token without a well-formed `profile` claim, including any token issued by slice 1, is
-  `token_invalid`, so those clients sign in again.
+     again). On success: `{ token, token_type: "Bearer", expires_in, user: { github_id,
+     github_username, name, avatar_url } }`. The session token never appears in a URL. If the
+     account already owns a dev, its login is refreshed now (see "Profile ownership").
+  4. `GET /auth/me` (Bearer token): `{ github_id, github_username, name, avatar_url }`, answered
+     from the token alone (no database or GitHub call). Clients call it on load to show who is
+     signed in.
+- **Session token** (`utils/sessionToken.js`, `utils/githubId.js`): HS256 JWT signed with
+  `JWT_SECRET`, `iss` = `devradar`, `exp` = 7 days, no refresh token. Claims, all required:
+  - `sub` = the GitHub account id as a decimal string (`"810438"`). Only the canonical form is
+    accepted: digits, no sign, no leading zero, no exponent, at most `Number.MAX_SAFE_INTEGER`.
+  - `login` = the GitHub login at sign-in.
+  - `profile` = `{ name, avatar_url, bio }` (see "Registration profile" below).
+  - `iat`, which orders an account's sessions (see "Profile ownership", login refresh).
+
+  **Why `sub` = the id:** the subject is what the token identifies, and RFC 7519 asks that it be
+  unique and never reassigned, which is true of GitHub's id and exactly what is false of a login.
+  Every check that decides whose profile a request may touch reads the subject. The alternative,
+  keeping `sub` = login and adding a `gid` claim, would leave the reassignable value in the slot
+  every JWT library and reader treats as the identity, and an old token (no `gid`) could still
+  look complete.
+
+  **Tokens issued before ids were captured** (their `sub` is a login, and they have no `login`
+  claim) are `token_invalid`, like any other token without a well-formed claim set (e.g. the
+  earliest tokens, without `profile`). Their clients get the signed-out view and sign in again once. Tokens
+  live at most 7 days, so this costs each user one sign-in and no migration.
   `verifySessionToken(token)` never throws and is exported for the Socket.io handshake
   (also re-exported as `verifyToken` from `middleware/auth.js`).
 - **`requireAuth`** (`middleware/auth.js`): reads `Authorization: Bearer <token>`, sets
-  `req.user = { github_username, profile }`, or answers 401 with a `WWW-Authenticate` header and
-  `{ error, code, details }`. Clients switch on `code`:
+  `req.user = { github_id, github_username, profile, issued_at }` (`issued_at` = the token's
+  `iat`), or answers 401 with a `WWW-Authenticate` header and `{ error, code, details }`. Clients
+  switch on `code`:
   `token_missing`, `token_expired` (show "Session expired, sign in again"), `token_invalid`.
   The signature is checked before expiry, so a forged expired token is `token_invalid`.
   A token in the query string is ignored (`token_missing`). `GET /search` checks the token
@@ -163,29 +191,80 @@ matrix is enforced. Slice 6 (legacy verification, closure) remains.
   `connection`, a refused client is never added to `connections` (BUG-010) and never receives a
   push. socket.io-client does not auto-reconnect after a middleware refusal, so clients do not
   loop. `connectTimeout` is 10 s (default 45 s), so a client that ignores the refusal and never
-  joins is disconnected within 10 s. `socket.data.user` holds the identity for later use.
+  joins is disconnected within 10 s. `socket.data.user` holds the identity for later use (the
+  same shape as `req.user`). A token issued before ids were captured is refused as
+  `token_invalid`, like on HTTP.
   - **Checked on connect only (Q6):** an open socket is not closed when its token expires. If
     it reconnects later (network drop, backend restart), the handshake runs again and an
     expired token is refused as `token_expired`.
   - **CORS:** `allowRequest` (browser `Origin` allow-list, `config/cors.js`) runs at the
     Engine.IO level before the middleware, so a disallowed origin is refused even with a valid
     token; requests without an `Origin` (native mobile) are unaffected.
-- **Registration identity and profile** (US-3, `DevController.store`, `utils/githubProfile.js`).
-  `POST /devs` uses `requireAuth`. The dev is `req.user.github_username`; a `github_username` in
-  the body is ignored (Q9) and not validated, and techs/latitude/longitude are validated as
-  before (400 `{ error, details }`). An existing dev, matched case-insensitively (including a
-  legacy profile created before sign-in in another letter case, US-8), is returned unchanged; a
-  new one is created and pushed as `new-dev` as before.
-  - **One dev per login, also under concurrency** (QA-AUTH2-1): `Dev` has a unique index on
-    `github_username` with collation `{ locale: 'en', strength: 2 }` (`github_username_unique_ci`,
-    the same collation every query uses, `GITHUB_USERNAME_COLLATION` in `utils/githubUsername.js`).
-    `store` creates the dev with one atomic `findOneAndUpdate` upsert (`$setOnInsert`) under that
-    collation. If two inserts still race, the index rejects the loser with a duplicate-key error
-    (E11000), which is answered with the existing dev like any "already registered" request,
-    never a 500. Only the request that actually inserted pushes `new-dev`. `index.js` builds the
-    indexes at startup (`Dev.init()`); if legacy duplicates (same login in different letter
-    case) prevent the unique index, it logs an error and keeps running without the guarantee
-    until they are merged.
+- **Profile ownership** (Q5, Q10, US-8; `services/devOwnership.js`). One helper,
+  `resolveOwnDev`, decides which dev is the signed-in user's, for `POST /devs` and every
+  `/devs/me` route. For `req.user = { github_id, github_username }`:
+  1. **Own:** a dev with `github_id` equal to the user's. It is theirs.
+  2. **Legacy:** otherwise, a dev **without** a `github_id` whose login matches the user's
+     case-insensitively (created before sign-in existed). Its owner **claims** it on their first
+     write (`POST`, `PUT` or `DELETE`): one conditional update sets `github_id` only if it is still
+     absent (`{ _id, github_id: { $exists: false } }`), so of two accounts claiming at once
+     exactly one wins; the loser looks again and finds rule 3 (no 500). The claim keeps the
+     record: same `_id`, techs, location, name, bio and avatar (a `PUT` then changes what it
+     always changes). **`GET /devs/me` does not claim:** it returns the legacy dev as it is and
+     writes nothing. A read stays a read (the web app calls it on every load), and the claim
+     happens on the first write anyway.
+  3. **Conflict:** otherwise, a dev with **another** `github_id` but the same login: that
+     account renamed itself on GitHub and has not signed in to DevRadar since, and GitHub then
+     gave the login to this user. It is **never** theirs. `GET`/`PUT`/`DELETE /devs/me` answer
+     404 `dev_not_found` (exactly as if there were no dev, revealing nothing), and `POST /devs`
+     answers **409 `github_username_conflict`**, without touching the other dev.
+  4. **None:** otherwise. `GET`/`PUT`/`DELETE` answer 404; `POST` creates a dev with the user's
+     `github_id`.
+
+  - **Why 409 on `POST` for a renamed login:** the unique login index cannot hold a second dev
+    with that login, and the only alternatives change another person's data (rename or delete
+    their dev) on the word of someone else's session. Instead the conflict resolves itself as
+    soon as the previous owner signs in under their new login: completing a sign-in
+    (`POST /auth/token`) refreshes the login of the account's own dev, which frees the old login
+    (no GitHub call for anyone else). Until then the new holder gets a clear 409 explaining
+    that. Accepted: if the previous owner never signs in again, the login stays taken; freeing it
+    without their sign-in would need either a GitHub lookup of another user's account (ruled
+    out) or a login index that tolerates duplicates among owned devs (a partial index, which an
+    existing deployment could only switch to by dropping the current one). The same rules cover
+    a stale token: someone who renamed away keeps a valid token with their old login for up to 7
+    days, and with it still reaches only their own dev (by id), or gets 404/409 for the dev of the
+    login's new holder.
+  - **Login refresh:** the login of an own dev follows the account. It is refreshed on every
+    sign-in (`POST /auth/token`, best effort: a failure is logged and never fails the sign-in)
+    and on every `POST`/`PUT` by the owner, including a change of letter case. A refresh that
+    changes the login announces `dev-updated`. It is skipped when another dev still holds the
+    new login (that dev is never touched), and **never goes back to an older session's login**:
+    the dev stores when the session that set its login began (`github_username_seen_at`, the
+    token's `iat`, never sent to clients), and a session that began earlier cannot change it. So
+    a 7-day-old token from before a rename cannot put the old login back and block its new
+    holder.
+  - **Indexes, one dev per account and per login** (QA-AUTH2-1, Q10): `github_id_unique`, unique
+    and **partial** (`partialFilterExpression: { github_id: { $exists: true } }`), so legacy devs
+    are not in it at all and it always builds without touching a document; and
+    `github_username_unique_ci`, unique with collation `{ locale: 'en', strength: 2 }` (the same
+    collation every login query uses, `GITHUB_USERNAME_COLLATION` in `utils/githubUsername.js`).
+    `POST /devs` creates the dev with one atomic `findOneAndUpdate` upsert on `github_id`
+    (`$setOnInsert`). If an insert still loses a race (same account on another instance, or
+    another account with the same login), the index answers a duplicate-key error (E11000) and
+    the request resolves ownership again: the existing dev, or the 409. Never a 500, and only the
+    request that inserted pushes `new-dev`. `index.js` builds the indexes at startup
+    (`Dev.init()`); if legacy duplicates (same login in different letter case) prevent the login
+    index, it logs an error and keeps running without that guarantee until they are merged
+    (mongoose still builds the other indexes).
+  - **No data migration** (US-8): deploying adds the `github_id` index (legacy documents are not
+    in it) and rewrites nothing; legacy devs stay listed in `GET /devs` and `GET /search` and get
+    a `github_id` only when their owner first writes. Guarded by `legacy-profiles.feature`
+    ("Deploying onto a database with legacy profiles rewrites no document").
+- **Registration** (US-3, `DevController.store`, `utils/githubProfile.js`). `POST /devs` uses
+  `requireAuth`. A `github_username` (or any identity field) in the body is ignored (Q9) and not
+  validated; techs/latitude/longitude are validated as before (400 `{ error, details }`). An
+  existing or claimed dev is returned unchanged apart from its login refresh; a new one is
+  created from the sign-in profile and pushed as `new-dev`.
   - **Profile source:** the authenticated `GET /user` response read in the callback (product
     owner decision). It is sanitized and signed into the session token as the `profile` claim:
     C0/C1 controls, line/paragraph separators and every Unicode Bidi_Control character
@@ -195,9 +274,10 @@ matrix is enforced. Slice 6 (legacy verification, closure) remains.
     code points and 400 bytes (bytes of the JSON-encoded UTF-8, so emoji and escaped quotes
     count fully); `avatar_url` is kept only if it is an absolute `https` URL without
     credentials, at most 300 bytes; every other field is dropped.
-  - **Token size:** with those caps the largest possible session token is about 1.5 KB (about
-    1,480 bytes at most, measured with a 39-character login and every field filled with the most expensive
-    characters; a typical one is about 340), well under the 2048-byte value limit of
+  - **Token size:** with those caps the largest possible session token is about 1.5 KB (1,497
+    bytes at most, measured with the largest GitHub id, a 39-character login and every field
+    filled with the most expensive characters; a typical one is about 360), well under the
+    2048-byte value limit of
     `expo-secure-store` the mobile app stores it in. `unit/sessionToken.test.js` pins
     it under 1600 bytes. Verification rejects a `profile` claim that is not exactly
     this shape, so it cannot carry anything the backend did not produce. A `null` name falls
@@ -211,16 +291,16 @@ matrix is enforced. Slice 6 (legacy verification, closure) remains.
   - **Snapshot as of sign-in:** a name, avatar or bio changed on GitHub after sign-in only shows
     up after the next sign-in (up to 7 days later), in a new profile or on the next
     `PUT /devs/me`, which refreshes them from the token. `POST /devs` returns an existing dev
-    unchanged.
+    unchanged (apart from its login).
   - **No GitHub call at registration:** the old unauthenticated `GET /users/:username` lookup
     and its 404/503/502 mapping are removed, so registration is not subject to GitHub's 60
     req/hr limit or outages. `qa/backend-tests` fails any scenario that calls
     `api.github.com/users/*`.
-- **Own profile** (US-4, BUG-008, slice 5; `DevController.show`/`update`/`destroy`). The dev is
-  always `req.user.github_username`, matched with the same case-insensitive collation as
-  registration, so a legacy profile in another letter case is the user's (US-8, Q5). The routes
-  take no username or id, so nobody can reach another user's profile; they are registered before
-  any `/devs/:param` route could be (none exists: `PUT /devs/bob` is a JSON 404 `not_found`).
+- **Own profile** (US-4, BUG-008; `DevController.show`/`update`/`destroy`). The dev is the
+  signed-in account's, by the ownership rules above (own by `github_id`; a legacy dev by login in
+  any letter case, claimed by `PUT`/`DELETE`; never a dev of another account). The routes take no
+  username or id, so nobody can reach another user's profile; they are registered before any
+  `/devs/:param` route could be (none exists: `PUT /devs/bob` is a JSON 404 `not_found`).
   Errors use `{ error, code, details }`, except the 400s, which are exactly `POST /devs`'s
   `{ error, details }`.
   - `GET /devs/me`: 200 with the dev, or 404 `dev_not_found`. Added so clients can tell
@@ -231,47 +311,55 @@ matrix is enforced. Slice 6 (legacy verification, closure) remains.
     later without breaking clients. One atomic `findOneAndUpdate` **without upsert**: a dev deleted
     by a concurrent `DELETE` stays deleted and the update answers 404. **Name, avatar and bio are
     refreshed** from the token's sign-in `profile` claim (already sanitized, a null name falls
-    back to the login), so signing in again and saving picks up GitHub changes. Everything else in
-    the body is ignored (Q9: `github_username`, `_id`, `name`, `avatar_url`, `bio`, `location`);
-    the stored `github_username` keeps its letter case. 200 with the updated dev, or 404
+    back to the login), so signing in again and saving picks up GitHub changes; so is the login
+    (see "Login refresh"). Everything else in the body is ignored (Q9: `github_username`,
+    `github_id`, `_id`, `name`, `avatar_url`, `bio`, `location`). 200 with the updated dev, or 404
     `dev_not_found` (nothing is created). Then `dev-updated` goes to the sockets matching the new
     position and techs (Q4), never `new-dev`.
   - `DELETE /devs/me`: hard delete (Q7, `findOneAndDelete`), **204** with no body. Without a
     profile, **404 `dev_not_found`**, also for a repeated delete: consistent with `PUT` and
     `GET /devs/me`, and the client can still tell "already gone" apart (the web app treats a 404
     on delete as done). Afterwards the dev is absent from `GET /devs` and `GET /search`, and
-    `POST /devs` registers the user again. Then `dev-deleted` with only `{ _id, github_username }`
-    (nothing else about a deleted profile is sent) goes to the sockets matching its last position
+    `POST /devs` registers the user again. Then `dev-deleted` with only
+    `{ _id, github_id, github_username }` (nothing else about a deleted profile is sent; a deleted
+    legacy dev was claimed first, so it has a `github_id`) goes to the sockets matching its last position
     and techs, so maps drop the marker without a new search.
   - **Stale markers (accepted):** `dev-updated` follows the new position and techs only (Q4), so a
     map that only matched the old ones keeps the old marker until its next search. Fixing it
     would mean a second event (e.g. `dev-deleted`) to the old-only sockets; not in the spec.
   - Legacy duplicates (same login in another letter case, possible only if the unique index
-    could not be built, see `index.js`) are not merged: `PUT` and `DELETE` act on one of them.
-  - **Writes are serialized per login** (QA-AUTH5 review; `utils/keyedQueue.js`). `POST /devs`,
-    `PUT` and `DELETE /devs/me` run their database write *and* its socket announcement inside a
-    per-login queue (key: the login in lower case), one at a time in arrival order. Without it a
-    `PUT` whose database reply was slow could announce `dev-updated` after a later `DELETE` had
-    announced `dev-deleted`, and mobile re-added the deleted marker (same for PUT/PUT and
-    POST/DELETE). Different logins never wait for each other, and a key is dropped as soon as its
-    last task settles. The queue is in process memory, which matches the single-instance
-    assumption below; several instances would need a shared lock or per-dev versions on the events.
+    could not be built, see `index.js`) are not merged: the first claim takes one of them.
+  - **Writes are serialized per GitHub account** (QA-AUTH5 review; `utils/keyedQueue.js`).
+    `POST /devs`, `PUT` and `DELETE /devs/me`, and the login refresh at sign-in, run their
+    database writes *and* their socket announcement inside a per-account queue (key: the
+    `github_id`), one at a time in arrival order. Without it a `PUT` whose database reply was slow
+    could announce `dev-updated` after a later `DELETE` had announced `dev-deleted`, and mobile
+    re-added the deleted marker (same for PUT/PUT and POST/DELETE). The key is the account, not
+    the login: it is what owns a dev, it does not change on a rename, and two sessions of one
+    account with different logins (before and after a rename) share it. Ordering still holds for
+    every dev, because only its owner ever writes it (rule 1), or the one account that wins its
+    claim (rule 2; a losing claimant writes nothing). Different accounts never wait for each
+    other, and a key is dropped as soon as its last task settles. The queue is in process memory,
+    which matches the single-instance assumption below; several instances would need a shared lock
+    or per-dev versions on the events.
   - **Push amplification limits** (QA-AUTH5 review): each change is pushed to every matching
-    socket, so `PUT`/`DELETE /devs/me` are rate limited **per GitHub login** (not per IP, so an
-    account cannot spread changes over addresses and users behind one NAT do not share a budget):
+    socket, so `PUT`/`DELETE /devs/me` are rate limited **per GitHub account** (`github_id`; not
+    per IP, so an account cannot spread changes over addresses and users behind one NAT do not
+    share a budget; not per login, so a rename does not reset it):
     `PROFILE_RATE_LIMIT_MAX`, default 30 per 15 minutes, then 429 `rate_limited`. And `techs`
     (`POST /devs` and `PUT /devs/me`, `utils/validateDevInput.js`) is capped at **30 entries of at
     most 50 characters** each (counted after trimming and dropping empty entries; characters are
     code points), else 400 with "techs must list at most 30 technologies (got N)" / "each tech
     must be at most 50 characters". `GET /devs/me` and `POST /devs` are not rate limited (a
-    `POST` for an existing dev changes and announces nothing).
+    `POST` for an existing dev changes and announces nothing, apart from a login refresh).
 
   | Status | `code` | When |
   |---|---|---|
-  | 400 | (none, `{ error, details }`) | `PUT /devs/me` techs/latitude/longitude missing or invalid, or techs over the caps |
-  | 401 | `token_missing`, `token_expired`, `token_invalid` | `requireAuth` |
-  | 404 | `dev_not_found` | `GET`/`PUT`/`DELETE /devs/me` without a profile |
-  | 429 | `rate_limited` | `PUT`/`DELETE /devs/me` over `PROFILE_RATE_LIMIT_MAX` for this login |
+  | 400 | (none, `{ error, details }`) | `POST /devs` / `PUT /devs/me` techs/latitude/longitude missing or invalid, or techs over the caps |
+  | 401 | `token_missing`, `token_expired`, `token_invalid` | `requireAuth` (also a token issued before GitHub ids were captured) |
+  | 404 | `dev_not_found` | `GET`/`PUT`/`DELETE /devs/me` without a profile of this account (including when only another account's dev has this login) |
+  | 409 | `github_username_conflict` | `POST /devs` while another account's dev still holds this login (rule 3) |
+  | 429 | `rate_limited` | `PUT`/`DELETE /devs/me` over `PROFILE_RATE_LIMIT_MAX` for this account |
 - **JSON error codes** on `/auth/*` (body `{ error, code, details }`):
 
   | Status | `code` | When |
@@ -292,7 +380,7 @@ matrix is enforced. Slice 6 (legacy verification, closure) remains.
   sign-in (`GET /auth/github`, the callback, `POST /auth/token`): `AUTH_RATE_LIMIT_MAX`,
   default 60 (a sign-in uses 3); session checks (`GET /auth/me`, called on every client
   load): `AUTH_SESSION_RATE_LIMIT_MAX`, default 600. A third limiter is keyed on the signed-in
-  login instead of the IP: profile changes (`PUT`/`DELETE /devs/me`, after `requireAuth`):
+  GitHub account (`github_id`) instead of the IP: profile changes (`PUT`/`DELETE /devs/me`, after `requireAuth`):
   `PROFILE_RATE_LIMIT_MAX`, default 30 (see "Own profile").
 - **Config** (`config/auth.js`, read from env on each use): `GITHUB_CLIENT_ID`,
   `GITHUB_CLIENT_SECRET`, `GITHUB_CALLBACK_URL` (default
@@ -310,7 +398,7 @@ matrix is enforced. Slice 6 (legacy verification, closure) remains.
   redirects, and startup logs a warning that does not print the value. It must equal the
   mobile app's scheme (see Mobile, "App scheme").
 - **Single-instance limitation:** the `state` store, the one-time code store
-  (`utils/oneTimeStore.js`), the rate-limit counters and the per-login write queue
+  (`utils/oneTimeStore.js`), the rate-limit counters and the per-account write queue
   (`utils/keyedQueue.js`) live in process memory. Running more
   than one backend instance needs sticky sessions or a shared store (e.g. Redis) first.
 
@@ -333,7 +421,9 @@ matrix is enforced. Slice 6 (legacy verification, closure) remains.
   the signed-out view (no security impact). Every request times out after
   10 s (`REQUEST_TIMEOUT_MS`) and then fails like an unreachable server, so a
   hung `GET /auth/me` shows the "unavailable" view (below), not "Carregando..."
-  forever. `GET /devs` needs the token since slice 4.
+  forever. A stored token from before GitHub ids were captured gets a 401
+  `token_invalid` on the first `GET /auth/me`, so the app shows the signed-out
+  view (no message) and the user signs in again once.
 - Talks to the same `/devs` and `/search` endpoints as mobile, plus the
   `/auth/*` endpoints and `GET`/`PUT`/`DELETE /devs/me`; no web-specific backend routes exist. Nothing secret is
   in the bundle: only `REACT_APP_API_URL`.
@@ -371,15 +461,17 @@ matrix is enforced. Slice 6 (legacy verification, closure) remains.
   and avatar (from `POST /auth/token`, then `GET /auth/me` on every load), "Sair", the
   registration form without a username field, and the dev list. "Salvar" is disabled while a
   registration is in flight (QA-AUTH2-1).
-- **Own profile** (US-6 "Already registered", slice 5; `App.js`, `components/DevForm`). After
+- **Own profile** (US-6 "Already registered"; `App.js`, `components/DevForm`). After
   sign-in the app asks `GET /devs/me` (in parallel with `GET /devs`; the form waits with
   "Carregando seu perfil..."). 404: the registration form ("Cadastro", "Salvar", location from
   the browser). A profile: "Meu perfil", the form prefilled with the saved techs ("ReactJS,
   Redux") and saved coordinates (the browser's position is not asked for), "Atualizar"
   (`PUT /devs/me`) and "Excluir meu perfil". Deleting needs an in-page confirmation ("Confirmar
   exclusão" / "Cancelar"), never `window.confirm`, which blocks the page and browser automation.
-  After a save the list entry is replaced (matched by `_id` or by login in any letter case, so a
-  profile deleted and registered again elsewhere is not listed twice; or appended) and the form
+  After a save the list entry is replaced (`services/devList.js`: matched by `_id`, else by
+  `github_id` when both entries have one, else by login in any letter case for a legacy entry;
+  so a profile deleted and registered again elsewhere is not listed twice, and two accounts that
+  show the same login are never merged; or appended) and the form
   is remounted with the saved values ("Perfil atualizado"; registering also switches to update
   mode); after a delete the entry leaves the list and the form returns to registration ("Perfil
   excluído"). Every button is disabled while a save or delete is in flight. Coordinates are
@@ -490,36 +582,47 @@ matrix is enforced. Slice 6 (legacy verification, closure) remains.
   novamente". A second "Entrar com GitHub" tap during a sign-in is ignored.
 - **"Sair"** closes the socket, forgets its token and deletes the token from secure storage.
   Like the web, there is no server-side revocation.
-- **Live markers** (US-7 "Live profile update", slice 5; `pages/Main.js`, `services/devList.js`,
+- **Live markers** (US-7 "Live profile update"; `pages/Main.js`, `services/devList.js`,
   `services/socket.js`). The map subscribes once per event for its lifetime (`new-dev`,
   `dev-updated`, `dev-deleted`; one listener each, removed on unmount). `new-dev` and
   `dev-updated` replace the dev's entry in place, so its marker (keyed by `_id`) moves and its
   callout updates without a new search, or add it if it is not on the map (the backend only sends
   devs that match this map's subscription). `dev-deleted` removes it. A dev is the same entry by
-  `_id` or by `github_username` in any letter case (a dev deleted and registered again has a new
-  `_id`). A push without a usable `location.coordinates` or `techs` is ignored. Mobile has no
+  `_id`; else, when both have one, by `github_id` (a dev deleted and registered again has a new
+  `_id` but the same account; a renamed dev keeps its account); else, for a legacy entry without
+  an id, by `github_username` in any letter case. Two accounts that show the same login (one
+  renamed away) are never merged. A push without a usable `location.coordinates` or `techs` is
+  ignored. A stored token from before GitHub ids were captured gets `token_invalid` on launch, so
+  the app shows the sign-in screen ("Sua sessão não é mais válida, entre novamente"). Mobile has no
   registration or profile editing screen.
 
 ## Data flow: registering a dev and seeing it live elsewhere
 
 1. A signed-in client (web; mobile has no registration screen) submits `POST /devs` with its
    session token and `techs`, `latitude`, `longitude`.
-2. Backend takes the GitHub login from the token and checks if that dev
-   already exists (case-insensitive); if not, builds the dev from the profile
-   captured at sign-in (no GitHub call), turns the submitted lat/long into a
-   GeoJSON point, and persists the `Dev`.
+2. Backend takes the GitHub account (id and login) from the token and looks
+   for its dev (by `github_id`, or a legacy dev by login, which it claims); if
+   there is none, builds the dev from the profile captured at sign-in (no
+   GitHub call), turns the submitted lat/long into a GeoJSON point, and
+   persists the `Dev` with the account's `github_id`.
 3. Backend computes which currently-connected sockets have a search radius
    and tech filter that the new dev matches, and emits `new-dev` to just
    those sockets.
 4. Any signed-in client with an open socket connection whose filters match sees the
    new dev appear on their map without polling or refreshing.
 
-Updating and deleting (slice 5) follow the same path: the web app sends `PUT /devs/me` or
-`DELETE /devs/me`, the backend changes the token user's dev, then emits `dev-updated` (to the
+Updating and deleting follow the same path: the web app sends `PUT /devs/me` or
+`DELETE /devs/me`, the backend changes the token account's dev, then emits `dev-updated` (to the
 sockets matching the new position and techs) or `dev-deleted` (to those matching the last ones),
 and the mobile map moves or removes the marker.
 
 ## Known architectural constraints worth designing around
+
+- **A renamed login stays on its old profile until its owner signs in again.** DevRadar never
+  asks GitHub about other users, so a dev whose owner renamed their GitHub account keeps showing
+  the old login (and its profile link points to whoever holds that login now) until the owner
+  signs in or saves. Meanwhile the login's new holder cannot register (409
+  `github_username_conflict`), but can never read or change that dev either.
 
 - **Socket identity is checked once.** The socket handshake verifies the token, but an open
   socket keeps receiving pushes after its token expires (Q6), and nothing server-side ends it

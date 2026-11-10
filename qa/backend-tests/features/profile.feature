@@ -8,7 +8,8 @@ Feature: Update and delete my own developer profile (US-4, BUG-008)
   #   PUT    /devs/me  techs, latitude and longitude, all required, validated like POST /devs;
   #                    name/avatar/bio refreshed from the token's sign-in profile; 404 without a profile
   #   DELETE /devs/me  hard delete, 204; 404 dev_not_found without a profile (also on a repeat)
-  # The dev is always the session token's login (case-insensitive match, US-8); the body never
+  # The dev is always the session token's GitHub account (by id since auth slice 6; a legacy dev
+  # without one by login, case-insensitively, US-8; see legacy-profiles.feature); the body never
   # chooses whose profile changes. Live pushes: dev-updated to subscribers matching the NEW
   # position and techs (Q4), never new-dev; dev-deleted ({ _id, github_username } only) to
   # subscribers matching the last position and techs.
@@ -175,16 +176,19 @@ Feature: Update and delete my own developer profile (US-4, BUG-008)
     And the stored developer "bob" should have bio "seed fixture"
     And the database should contain exactly 2 developers
 
-  # US-8 / Q5: a legacy profile in another letter case belongs to the same GitHub login. Its
-  # stored github_username keeps its letter case.
+  # US-8 / Q5: a legacy profile in another letter case belongs to the same GitHub login. The update
+  # claims it for the signed-in GitHub account (Q10, auth slice 6), and its stored
+  # github_username becomes the login as GitHub spells it now (the login is display data,
+  # refreshed from the owner's session). More in legacy-profiles.feature.
   @regression @P1
   Scenario Outline: The owner of a legacy profile in another letter case can update it
     Given a developer already exists with github_username "<legacy username>" and techs "Node.js"
     And I am signed in as "<github login>"
     When I update my profile with techs "Go", latitude "-22.9068" and longitude "-43.1729"
     Then the response status should be 200
-    And the registered developer should be "<legacy username>"
-    And the stored developer "<legacy username>" should have techs "Go"
+    And the registered developer should be "<github login>"
+    And the stored developer "<github login>" should have techs "Go"
+    And the stored developer "<github login>" should belong to the GitHub account of "<github login>"
     And the database should contain exactly 1 developer
 
     Examples:
@@ -390,7 +394,7 @@ Feature: Update and delete my own developer profile (US-4, BUG-008)
     When I delete my profile
     Then the response status should be 204
     And client "nearby" should receive a "dev-deleted" event within 2 seconds
-    And the "dev-deleted" event for "nearby" should only carry the _id and github_username "gaearon"
+    And the "dev-deleted" event for "nearby" should only carry the _id, github_id and github_username "gaearon"
     And client "far" should receive exactly 0 "dev-deleted" events within 1 seconds
     And client "other-techs" should receive exactly 0 "dev-deleted" events within 1 seconds
 

@@ -18,9 +18,9 @@ const CORS_HEADERS = {
 
 const isDevsList = (request) => request.method() === 'GET' && request.url() === `${BACKEND_URL}/devs`;
 
-/** @param {string} token @returns {string} the JWT's subject (GitHub login) */
+/** @param {string} token @returns {string} the JWT's `login` claim (the subject is the GitHub id since auth slice 6) */
 function loginOf(token) {
-  return JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8')).sub;
+  return JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8')).login;
 }
 
 // --- Given -------------------------------------------------------------------------------------

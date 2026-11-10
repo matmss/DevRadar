@@ -7,6 +7,7 @@ const request = require('supertest');
 const Dev = require('../../../../dev/backend/src/models/Dev');
 const DevController = require('../../../../dev/backend/src/controllers/DevController');
 const { withSession } = require('../support/session');
+const { githubIdFor } = require('../support/github-mock');
 
 const OBJECT_ID = /^[a-f\d]{24}$/;
 
@@ -217,8 +218,9 @@ Then('client {string} should have received {string} before {string}', async func
   expect(names()).to.deep.equal([first, second]);
 });
 
+// Writes are queued per GitHub account since auth slice 6 (the step name predates it).
 Then('no write should be queued for any login', function () {
-  expect(DevController.pendingWriteLogins()).to.equal(0);
+  expect(DevController.pendingWrites()).to.equal(0);
 });
 
 Then('the delete should be answered {int}', function (status) {
@@ -280,9 +282,10 @@ Then(
   }
 );
 
-Then('the {string} event for {string} should only carry the _id and github_username {string}', function (event, alias, username) {
+Then('the {string} event for {string} should only carry the _id, github_id and github_username {string}', function (event, alias, username) {
   const payload = onlyEvent(this, alias, event);
-  expect(Object.keys(payload).sort()).to.deep.equal(['_id', 'github_username']);
+  expect(Object.keys(payload).sort()).to.deep.equal(['_id', 'github_id', 'github_username']);
   expect(payload._id).to.match(OBJECT_ID);
+  expect(payload.github_id).to.equal(githubIdFor(username));
   expect(payload.github_username).to.equal(username);
 });
