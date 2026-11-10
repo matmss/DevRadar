@@ -82,11 +82,46 @@ Feature: Developer registration as the signed-in GitHub user (US-3)
 ```gherkin
 Feature: List all developers
 
+  Background:
+    Given I am signed in as "gaearon"
+
   Scenario: Listing developers returns everyone regardless of location
     Given 3 developers exist scattered across different cities
     When I request the list of all developers
     Then the response status should be 200
     And the response should contain 3 developers
+```
+
+## Feature: Reads and live updates require sign-in (Backend) — covers FR-2.1, FR-3.1, FR-4.1, US-5, Q6
+
+```gherkin
+Feature: Reading developers requires sign-in
+
+  Scenario Outline: Reading without a valid session token is rejected
+    Given I have <token>
+    When I call GET "/devs" or GET "/search?latitude=...&longitude=...&techs=ReactJS"
+    Then the response status should be 401 with code "<code>"
+    And no developer is revealed
+    Examples:
+      | token                                         | code          |
+      | no session token                              | token_missing |
+      | an expired session token                      | token_expired |
+      | a tampered/foreign-signed/alg-none/malformed token | token_invalid |
+
+  Scenario: A token in the query string is not accepted
+  Scenario: Search checks the session token before its parameters (401, not 400)
+  Scenario: A 401 to the web app's origin still carries the CORS header
+
+Feature: The live subscription requires sign-in
+
+  Scenario: A client with a valid session token is subscribed and receives new-dev
+  Scenario Outline: A handshake without, with an expired or with an invalid token is refused
+    Then the client gets connect_error with data.code token_missing / token_expired / token_invalid
+    And it is not connected and not in the server's subscriptions
+  Scenario: A token in the query string or an Authorization header is not accepted (token_missing)
+  Scenario: Authentication is checked before the subscription params
+  Scenario: Refused clients get no pushes, and the server keeps serving signed-in clients
+  Scenario: An open socket survives the expiry of its session token, a reconnect does not (Q6)
 ```
 
 ## Feature: Geospatial & Tech Search (Backend) — covers FR-3, NFR-1, NFR-2
@@ -179,12 +214,43 @@ Feature: Register as the signed-in developer from the web app
     Given 2 developers are already registered in the backend
     When I sign in
     Then the developer list should show 2 entries
+
+  # Auth slice 4 (GET /devs protected) and QA follow-ups from slice 3
+  Scenario: The developer list is requested with my session token
+  Scenario: A 401 on the developer list signs me out ("Sessão expirada, entre novamente")
+  Scenario: A 401 for a token another tab has replaced keeps the new session
+  Scenario: A session check that never answers shows the "unavailable" view instead of loading forever
+```
+
+## Feature: Mobile — Sign-in — covers FR-6.0, US-7
+
+```gherkin
+Feature: Sign in to the mobile app with GitHub
+
+  Scenario: Signed out, I see "Entrar com GitHub" instead of the map
+    Given the app has no stored session
+    When the app launches
+    Then I see the "Entrar com GitHub" screen and no map, no search and no location prompt
+
+  Scenario: Sign in lands on the map, and /search and the socket use my token
+    When I complete GitHub sign-in in the system auth session
+    Then I land on the map with my username and "Sair" in the header
+
+  Scenario: Closing the auth session shows "Login cancelado"
+  Scenario: The session survives a relaunch (token in expo-secure-store, not AsyncStorage)
+  Scenario: An auth failure from /search or the socket returns to sign-in with a message
+    ("Sessão expirada, entre novamente" when expired), not an empty map
+  Scenario: "Sair" clears the token and closes the socket
 ```
 
 ## Feature: Mobile — Map Search & Live Updates — covers FR-6
 
 ```gherkin
 Feature: Search and view developers on the map
+
+  # Since auth slice 4 every scenario here starts signed in (see "Mobile — Sign-in").
+  Background:
+    Given I am signed in with GitHub
 
   Scenario: App centers the map on the current device location
     Given location permission is granted

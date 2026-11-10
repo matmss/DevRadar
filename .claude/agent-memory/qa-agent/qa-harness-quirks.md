@@ -19,5 +19,11 @@ Added during the auth slices 2+3 review (2026-11-08):
 - Web suite: `npm test -- --reporter=list .features-gen/features/<name>.feature.spec.js` runs one generated file (pretest bddgen still runs). Failure page snapshots are in qa/web-tests/test-results/*/error-context.md (the ```yaml block). `test-results/.last-run.json` and `qa/reports/*` are tracked: `git checkout --` them before committing.
 - To fake a backend answer in Playwright (only when the real backend cannot produce it), page.route must also answer the CORS preflight (OPTIONS) and send Access-Control-Allow-Origin, or axios sees a network error and the test falsely passes through the "server unreachable" path.
 
+Added during the auth slice 4 review (2026-11-09):
+
+- No package-lock.json is checked in anywhere: `npm ci` fails, use `npm install` in dev/backend, dev/web, dev/mobile and qa (a fresh worktree has no node_modules at all; about 5 min total).
+- QA mobile Jest tests live in `qa/mobile-tests/unit/` (`npm run unit` there) and run with dev/mobile's jest binary + jest-expo via `unit/jest.config.js` (rootDir = dev/mobile). qa/node_modules has its own `axios` and `socket.io-client`, so that config pins them (and react) to dev/mobile/node_modules with moduleNameMapper; without it a `jest.mock('socket.io-client')` in a qa test silently mocks the wrong copy.
+- To check the web Playwright ports are free before a run (reuseExistingServer would silently test another worktree's server): `lsof -nP -iTCP -sTCP:LISTEN`. Port 5000 is macOS ControlCenter, not ours.
+
 **Why:** each cost a wasted run or produced a false pass.
 **How to apply:** use this when writing backend probes or log-assertion steps; see [[auth-review-findings]] if it is ever written.

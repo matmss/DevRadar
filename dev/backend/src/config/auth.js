@@ -4,7 +4,7 @@
 const crypto = require('crypto');
 
 const DEFAULT_GITHUB_CALLBACK_URL = 'http://localhost:3333/auth/github/callback';
-const DEFAULT_MOBILE_APP_SCHEME = 'devradar';
+const DEFAULT_MOBILE_APP_SCHEME = 'com.matmss.mobile'; // = dev/mobile/app.json "scheme"
 const MIN_PRODUCTION_SECRET_LENGTH = 32;
 
 // MOBILE_APP_SCHEME is an allow-list of shape (QA-AUTH-3): lowercase letters/digits, optionally
@@ -70,7 +70,7 @@ function jwtSecret() {
   return fallbackJwtSecret;
 }
 
-/** @returns {string} MOBILE_APP_SCHEME as configured (default "devradar"), lowercased, without "://" */
+/** @returns {string} MOBILE_APP_SCHEME as configured (default "com.matmss.mobile"), lowercased, without "://" */
 function configuredAppScheme() {
   const raw = process.env.MOBILE_APP_SCHEME === undefined
     ? DEFAULT_MOBILE_APP_SCHEME
@@ -87,7 +87,7 @@ function isAllowedAppScheme(scheme) {
 }
 
 /**
- * The custom URL scheme of the mobile app (e.g. "devradar" for devradar://...), allowed as a
+ * The custom URL scheme of the mobile app (e.g. "com.matmss.mobile" for com.matmss.mobile://...), allowed as a
  * post-login redirect target. Returns null (mobile redirects disabled) if it is empty, has
  * an invalid shape, or is a refused scheme.
  * @returns {string | null}

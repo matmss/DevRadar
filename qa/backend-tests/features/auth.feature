@@ -3,8 +3,9 @@ Feature: GitHub sign-in and session tokens (US-1, US-2; BUG-006 auth part)
   I want to sign in with my GitHub account and get a DevRadar session token
   So that the API knows who I am without trusting a username I type
 
-  # Spec: dev/docs/03-auth-spec.md. GET /auth/me and POST /devs (registration.feature) require
-  # a session token; the reads follow in slice 4. The token carries the GitHub profile read at
+  # Spec: dev/docs/03-auth-spec.md. GET /auth/me, POST /devs (registration.feature), GET /devs,
+  # GET /search (read-auth.feature) and the socket (realtime-auth.feature) require a session
+  # token. The token carries the GitHub profile read at
   # sign-in. GitHub's OAuth endpoints are mocked with nock (features/support/github-mock.js).
   # The backend runs with GITHUB_CLIENT_ID "test-client-id" and the default callback URL
   # (features/support/auth-config.js). Allowed redirects: the CORS origins + "devradar://".
@@ -31,6 +32,19 @@ Feature: GitHub sign-in and session tokens (US-1, US-2; BUG-006 auth part)
   Scenario: The mobile app scheme is an allowed redirect
     When I start GitHub sign-in with redirect "devradar://auth"
     Then I should be redirected to GitHub's authorize page
+
+  # Slice 4: the mobile app (dev/mobile, scheme "com.matmss.mobile" in app.json) signs in through
+  # its fixed redirect. With MOBILE_APP_SCHEME unset, the backend default must match it.
+  @smoke @P1
+  Scenario: The mobile app's sign-in redirect works with the default MOBILE_APP_SCHEME
+    Given the backend runs with the default MOBILE_APP_SCHEME
+    And GitHub will sign in "alice" for authorization code "mobile-code"
+    When I start GitHub sign-in with redirect "com.matmss.mobile://auth/callback"
+    And GitHub calls back with code "mobile-code" and the issued state
+    Then I should be redirected to "com.matmss.mobile://auth/callback" with a one-time code
+    When I exchange the one-time code for a session token
+    Then the response status should be 200
+    And the response should contain a Bearer session token for "alice" valid for 7 days
 
   @edge @regression @P1
   Scenario Outline: A redirect outside the allow-list is rejected
@@ -359,13 +373,18 @@ Feature: GitHub sign-in and session tokens (US-1, US-2; BUG-006 auth part)
 
   # --- Slice 1 scope and non-functional -----------------------------------------------------
 
-  # Slice 2 protects POST /devs (registration.feature); the reads follow in slice 4.
+  # Slice 2 protected POST /devs (registration.feature); slice 4 protects the reads and the
+  # socket (read-auth.feature, realtime-auth.feature). Only /auth/* stays public.
   @regression @P1
-  Scenario: Reads are not protected yet
+  Scenario: Reads are protected, sign-in is not
     When I request the list of all developers
-    Then the response status should be 200
+    Then the response status should be 401
+    And the response should be an auth error with code "token_missing"
     When I search at latitude "-23.5505", longitude "-46.6333" for techs "ReactJS"
-    Then the response status should be 200
+    Then the response status should be 401
+    And the response should be an auth error with code "token_missing"
+    When I start GitHub sign-in with redirect "http://localhost:3000/"
+    Then I should be redirected to GitHub's authorize page
 
   # Two limiters per IP per 15 min: sign-in (AUTH_RATE_LIMIT_MAX, default 60) for
   # /auth/github, the callback and /auth/token; session checks (AUTH_SESSION_RATE_LIMIT_MAX,

@@ -1,6 +1,7 @@
 const { createBdd } = require('playwright-bdd');
 const { expect } = require('@playwright/test');
 const { INTEGRATION_BACKEND_PORT } = require('../support/global-setup');
+const { inspectorAuthHeaders } = require('../support/auth-fixtures');
 
 const { Given, When, Then } = createBdd();
 
@@ -84,9 +85,10 @@ Then('the techs field should contain {string}', async function ({ page }, value)
   await expect(page.getByLabel('Tecnologias')).toHaveValue(value);
 });
 
-// Checked over the real HTTP API (GET /devs is public until slice 4).
+// Checked over the real HTTP API, signed in as a test-only inspector (GET /devs requires a
+// session token since auth slice 4).
 async function backendDevs() {
-  const res = await fetch(`${BACKEND_URL}/devs`);
+  const res = await fetch(`${BACKEND_URL}/devs`, { headers: inspectorAuthHeaders() });
   if (!res.ok) throw new Error(`Failed to list the backend's developers: ${res.status}`);
   return res.json();
 }

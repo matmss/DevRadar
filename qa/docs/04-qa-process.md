@@ -26,6 +26,8 @@ Defines how functional, regression, integration, and exploratory testing are run
 
 ## 3. Functional testing
 - Scope: one layer at a time, dependencies faked (GitHub API via `nock`/mock server, Mongo via `mongodb-memory-server`, browser geolocation mocked via Playwright, device location/permissions mocked via Detox).
+- **Authentication (since auth slice 4):** every route that shows or changes developers and the Socket.io handshake need a session token, so scenarios sign in first. Backend: `Given I am signed in as "<login>"` (test-only token, `backend-tests/features/support/session.js`) or `I signed in through GitHub as` (full mocked OAuth); socket steps connect "signed-in clients" with the token in the handshake `auth` payload. Web: `I am signed in with GitHub as` (real backend flow, GitHub faked); steps that inspect the backend over HTTP use a test-only inspector token (`web-tests/features/support/auth-fixtures.js`). Mobile: Jest mocks the native modules; Maestro flows that need the map sign in with a real GitHub test account (`mobile-tests/README.md`). Each protected surface also has explicit `@smoke`/`@regression` scenarios for the missing/expired/invalid token cases.
+- **Mobile unit tests** (`dev/tests/mobile/`, `npm test` in `dev/mobile`) cover the sign-in services and session handling; they are the fast feedback layer while Detox is blocked (BUG-009).
 - Entry criteria: feature code merged to branch; `.feature` file exists.
 - Exit criteria: all `@smoke` + relevant `@edge` scenarios pass; no P1 defect open against the feature.
 

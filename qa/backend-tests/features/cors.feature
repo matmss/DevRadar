@@ -4,6 +4,12 @@ Feature: Cross-origin access is limited to the DevRadar clients (BUG-006)
   So that arbitrary websites can't read or write developer data through a visitor's browser
 
   # Default allow-list (no CORS_ORIGINS set): http://localhost:3000 and http://localhost:8081.
+  # Since auth slice 4 reads and the socket also need a session token; these scenarios sign in,
+  # so they only exercise the origin check. read-auth.feature checks that a 401 still carries
+  # the CORS header for an allowed origin.
+
+  Background:
+    Given I am signed in as "gaearon"
 
   @regression @P2
   Scenario: The web app's origin is allowed
@@ -25,12 +31,13 @@ Feature: Cross-origin access is limited to the DevRadar clients (BUG-006)
     When I request the list of all developers
     Then the response status should be 200
 
+  # A valid session token does not get a disallowed origin past allowRequest.
   @integration @regression @edge @P2
   Scenario: A WebSocket handshake from an unknown browser origin is rejected
-    When a browser client at origin "https://evil.example" connects via WebSocket watching techs "ReactJS"
+    When a signed-in browser client at origin "https://evil.example" connects via WebSocket watching techs "ReactJS"
     Then that WebSocket connection should be refused
 
   @integration @regression @P2
   Scenario: A WebSocket handshake from the web app's origin is accepted
-    When a browser client at origin "http://localhost:3000" connects via WebSocket watching techs "ReactJS"
+    When a signed-in browser client at origin "http://localhost:3000" connects via WebSocket watching techs "ReactJS"
     Then that WebSocket connection should be accepted

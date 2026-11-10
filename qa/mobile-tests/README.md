@@ -46,4 +46,30 @@ npm run build:android && npm run test:android
 # Maestro (works today, no app changes)
 brew install maestro   # or: curl -Ls "https://get.maestro.mobile.dev" | bash
 npm run maestro
+
+# QA unit tests (Jest, no device; needs `npm install` in dev/mobile first)
+npm run unit
 ```
+
+`unit/` holds QA-owned Jest tests for the mobile app (e.g. race conditions found in review). They
+run with dev/mobile's own Jest and `jest-expo` preset through `unit/jest.config.js`, which also
+pins `axios`, `socket.io-client`, `react` and `react-test-renderer` to dev/mobile's copies (the qa
+workspace has its own `axios`/`socket.io-client`, and a `jest.mock` of the wrong copy would not
+mock the app's). DEV's own mobile unit tests are in `dev/tests/mobile/` (`npm test` in dev/mobile).
+
+## Sign-in (auth slice 4)
+
+The app shows "Entrar com GitHub" instead of the map until the user signs in (US-7), so:
+
+- `maestro/00-signed-out-screen.yaml` and `04-sign-in-cancelled.yaml` need only the installed
+  app (a development build, not Expo Go).
+- `01`, `02`, `03` and `05` sign in first through `maestro/subflows/sign-in-with-github.yaml`,
+  which uses the **real** GitHub sign-in page in the system auth session. They need the backend
+  running with a GitHub OAuth App configured and `MOBILE_APP_SCHEME=com.matmss.mobile`
+  (the default), reachable from the device at the app's `EXPO_PUBLIC_API_URL`, and a GitHub test
+  account without 2FA:
+  `maestro test -e GITHUB_TEST_LOGIN=... -e GITHUB_TEST_PASSWORD=... maestro/`
+- Not automated: an expired session (needs a token older than 7 days, or restart the backend
+  with another `JWT_SECRET` to see "Sua sessão não é mais válida, entre novamente" on the next
+  launch or search).
+- The Detox scenarios (`e2e/`) do not sign in yet; they are blocked by BUG-009 anyway.

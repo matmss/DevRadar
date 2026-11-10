@@ -26,10 +26,41 @@ function githubUserFixture(login) {
   };
 }
 
+// The login steps use to inspect the backend over its real HTTP API (GET /devs needs a session
+// token since auth slice 4). Never registered and never shown in the browser.
+const INSPECTOR_LOGIN = 'qa-inspector';
+
+/**
+ * A valid session token for `login`, shaped like POST /auth/token's (signed with the harness
+ * JWT_SECRET, with the fixture profile claim). Required lazily: the harness backend (main
+ * process) loads this file too and does not need it.
+ * @param {string} login
+ * @param {number} [ttlSeconds]
+ * @returns {string}
+ */
+function harnessSessionToken(login, ttlSeconds = 3600) {
+  // Same copy dev/backend verifies with.
+  const jwt = require('../../../../dev/backend/node_modules/jsonwebtoken');
+  const iat = Math.floor(Date.now() / 1000);
+  const { name, avatar_url, bio } = githubUserFixture(login);
+  return jwt.sign(
+    { sub: login, iss: 'devradar', iat, exp: iat + ttlSeconds, profile: { name, avatar_url, bio } },
+    TEST_JWT_SECRET,
+    { algorithm: 'HS256' }
+  );
+}
+
+/** @returns {{ Authorization: string }} headers for a step's own GET /devs or GET /search */
+function inspectorAuthHeaders() {
+  return { Authorization: `Bearer ${harnessSessionToken(INSPECTOR_LOGIN)}` };
+}
+
 module.exports = {
   TEST_JWT_SECRET,
   FAKE_CODE_PREFIX,
   FAKE_ACCESS_TOKEN_PREFIX,
   GITHUB_DOWN_CODE,
   githubUserFixture,
+  harnessSessionToken,
+  inspectorAuthHeaders,
 };

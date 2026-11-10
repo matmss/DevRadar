@@ -2,22 +2,14 @@ const { Given, When, Then, After } = require('@cucumber/cucumber');
 const { expect } = require('chai');
 const request = require('supertest');
 const Dev = require('../../../../dev/backend/src/models/Dev');
-const { signSessionToken } = require('../../../../dev/backend/src/utils/sessionToken');
 const { githubUserFixture } = require('../support/github-mock');
+const { testSessionToken, withSession } = require('../support/session');
 
 // POST /devs requires a session token (US-3). The registration steps send
 // `Authorization: Bearer <this.sessionToken>` when a previous step set one: "I am signed in as"
 // below, "I signed in through GitHub as" (auth.steps.js, the real OAuth flow), or the forged
-// tokens of auth.steps.js ("I have a <kind> session token"). Without one, no header is sent.
-
-/**
- * @param {import('supertest').Test} req
- * @param {{ sessionToken?: string }} world
- * @returns {import('supertest').Test}
- */
-function withSession(req, world) {
-  return world.sessionToken ? req.set('Authorization', `Bearer ${world.sessionToken}`) : req;
-}
+// tokens of auth.steps.js ("I have a <kind> session token"). Without one, no header is sent
+// (withSession, support/session.js).
 
 /** @param {object} world @param {object} body */
 async function postDev(world, body) {
@@ -39,7 +31,7 @@ Given('the developer database is empty', async function () {
 // POST /auth/token would issue after GitHub sign-in, with the fixture's GitHub profile as the
 // token's sign-in snapshot (github-mock.js FIXTURES).
 Given('I am signed in as {string}', function (username) {
-  this.sessionToken = signSessionToken(username, githubUserFixture(username)).token;
+  this.sessionToken = testSessionToken(username);
 });
 
 // QA-AUTH2-1: makes the next registration lose a race deterministically. Another request inserts

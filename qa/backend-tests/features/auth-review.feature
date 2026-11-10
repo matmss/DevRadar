@@ -85,6 +85,7 @@ Feature: QA review of GitHub sign-in slice 1 (defects and coverage gaps)
   @edge @regression @P2
   Scenario: Exhausting the auth rate limits does not affect the existing routes
     Given the auth rate limit is 2 requests per window
+    And I am signed in as "gaearon"
     When I start GitHub sign-in 3 times
     Then the response status should be 429
     When I call GET /auth/me without a token 3 times

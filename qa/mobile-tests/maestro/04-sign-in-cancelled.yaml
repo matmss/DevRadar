@@ -1,0 +1,29 @@
+appId: com.matmss.mobile
+---
+# Covers: US-7 "Sign in" when the user closes the system auth session before finishing
+# (@regression). Tapping "Entrar com GitHub" opens the backend's /auth/github in a Custom Tab
+# (Android) / ASWebAuthenticationSession (iOS); going back closes it, and the app stays on the
+# sign-in screen with "Login cancelado". Works whether or not the backend or GitHub answer,
+# since nothing is submitted. Android only as written (`back`); on iOS tap "Cancel" instead.
+- launchApp:
+    clearState: true
+- runFlow:
+    when:
+      visible: "Wait"
+    commands:
+      - tapOn: "Wait"
+- extendedWaitUntil:
+    visible: "Entrar com GitHub"
+    timeout: 20000
+- tapOn:
+    id: "sign-in-button"
+# Give the Custom Tab time to open before leaving it.
+- waitForAnimationToEnd:
+    timeout: 5000
+- back
+- extendedWaitUntil:
+    visible: "Login cancelado"
+    timeout: 10000
+- assertVisible: "Entrar com GitHub"
+- assertNotVisible:
+    id: "map-view"

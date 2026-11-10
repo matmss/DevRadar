@@ -1,22 +1,37 @@
 appId: com.matmss.mobile
 ---
 # Covers: map-search.feature "Searching by tech shows matching nearby developers as markers" (@smoke)
-# Precondition: seed a matching developer via the backend API before running this flow,
-# e.g.: curl -X POST $API_URL/devs -d 'github_username=e2e-fixture&techs=ReactJS&latitude=...&longitude=...'
+# Since auth slice 4 GET /search and the socket need a session: this flow signs in first through
+# subflows/sign-in-with-github.yaml (real GitHub; see that file for the env vars and backend).
+# Precondition: a matching developer registered near the device's location. POST /devs needs a
+# session token too, e.g. register through the web app, or with a token from a sign-in:
+#   curl -X POST $API_URL/devs -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+#     -d '{"techs":"ReactJS","latitude":...,"longitude":...}'
 - launchApp:
     clearState: true
+- runFlow:
+    when:
+      visible: "Wait"
+    commands:
+      - tapOn: "Wait"
+- runFlow: subflows/sign-in-with-github.yaml
+- runFlow:
+    when:
+      visible: "While using the app"
+    commands:
+      - tapOn: "While using the app"
+- extendedWaitUntil:
+    visible:
+      id: "search-input"
+    timeout: 20000
 - tapOn:
-    id: "search-input" # falls back to placeholder text match below if testID isn't added yet
-    optional: true
-- tapOn:
-    text: "Buscar devs por techs"
-    optional: true
+    id: "search-input"
 - inputText: "ReactJS"
 - tapOn:
     id: "search-button"
-    optional: true
-- tapOn:
-    point: "90%,10%" # approximate location of the search FAB per Main.js styles.searchForm, if id lookup above is skipped
-    optional: true
-- assertVisible:
-    text: ".*" # placeholder assertion — replace with a marker-specific selector once testIDs land
+# The search sent the session token: an auth failure would have gone back to the sign-in screen,
+# any other failure shows the search error.
+- assertNotVisible: "Entrar com GitHub"
+- assertNotVisible:
+    id: "search-error"
+- assertVisible: "Sair"

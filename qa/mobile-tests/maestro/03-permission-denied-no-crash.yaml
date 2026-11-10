@@ -1,6 +1,8 @@
 appId: com.matmss.mobile
 ---
 # Covers: map-search.feature "Location permission denied" (@edge)
+# Since auth slice 4 the map (which asks for location) is only shown signed in, so this flow
+# signs in first through subflows/sign-in-with-github.yaml (real GitHub; see that file).
 - launchApp:
     clearState: true
 # On this host, boot-time resource contention occasionally trips Android's own ANR
@@ -11,6 +13,7 @@ appId: com.matmss.mobile
       visible: "Wait"
     commands:
       - tapOn: "Wait"
+- runFlow: subflows/sign-in-with-github.yaml
 # A `when: visible:` check here races the dialog's appearance and can skip the tap if
 # it fires too early - wait for it explicitly instead (see 01-launch-and-map.yaml).
 - extendedWaitUntil:
@@ -22,9 +25,11 @@ appId: com.matmss.mobile
       visible: "Wait"
     commands:
       - tapOn: "Wait"
-# clearState forces a fresh cold Metro bundle every run (BUG-009); extendedWaitUntil
-# tolerates that instead of asserting before the bundle finishes loading.
 - extendedWaitUntil:
     visible: "DevRadar"
     timeout: 20000
 - assertNotVisible: "has stopped" # generic Android crash-dialog text; adjust per OS under test
+# The map screen explains why there is no map, with a retry (dev/mobile/src/pages/Main.js).
+- assertVisible: "Permita o acesso à localização.*"
+- assertVisible:
+    id: "location-retry-button"
