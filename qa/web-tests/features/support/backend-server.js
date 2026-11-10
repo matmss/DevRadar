@@ -118,6 +118,21 @@ function testRoutes() {
     res.sendStatus(204);
   });
 
+  // One specific developer, as a legacy (pre-sign-in) record would look: e.g. the signed-in
+  // user's own profile for the update/delete scenarios (auth slice 5), in any letter case.
+  router.post('/seed-dev', async (req, res) => {
+    const { github_username, techs, latitude, longitude } = req.body;
+    await Dev.create({
+      github_username,
+      name: github_username,
+      avatar_url: 'https://avatars.githubusercontent.com/u/0?v=4',
+      bio: 'Seeded for an @integration scenario',
+      techs: String(techs).split(',').map((tech) => tech.trim()),
+      location: { type: 'Point', coordinates: [Number(longitude), Number(latitude)] },
+    });
+    res.sendStatus(204);
+  });
+
   return router;
 }
 

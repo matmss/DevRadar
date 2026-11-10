@@ -1,4 +1,6 @@
-// Live `new-dev` pushes for the current map region. The backend requires a session token at
+// Live pushes for the current map region: `new-dev` (a dev registered), `dev-updated` (a dev
+// changed techs or position; sent for the NEW ones) and `dev-deleted` ({ _id, github_username }),
+// see dev/backend/src/websocket.js. The backend requires a session token at
 // handshake (dev/backend/src/websocket.js): it goes in the Socket.io `auth` payload, never in
 // the query string, so it does not end up in URLs or access logs. A refused handshake arrives as
 // connect_error with `data.code`; socket.io-client does not retry it on its own.
@@ -12,12 +14,39 @@ const socket = socketio(API_URL, {
 });
 
 /**
+ * @param {string} event
+ * @param {(payload: object) => void} listener
+ * @returns {() => void} unsubscribe
+ */
+function subscribe(event, listener) {
+  socket.on(event, listener);
+  return () => socket.off(event, listener);
+}
+
+/**
  * @param {(dev: object) => void} listener
  * @returns {() => void} unsubscribe
  */
 function subscribeToNewDevs(listener) {
-  socket.on('new-dev', listener);
-  return () => socket.off('new-dev', listener);
+  return subscribe('new-dev', listener);
+}
+
+/**
+ * A nearby, tech-matching dev changed their techs or position (PUT /devs/me).
+ * @param {(dev: object) => void} listener - receives the whole updated dev
+ * @returns {() => void} unsubscribe
+ */
+function subscribeToDevUpdates(listener) {
+  return subscribe('dev-updated', listener);
+}
+
+/**
+ * A dev that could be on this map deleted their profile (DELETE /devs/me).
+ * @param {(dev: { _id: string, github_username: string }) => void} listener
+ * @returns {() => void} unsubscribe
+ */
+function subscribeToDevDeletions(listener) {
+  return subscribe('dev-deleted', listener);
 }
 
 /**
@@ -76,5 +105,7 @@ export {
   connect,
   disconnect,
   subscribeToNewDevs,
+  subscribeToDevUpdates,
+  subscribeToDevDeletions,
   subscribeToAuthErrors,
 };

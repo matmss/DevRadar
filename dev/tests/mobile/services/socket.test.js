@@ -113,6 +113,22 @@ describe('socket service', () => {
     expect(fake.listenerCount('new-dev')).toBe(before.devs);
   });
 
+  it.each([
+    ['dev-updated', 'subscribeToDevUpdates', { _id: '1', github_username: 'gaearon', techs: ['Elixir'] }],
+    ['dev-deleted', 'subscribeToDevDeletions', { _id: '1', github_username: 'gaearon' }],
+  ])('delivers %s pushes to the subscriber until it unsubscribes', (event, subscribe, payload) => {
+    const before = fake.listenerCount(event);
+    const listener = jest.fn();
+    const stop = socketService[subscribe](listener);
+    expect(fake.listenerCount(event)).toBe(before + 1);
+    fake.emitLocal(event, payload);
+    expect(listener).toHaveBeenCalledWith(payload);
+    stop();
+    expect(fake.listenerCount(event)).toBe(before);
+    fake.emitLocal(event, payload);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
   it('delivers new-dev pushes to the subscriber', () => {
     const listener = jest.fn();
     const stop = socketService.subscribeToNewDevs(listener);

@@ -158,4 +158,106 @@ describe('Main', () => {
       expect(fakeSocket.connect).not.toHaveBeenCalled();
     });
   });
+
+  // US-7 "Live profile update" (auth slice 5): dev-updated replaces the dev's marker in place,
+  // or adds it, without a new search; dev-deleted removes it.
+  describe('live updates', () => {
+    const SEARCHED = [
+      { _id: 'a1', github_username: 'alice', name: 'Alice', bio: '', techs: ['ReactJS'], location: { type: 'Point', coordinates: [-46.63, -23.55] } },
+      { _id: 'g1', github_username: 'gaearon', name: 'Dan', bio: '', techs: ['ReactJS'], location: { type: 'Point', coordinates: [-46.64, -23.56] } },
+    ];
+
+    beforeEach(() => {
+      api.defaults.adapter = async (config) => ({ status: 200, statusText: 'OK', headers: {}, config, data: { devs: SEARCHED } });
+    });
+
+    /** The handlers Main registered for `event` (the fake socket records every `on`). */
+    const handlersFor = (event) => fakeSocket.on.mock.calls.filter(([name]) => name === event).map(([, fn]) => fn);
+
+    /** Delivers a push the way socket.io-client would, to every registered handler. */
+    async function push(event, payload) {
+      await act(async () => { handlersFor(event).forEach(fn => fn(payload)); });
+    }
+
+    /** The markers on the map, in order: id and coordinate. */
+    function markers() {
+      return renderer.root
+        .findAll(node => typeof node.type !== 'string' && typeof node.props.testID === 'string' && node.props.testID.startsWith('marker-'))
+        .map(node => ({ id: node.props.testID.slice('marker-'.length), coordinate: node.props.coordinate }));
+    }
+
+    async function searchAndShow() {
+      renderer = await render();
+      await press(renderer, 'search-button');
+      await flush();
+      expect(markers().map(marker => marker.id)).toEqual(['a1', 'g1']);
+    }
+
+    const calloutText = (testID) => renderer.root.findAll(node => node.props.testID === testID && typeof node.type === 'string').map(node => node.props.children);
+
+    it('moves and updates the marker of a dev who updated their profile, in place, without a new search', async () => {
+      await searchAndShow();
+      const searches = jest.fn(api.defaults.adapter);
+      api.defaults.adapter = searches;
+
+      await push('dev-updated', { ...SEARCHED[1], techs: ['Elixir'], location: { type: 'Point', coordinates: [-46.65, -23.57] } });
+
+      expect(markers()).toEqual([
+        { id: 'a1', coordinate: { latitude: -23.55, longitude: -46.63 } },
+        { id: 'g1', coordinate: { latitude: -23.57, longitude: -46.65 } },
+      ]);
+      expect(calloutText('callout-techs')).toEqual(['ReactJS', 'Elixir']);
+      expect(searches).not.toHaveBeenCalled();
+    });
+
+    it('matches the dev by github_username in any letter case', async () => {
+      await searchAndShow();
+      await push('dev-updated', { ...SEARCHED[1], _id: 'g2', github_username: 'Gaearon', techs: ['Go'] });
+      expect(markers().map(marker => marker.id)).toEqual(['a1', 'g2']);
+      expect(calloutText('callout-techs')).toEqual(['ReactJS', 'Go']);
+    });
+
+    it('adds a dev who now matches but was not on the map', async () => {
+      await searchAndShow();
+      await push('dev-updated', { _id: 'c1', github_username: 'carol', name: 'Carol', bio: '', techs: ['ReactJS'], location: { type: 'Point', coordinates: [-46.6, -23.5] } });
+      expect(markers().map(marker => marker.id)).toEqual(['a1', 'g1', 'c1']);
+    });
+
+    it('ignores a malformed dev-updated push instead of crashing', async () => {
+      await searchAndShow();
+      await push('dev-updated', { _id: 'g1', github_username: 'gaearon' });
+      expect(markers().map(marker => marker.id)).toEqual(['a1', 'g1']);
+    });
+
+    it('removes the marker of a dev who deleted their profile', async () => {
+      await searchAndShow();
+      await push('dev-deleted', { _id: 'g1', github_username: 'gaearon' });
+      expect(markers().map(marker => marker.id)).toEqual(['a1']);
+    });
+
+    it('a new-dev push for a dev already on the map replaces it instead of duplicating it', async () => {
+      await searchAndShow();
+      await push('new-dev', { ...SEARCHED[0], techs: ['Go'] });
+      expect(markers().map(marker => marker.id)).toEqual(['a1', 'g1']);
+    });
+
+    it('registers one listener per event for the screen, however often the list changes, and removes them on unmount', async () => {
+      await searchAndShow();
+      await push('dev-updated', { ...SEARCHED[1], techs: ['Go'] });
+      await push('new-dev', { ...SEARCHED[0], _id: 'n1', github_username: 'newbie' });
+      await press(renderer, 'search-button');
+      await flush();
+
+      ['new-dev', 'dev-updated', 'dev-deleted'].forEach((event) => {
+        expect(handlersFor(event)).toHaveLength(1);
+      });
+
+      const registered = ['new-dev', 'dev-updated', 'dev-deleted'].map(event => [event, handlersFor(event)[0]]);
+      await act(async () => renderer.unmount());
+      renderer = null;
+      registered.forEach(([event, handler]) => {
+        expect(fakeSocket.off).toHaveBeenCalledWith(event, handler);
+      });
+    });
+  });
 });

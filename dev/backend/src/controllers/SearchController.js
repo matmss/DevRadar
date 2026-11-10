@@ -2,6 +2,8 @@ const Dev = require('../models/Dev');
 const parseStringAsArray = require('../utils/parseStringAsArray');
 const { NEARBY_RADIUS_METERS } = require('../utils/nearby');
 
+// Read-only geo search. Updating and deleting a profile are PUT/DELETE /devs/me in
+// DevController (BUG-008); the old commented-out update/destroy stubs that lived here are gone.
 module.exports = {
     async index(req, res) {
         const { latitude, longitude, techs } = req.query;
@@ -41,12 +43,4 @@ module.exports = {
 
         return res.json({ devs });
     },
-
-    // async update() {
-
-    // },
-
-    // async destroy() {
-
-    // },
 };
