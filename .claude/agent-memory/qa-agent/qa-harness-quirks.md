@@ -31,6 +31,8 @@ Added during the auth slice 5 review (2026-11-10):
 - Bash also refuses `cd ../../dev/...` (relative paths into dev/) and `rsync`/`cp` whose path args are shell variables. Spell out absolute paths, one plain command each.
 - Probes with mongodb-memory-server: pass `{ instance: { launchTimeout: 60000 } }`; the 10 s default fails while installs or Playwright load the machine.
 - qa/web-tests/.features-gen/** is tracked: commit the generated spec of a new feature with it.
+- `auth-review.feature` "A state is still accepted just before its 10-minute lifetime ends" (599 s of a 600 s TTL) has a 1 s real-time margin and failed once (400 instead of 302) while several suites ran at once. Re-run before blaming the change under test.
+- Several mutants in one go: a bash script in the scratchpad with literal paths looping over modes (fresh scratch copy per mode, a node script doing exact-string replacements that throws if the pattern is missing) worked well, run as `bash <script>`.
 
 **Why:** each cost a wasted run or produced a false pass.
 **How to apply:** use this when writing backend probes or log-assertion steps; see [[auth-review-findings]] if it is ever written.
