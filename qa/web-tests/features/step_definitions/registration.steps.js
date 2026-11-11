@@ -2,6 +2,7 @@ const { createBdd } = require('playwright-bdd');
 const { expect } = require('@playwright/test');
 const { INTEGRATION_BACKEND_PORT } = require('../support/global-setup');
 const { inspectorAuthHeaders } = require('../support/auth-fixtures');
+const { resetBackend } = require('../support/test-data');
 
 const { Given, When, Then } = createBdd();
 
@@ -21,14 +22,15 @@ Given('the browser denies geolocation permission', async function ({ context }) 
 // Talks to the real backend's test-only reset/seed routes (see
 // features/support/backend-server.js) rather than mocking anything at the browser level —
 // the app under test makes real HTTP calls to a real (ephemeral) MongoDB-backed server.
+// Every scenario already starts empty (isolation.hooks.js, BUG-014); these steps state it, or
+// seed, explicitly.
 
 Given('the backend has no registered developers', async function () {
-  const res = await fetch(`${BACKEND_URL}/__test__/reset`, { method: 'POST' });
-  if (!res.ok) throw new Error(`Failed to reset the backend's data: ${res.status}`);
+  await resetBackend();
 });
 
 Given('the backend has {int} registered developers', async function ({}, count) {
-  await fetch(`${BACKEND_URL}/__test__/reset`, { method: 'POST' });
+  await resetBackend();
   const res = await fetch(`${BACKEND_URL}/__test__/seed`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
