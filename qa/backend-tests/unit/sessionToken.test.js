@@ -76,8 +76,14 @@ describe('session tokens', () => {
     expect(() => signSessionToken({ ...GAEARON, login_read_at: readAt })).toThrow(TypeError);
   });
 
-  it('refuses to sign a GitHub read time after the token is issued', () => {
-    expect(() => signSessionToken({ ...GAEARON, login_read_at: Date.now() + 5000 })).toThrow(TypeError);
+  // QA-AUTH6-5: a server clock that stepped back between the callback and the token exchange makes
+  // the read time later than iat. It is clamped to the issue second, never a failed sign-in.
+  it('clamps a GitHub read time after the token is issued to the issue second', () => {
+    const { token, loginReadAt } = signSessionToken({ ...GAEARON, login_read_at: Date.now() + 5000 });
+    const claims = decode(token.split('.')[1]);
+    expect(loginReadAt).toBe(claims.iat * 1000 + 999);
+    expect(claims.login_read_at).toBe(loginReadAt);
+    expect(verifySessionToken(token).ok).toBe(true);
   });
 
   it('keeps the largest GitHub ids exact', () => {

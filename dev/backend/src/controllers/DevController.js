@@ -4,18 +4,17 @@ const validateDevInput = require('../utils/validateDevInput');
 const { EVENT, announce, announceStored } = require('../services/devEvents');
 const {
   OWNERSHIP,
+  RETRY,
   isDuplicateKey,
   resolveOwnDev,
   loginFields,
   refreshLogin,
   updateOwnDev,
   inAccountOrder,
+  inLoginOrder,
+  displaceStaleHolder,
   pendingWrites,
 } = require('../services/devOwnership');
-
-// POST /devs gives up after this many lost races in a row (another dev took the login, or the
-// account's own dev appeared, between our read and our insert). See services/devOwnership.js.
-const MAX_REGISTRATION_ATTEMPTS = 3;
 
 /**
  * @param {import('express').Response} res
@@ -30,11 +29,11 @@ function sendDevNotFound(res) {
 }
 
 /**
- * 409 for POST /devs when another account's dev still holds the signed-in login (rule 3 in
- * services/devOwnership.js). Signing in displaces such a dev when GitHub's answer is newer than
- * that dev's login, so this means the other dev's login was confirmed by GitHub after this
- * session read it: signing in again settles it. Names only the login, which is the caller's own;
- * nothing about the other dev is revealed.
+ * 409 for POST /devs when another account's dev holds the signed-in login (rule 3 in
+ * services/devOwnership.js) with a login state from a GitHub read at least as recent as this
+ * session's (an older one is displaced instead), so this session's login is the stale one:
+ * signing in again settles it. Names only the login, which is the caller's own; nothing about the
+ * other dev is revealed.
  * @param {import('express').Response} res
  * @param {string} github_username
  * @returns {import('express').Response}
@@ -126,37 +125,44 @@ module.exports = {
     const { techs, latitude, longitude } = value;
     const techsArray = parseStringAsArray(techs);
 
-    const outcome = await inAccountOrder(user, async () => {
-      for (let attempt = 0; attempt < MAX_REGISTRATION_ATTEMPTS; attempt += 1) {
-        const ownership = await resolveOwnDev(user, { claim: true });
+    // Holds this account's key and, if another account's dev shows the login, that account's too
+    // (inLoginOrder); RETRY starts over with a fresh look at who holds the login.
+    const outcome = await inLoginOrder(user, async (holder) => {
+      const ownership = await resolveOwnDev(user, { claim: true });
 
-        if (ownership.status === OWNERSHIP.CONFLICT) return { conflict: true };
-
-        if (ownership.status !== OWNERSHIP.NONE) {
-          // Already registered (or a legacy dev just claimed, US-8): returned as it is, except
-          // that its login follows the account's current one (Q10). A rename is announced.
-          const { dev, renamed } = await refreshLogin(ownership.dev, user);
-          if (!dev) continue; // deleted meanwhile: register anew
-          if (renamed) announceStored(EVENT.DEV_UPDATED, dev);
-          return { dev };
-        }
-
-        try {
-          const result = await createOwnDev(user, {
-            ...profileFields(user.github_username, user.profile),
-            techs: techsArray,
-            location: point(latitude, longitude),
-          });
-          // Only the request that created the dev announces it.
-          if (result.created) announce(EVENT.NEW_DEV, { latitude, longitude }, techsArray, result.dev);
-          return { dev: result.dev };
-        } catch (err) {
-          // Another dev took the login (or this account's dev appeared) since we looked: look
-          // again, which answers the existing dev or the conflict.
-          if (!isDuplicateKey(err)) throw err;
-        }
+      if (ownership.status === OWNERSHIP.CONFLICT) {
+        // Another account's dev shows this login. The newest GitHub read wins (QA-AUTH6-4): if
+        // this session's read is newer, that dev is displaced and this account registers.
+        const displacement = await displaceStaleHolder(user, holder, null);
+        return displacement === 'newer' ? { conflict: true } : RETRY;
       }
-      throw new Error('Could not register the developer: too many concurrent changes');
+
+      if (ownership.status !== OWNERSHIP.NONE) {
+        // Already registered (or a legacy dev just claimed, US-8): returned as it is, except
+        // that its login follows the account's current one (Q10), displacing another dev that
+        // shows it with an older state. A rename is announced.
+        if (await displaceStaleHolder(user, holder, ownership.dev) === 'changed') return RETRY;
+        const { dev, renamed } = await refreshLogin(ownership.dev, user);
+        if (!dev) return RETRY; // deleted meanwhile: register anew
+        if (renamed) announceStored(EVENT.DEV_UPDATED, dev);
+        return { dev };
+      }
+
+      try {
+        const result = await createOwnDev(user, {
+          ...profileFields(user.github_username, user.profile),
+          techs: techsArray,
+          location: point(latitude, longitude),
+        });
+        // Only the request that created the dev announces it.
+        if (result.created) announce(EVENT.NEW_DEV, { latitude, longitude }, techsArray, result.dev);
+        return { dev: result.dev };
+      } catch (err) {
+        // Another dev took the login (or this account's dev appeared) since we looked: start
+        // over, which locks that dev's owner and answers the existing dev, a displacement or 409.
+        if (!isDuplicateKey(err)) throw err;
+        return RETRY;
+      }
     });
 
     if (outcome.conflict) return sendUsernameConflict(res, user.github_username);
@@ -187,9 +193,13 @@ module.exports = {
       const { techs, latitude, longitude } = value;
       const techsArray = parseStringAsArray(techs);
 
-      const dev = await inAccountOrder(user, async () => {
+      const dev = await inLoginOrder(user, async (holder) => {
         const { dev: own } = await resolveOwnDev(user, { claim: true });
         if (!own) return null;
+
+        // The login follows the session's GitHub read; another dev showing it with an older state
+        // is displaced first (QA-AUTH6-4). One with a newer state is left alone.
+        if (await displaceStaleHolder(user, holder, own) === 'changed') return RETRY;
 
         const updated = await updateOwnDev(own, user, {
           ...profileFields(user.github_username, user.profile),

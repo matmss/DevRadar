@@ -115,7 +115,11 @@ Given('GitHub account {int} claims the legacy developer {string} just before my 
     const isClaim = Boolean(filter && filter.github_id === null && update && update.$set && update.$set.github_id);
     if (!isClaim) return realFindOneAndUpdate.call(Dev, filter, update, ...rest);
     Dev.findOneAndUpdate = realFindOneAndUpdate;
-    return Dev.updateOne({ github_username: username, github_id: null }, { $set: { github_id: githubId } })
+    // A real claim records the claimant's GitHub read, here a newer one than mine.
+    return Dev.updateOne(
+      { github_username: username, github_id: null },
+      { $set: { github_id: githubId, github_username_seen_at: new Date(Date.now() + 1000) } }
+    )
       .then(() => realFindOneAndUpdate.call(Dev, filter, update, ...rest));
   };
 });
@@ -150,6 +154,41 @@ When(
         .send({ techs, latitude: '-23.5505', longitude: '-46.6333' }));
   }
 );
+
+When(
+  'GitHub account {int} as {string} with a session from {int} days ago and GitHub account {int} as {string} register at the same time with techs {string}',
+  async function (oldId, oldLogin, days, newId, newLogin, techs) {
+    const tokens = [
+      sessionTokenFromSecondsAgo(oldLogin, oldId, days * 24 * 60 * 60),
+      testSessionToken(newLogin, newId),
+    ];
+    const responses = await Promise.all(tokens.map((token) => request(this.app).post('/devs')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ techs, latitude: '-23.5505', longitude: '-46.6333' })));
+    this.concurrent = [
+      { githubId: oldId, login: oldLogin, response: responses[0] },
+      { githubId: newId, login: newLogin, response: responses[1] },
+    ];
+  }
+);
+
+Then('every concurrent request should be answered 200 or 409 with code {string}', function (code) {
+  this.concurrent.forEach(({ githubId, response }) => {
+    if (response.status === 409) expect(response.body.code, `account ${githubId}`).to.equal(code);
+    else expect(response.status, `account ${githubId}: ${JSON.stringify(response.body)}`).to.equal(200);
+  });
+});
+
+Then('the developer showing github_username {string} should belong to GitHub account {int}', async function (login, githubId) {
+  const dev = await Dev.findOne({ github_username: login }).collation({ locale: 'en', strength: 2 }).lean();
+  expect(dev, `a developer should show "${login}"`).to.not.be.null;
+  expect(dev.github_id).to.equal(githubId);
+});
+
+Then('no developer should show github_username {string} for GitHub account {int}', async function (login, githubId) {
+  const dev = await Dev.findOne({ github_id: githubId }).lean();
+  if (dev) expect(dev.github_username.toLowerCase()).to.not.equal(login.toLowerCase());
+});
 
 Then(
   'one concurrent request should be answered {int} and the other {int} with code {string}',
@@ -261,6 +300,12 @@ Then('the remembered developer should be displaced, with everything else unchang
   const now = JSON.parse(await rawDocument({ _id: this.rememberedDev._id }));
   expect(now, 'the displaced developer must not be deleted').to.not.equal(null);
   expectDisplaced(now);
+  // A name that was only the old login is cleared (clients show a neutral name); any other is kept.
+  if (typeof before.name === 'string' && before.name.toLowerCase() === before.github_username.toLowerCase()) {
+    expect(now.name, 'a name that was the old login is cleared').to.equal(null);
+    delete before.name;
+    delete now.name;
+  }
   LOGIN_FIELDS.forEach((field) => {
     delete before[field];
     delete now[field];
@@ -298,6 +343,16 @@ Then('the developer of GitHub account {int} should not be marked stale', async f
 Then('the developer of GitHub account {int} should have techs {string}', async function (githubId, techs) {
   const dev = await Dev.findOne({ github_id: githubId }).lean();
   expect(dev.techs.join(',')).to.equal(techs);
+});
+
+Then('the developer of GitHub account {int} should have no name', async function (githubId) {
+  const dev = await Dev.findOne({ github_id: githubId }).lean();
+  expect(dev.name == null, `name should be cleared, was ${JSON.stringify(dev.name)}`).to.equal(true);
+});
+
+Then('the developer of GitHub account {int} should have name {string}', async function (githubId, name) {
+  const dev = await Dev.findOne({ github_id: githubId }).lean();
+  expect(dev.name).to.equal(name);
 });
 
 Then('no developer should be marked stale', async function () {

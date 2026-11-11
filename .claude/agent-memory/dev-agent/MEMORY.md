@@ -4,4 +4,4 @@
 - [expo prebuild drops Detox wiring](project_expo_prebuild_detox.md) - prebuild regenerates dev/mobile/android; keep only the manifest diff, restore gradle files
 - [Web suite reuses :3000](feedback_web_suite_port_reuse.md) - check ports, run qa/web-tests with CI=1 so another worktree's dev server is never tested
 - [Worktree installs](project_worktree_install.md) - dev/* npm install (no locks), qa/* npm ci --workspaces=false, PW_CHROMIUM_PATH for cached browser
-- [Backend suite timing](project_backend_suite_timing.md) - Cucumber one-off failures in untouched scenarios under load: rerun before debugging, report them; a file path arg does not narrow the run
+- [Test loopback + timing](project_backend_suite_timing.md) - one-off foreign answers = server on "::" vs client on 127.0.0.1 (BUG-013); bind/dial 127.0.0.1; cucumber forceExit; use --tags

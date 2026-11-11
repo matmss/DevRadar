@@ -201,7 +201,12 @@ Feature: Profiles belong to a GitHub account, and legacy profiles are claimed by
   Scenario: The new holder of a renamed login signs in: the previous owner's profile is displaced, never handed over
     # displaced = login "_stale_<_id>", github_username_stale, nothing else changed, not deleted, still listed
     # 502: GET/PUT/DELETE /devs/me 404; POST /devs registers "alice"
-  Scenario: The new holder of a renamed login gets a 409 on registration until a sign-in displaces the previous profile
+  Scenario: The new holder of a renamed login registers with a newer session: the previous profile is displaced
+  Scenario: An older session never takes a login confirmed by a newer GitHub read (409 on registration)
+  @edge
+  Scenario: An older session's update keeps its own login when a newer read gave the login to someone else
+  @edge
+  Scenario: An update with a newer GitHub read displaces a profile still showing the session's login
   Scenario: The previous owner signs in under the new login: the profile is still theirs, and the old login is freed
   Scenario: The previous owner's next update also refreshes the login
   @edge
@@ -231,6 +236,11 @@ Feature: Profiles belong to a GitHub account, and legacy profiles are claimed by
   Scenario: The previous owner signs in under a new login that a legacy profile shows: the old login is still freed
   Scenario: An older session does not set back the login of a claimed legacy profile (update, and registration)
   Scenario: A sign-in that read GitHub before a rename, redeemed after a newer sign-in, does not set the old login back
+
+  # QA re-check (auth-slice6-recheck.feature, QA-AUTH6-4/5)
+  Scenario: The newest holder of a login registers after an older session of its previous holder registered it
+  Scenario: The newest holder of a login registers after an older session of its previous holder claimed the legacy profile
+  Scenario: A server clock that steps back between the callback and the token exchange does not break sign-in
 
   # Q10: the session identity is the GitHub id
   Scenario Outline: A session token without a GitHub id (issued before auth slice 6) is rejected as invalid

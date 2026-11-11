@@ -49,16 +49,24 @@ const TOKEN_ERROR = {
  *   profile?: { name?: unknown, avatar_url?: unknown, bio?: unknown } }} user - the GitHub account
  *   that signed in (id and login from GET /user, read at `login_read_at`, default now) and its
  *   profile, which is sanitized and length-limited here (missing values become null)
- * @returns {{ token: string, expiresIn: number, loginReadAt: number }}
+ * @returns {{ token: string, expiresIn: number, loginReadAt: number }} loginReadAt: the read
+ *   time actually signed (clamped, see below); callers must use it, not their own
  * @throws {TypeError} if the id, the login or the read time is not valid (callers validate
  *   GitHub's answer first)
  */
-function signSessionToken({ github_id, github_username, profile, login_read_at: readAt = Date.now() }) {
+function signSessionToken({ github_id, github_username, profile, login_read_at: requestedReadAt = Date.now() }) {
   if (!isValidGithubId(github_id)) throw new TypeError('github_id must be a positive safe integer');
   if (!isValidGithubUsername(github_username)) throw new TypeError('github_username must be a GitHub login');
+  if (!Number.isSafeInteger(requestedReadAt) || requestedReadAt <= 0) {
+    throw new TypeError('login_read_at must be a positive integer time in ms');
+  }
 
   const issuedAt = Math.floor(Date.now() / 1000);
-  if (!isValidReadTime(readAt, issuedAt)) throw new TypeError('login_read_at must be a time before now');
+  // GitHub is read before the code is redeemed, so the read time is never after iat. If the
+  // server clock stepped back in between (NTP, a VM resuming), it would be: clamp it to the last
+  // millisecond of the issue second instead of failing the sign-in (QA-AUTH6-5). It only makes
+  // the read look slightly older, which can never let it override a newer one.
+  const readAt = Math.min(requestedReadAt, issuedAt * 1000 + 999);
   const claims = {
     login: github_username,
     login_read_at: readAt,

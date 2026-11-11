@@ -5,7 +5,7 @@ const { inspectorAuthHeaders } = require('../support/auth-fixtures');
 
 const { Given, When, Then } = createBdd();
 
-const BACKEND_URL = `http://localhost:${INTEGRATION_BACKEND_PORT}`;
+const BACKEND_URL = `http://127.0.0.1:${INTEGRATION_BACKEND_PORT}`;
 
 Given('the browser grants geolocation permission at latitude {string} and longitude {string}', async function ({ context }, lat, lon) {
   await context.grantPermissions(['geolocation']);

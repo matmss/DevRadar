@@ -40,6 +40,16 @@ const {
 let mongod;
 let server;
 
+// The harness backend listens on 127.0.0.1 and every client (the browser through
+// REACT_APP_API_URL, the steps' fetch calls, the GitHub callback) dials 127.0.0.1, never
+// "localhost". A server listening without a host binds the wildcard "::", and on macOS another
+// process can still bind 127.0.0.1 (or ::1) on the same port and receive the traffic meant for
+// it; "localhost" may also resolve to ::1. That caused one-off foreign answers under load (QA
+// re-check of auth slice 6, see qa/docs/05-bug-tracker.md BUG-013). Bound on 127.0.0.1 itself,
+// the port cannot be shared: a second process gets EADDRINUSE. The CRA dev server runs on
+// 127.0.0.1:3000 for the same reason (playwright.config.js, HOST).
+const LOOPBACK = '127.0.0.1';
+
 /**
  * Auth configuration for the harness backend (dev/backend/src/config/auth.js reads env at
  * request time). Set before the app is built. The GitHub credentials are dummies: GitHub is
@@ -49,9 +59,9 @@ let server;
 function applyTestAuthEnv(port) {
   process.env.GITHUB_CLIENT_ID = 'web-test-client-id';
   process.env.GITHUB_CLIENT_SECRET = 'web-test-client-secret';
-  process.env.GITHUB_CALLBACK_URL = `http://localhost:${port}/auth/github/callback`;
+  process.env.GITHUB_CALLBACK_URL = `http://${LOOPBACK}:${port}/auth/github/callback`;
   process.env.JWT_SECRET = TEST_JWT_SECRET;
-  process.env.CORS_ORIGINS = 'http://localhost:3000';
+  process.env.CORS_ORIGINS = 'http://127.0.0.1:3000';
   // Every scenario signs in (3 sign-in requests) and reloads (GET /auth/me), from one IP.
   process.env.AUTH_RATE_LIMIT_MAX = '100000';
   process.env.AUTH_SESSION_RATE_LIMIT_MAX = '100000';
@@ -153,7 +163,11 @@ async function startBackend(port) {
     beforeRoutes: (app) => app.use('/__test__', testRoutes()),
   }));
 
-  await new Promise((resolve) => server.listen(port, resolve));
+  // On 127.0.0.1 explicitly, the address every client here dials (see LOOPBACK above).
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, LOOPBACK, resolve);
+  });
 }
 
 async function stopBackend() {

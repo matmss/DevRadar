@@ -34,6 +34,14 @@ describe('DevItem', () => {
   });
 });
 
+describe('DevItem name', () => {
+  it('shows a neutral name for a displaced dev whose name (the old login) was cleared', () => {
+    render(<ul><DevItem dev={{ ...DISPLACED, name: null }} /></ul>);
+    expect(screen.getByText('Dev sem nome')).toBeInTheDocument();
+    expect(screen.queryByRole('link')).toBeNull();
+  });
+});
+
 describe('githubProfileUrl', () => {
   it.each([
     ['a current login', DEV, 'https://github.com/gaearon'],

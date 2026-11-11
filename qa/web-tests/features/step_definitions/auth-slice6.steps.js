@@ -34,7 +34,7 @@ Then('exactly one entry should link to {string}', async function ({ page }, href
   await expect(page.locator(`.dev-item a[href="${href}"]`)).toHaveCount(1);
 });
 
-const BACKEND_URL = `http://localhost:${INTEGRATION_BACKEND_PORT}`;
+const BACKEND_URL = `http://127.0.0.1:${INTEGRATION_BACKEND_PORT}`;
 
 /** @param {string} login @returns {Promise<object | undefined>} the backend's dev, exact login */
 async function backendDevExactly(login) {

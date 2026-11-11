@@ -243,6 +243,14 @@ describe('Main', () => {
       expect(renderer.root.props.navigation.navigate).not.toHaveBeenCalled();
     });
 
+    it('shows a neutral name for a displaced dev whose name (the old login) was cleared', async () => {
+      await searchAndShow();
+      await push('dev-updated', {
+        ...SEARCHED[1], name: null, github_id: 810438, github_username: '_stale_g1', github_username_stale: true,
+      });
+      expect(calloutText('callout-name')).toEqual(['Alice', 'Dev sem nome']);
+    });
+
     it('never opens a login that is not a GitHub login, even without the stale flag', async () => {
       await searchAndShow();
       await push('dev-updated', { ...SEARCHED[1], github_username: '../orgs/x' });

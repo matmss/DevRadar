@@ -26,7 +26,7 @@ const { unexpectedGithubRequests } = require('../support/github-network');
 
 const { Given, When, Then } = createBdd();
 
-const BACKEND_URL = `http://localhost:${INTEGRATION_BACKEND_PORT}`;
+const BACKEND_URL = `http://127.0.0.1:${INTEGRATION_BACKEND_PORT}`;
 const GITHUB_AUTHORIZE_URL = 'https://github.com/login/oauth/authorize';
 const isSignInStart = (url) => url.origin === BACKEND_URL && url.pathname === '/auth/github';
 // Keys the web app uses (dev/web/src/services/session.js, services/auth.js).

@@ -17,7 +17,7 @@ const testDir = defineBddConfig({
 // mongodb-memory-server; only GitHub's third-party API is stubbed) rather than
 // Playwright `page.route` mocks — see features/support/backend-server.js and
 // features/support/global-setup.js, which boots it before the web server/browser start.
-const backendUrl = `http://localhost:${INTEGRATION_BACKEND_PORT}`;
+const backendUrl = `http://127.0.0.1:${INTEGRATION_BACKEND_PORT}`;
 
 module.exports = defineConfig({
   testDir,
@@ -31,7 +31,7 @@ module.exports = defineConfig({
     ['json', { outputFile: '../reports/web.json' }],
   ],
   use: {
-    baseURL: process.env.WEB_BASE_URL || 'http://localhost:3000',
+    baseURL: process.env.WEB_BASE_URL || 'http://127.0.0.1:3000',
     trace: 'retain-on-failure',
   },
   webServer: process.env.WEB_BASE_URL
@@ -39,11 +39,14 @@ module.exports = defineConfig({
     : {
         command: 'npm start',
         cwd: '../../dev/web',
-        url: 'http://localhost:3000',
+        url: 'http://127.0.0.1:3000',
         reuseExistingServer: !process.env.CI,
         timeout: 120000,
         env: {
           BROWSER: 'none',
+          // CRA listens on 127.0.0.1 only, the address the browser dials (baseURL above), so no
+          // other process can share the port and answer instead (see backend-server.js).
+          HOST: '127.0.0.1',
           REACT_APP_API_URL: backendUrl,
         },
       },

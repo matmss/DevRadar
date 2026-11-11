@@ -6,8 +6,8 @@ const { INTEGRATION_BACKEND_PORT } = require('../support/global-setup');
 
 const { Given, Then } = createBdd();
 
-const BACKEND_URL = `http://localhost:${INTEGRATION_BACKEND_PORT}`;
-const WEB_ORIGIN = 'http://localhost:3000';
+const BACKEND_URL = `http://127.0.0.1:${INTEGRATION_BACKEND_PORT}`;
+const WEB_ORIGIN = 'http://127.0.0.1:3000';
 
 /**
  * Answers `method /devs/me` on the harness backend with `status` + `body`, and answers its CORS

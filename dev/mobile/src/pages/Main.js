@@ -151,7 +151,7 @@ function Main({ navigation }) {
             if (githubLogin) navigation.navigate('Profile', { github_username: githubLogin });
           }}>
             <View style={styles.callout}>
-              <Text testID="callout-name" style={styles.devName}>{dev.name}</Text>
+              <Text testID="callout-name" style={styles.devName}>{dev.name || 'Dev sem nome'}</Text>
         <Text testID="callout-bio" style={styles.devBio}>{dev.bio}</Text>
         <Text testID="callout-techs" style={styles.devTechs}>{dev.techs.join(', ')}</Text>
               {!githubLogin && <Text testID="callout-no-profile" style={styles.devBio}>Perfil do GitHub indisponível</Text>}

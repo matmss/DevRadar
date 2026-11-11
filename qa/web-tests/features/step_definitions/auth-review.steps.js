@@ -15,8 +15,8 @@ const {
 
 const { Given, When, Then } = createBdd();
 
-const BACKEND_URL = `http://localhost:${INTEGRATION_BACKEND_PORT}`;
-const WEB_ORIGIN = 'http://localhost:3000';
+const BACKEND_URL = `http://127.0.0.1:${INTEGRATION_BACKEND_PORT}`;
+const WEB_ORIGIN = 'http://127.0.0.1:3000';
 const SESSION_TOKEN_KEY = 'devradar.session_token';
 const SIGN_IN_BUTTON = 'Entrar com GitHub';
 const SIGN_OUT_BUTTON = 'Sair';

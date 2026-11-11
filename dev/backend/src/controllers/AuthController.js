@@ -207,12 +207,13 @@ module.exports = {
       profile: pending.profile,
       login_read_at: pending.loginReadAt,
     };
-    const { token, expiresIn } = signSessionToken(user);
+    // loginReadAt: the read time as signed (clamped if the clock stepped back, QA-AUTH6-5).
+    const { token, expiresIn, loginReadAt } = signSessionToken(user);
 
     // GitHub's fresh answer is authoritative (auth spec Q10): a dev of another account still
     // showing this login is displaced, and this account's dev takes it (a renamed account shows
     // its new login, and frees its old one). Best effort: never fails the sign-in.
-    await refreshLoginAtSignIn(user);
+    await refreshLoginAtSignIn({ ...user, login_read_at: loginReadAt });
 
     return res.json({
       token,

@@ -157,16 +157,19 @@ Feature: Profiles belong to a GitHub account, and legacy profiles are claimed by
     And the stored developer "alice" should belong to the GitHub account that was answered 200
     And the database should contain exactly 1 developer
 
+  # The newest GitHub read wins whatever the timing (QA-AUTH6-4): 502 read "alice" now, 501's token
+  # is two days old. Either 502 claims first (501 then gets 409), or 501 claims first and 502's
+  # registration displaces 501's profile and creates its own (both 200).
   @edge @regression @P1
-  Scenario: Two accounts registering over a legacy profile with the same login at once: one claims it, no 500
+  Scenario: Two accounts registering over a legacy profile with the same login at once: the newest GitHub read ends with it, no 500
     Given a developer already exists with github_username "alice" and techs "Node.js"
-    When GitHub accounts 501 as "alice" and 502 as "Alice" register at the same time with techs "Go"
-    Then one concurrent request should be answered 200 and the other 409 with code "github_username_conflict"
-    And the stored developer "alice" should belong to the GitHub account that was answered 200
-    And the stored developer "alice" should have techs "Node.js"
-    And the database should contain exactly 1 developer
+    When GitHub account 501 as "alice" with a session from 2 days ago and GitHub account 502 as "Alice" register at the same time with techs "Go"
+    Then every concurrent request should be answered 200 or 409 with code "github_username_conflict"
+    And the developer showing github_username "alice" should belong to GitHub account 502
+    And no developer should show github_username "alice" for GitHub account 501
 
-  # Deterministic version: the other account's claim lands between my read and my claim.
+  # Deterministic version: the other account's claim lands between my read and my claim (that
+  # claim records a newer GitHub read than mine).
   @edge @regression @P1
   Scenario Outline: A claim that loses the race leaves the profile to the winner
     Given a developer already exists with github_username "alice" and techs "Node.js"
@@ -213,20 +216,61 @@ Feature: Profiles belong to a GitHub account, and legacy profiles are claimed by
     When I request the list of all developers
     Then the remembered developer should be listed as displaced, with no GitHub login
 
-  # A session whose GitHub read did not displace the dev (here a test-only token: no sign-in ran)
-  # cannot register over it: logins stay unique.
+  # The newest GitHub read wins on registration too (QA-AUTH6-4), even without a displacing
+  # sign-in (here a test-only token, read now; the seeded profile records no read).
   @smoke @P1
-  Scenario: The new holder of a renamed login gets a 409 on registration until a sign-in displaces the previous profile
+  Scenario: The new holder of a renamed login registers with a newer session: the previous profile is displaced
     Given a developer "alice" owned by GitHub account 501 already exists with techs "Node.js"
     And I remember the stored developer "alice"
     And I am signed in as "alice" with GitHub account 502
     When I submit a registration with techs "Go", latitude "-22.9068" and longitude "-43.1729"
+    Then the response status should be 200
+    And the stored developer "alice" should belong to GitHub account 502
+    And the remembered developer should be displaced, with everything else unchanged
+    And the database should contain exactly 2 developers
+
+  # The reverse: a session that read GitHub BEFORE the holder's login was confirmed is the stale
+  # one. It never takes the login: 409 on registration, and an update keeps its own stored login.
+  @smoke @P1
+  Scenario: An older session never takes a login confirmed by a newer GitHub read
+    Given a developer "alice" owned by GitHub account 502 already exists with techs "Go"
+    And I signed in through GitHub as "alice" with GitHub account 502
+    And I remember the stored developer "alice"
+    And I am signed in as "alice" with GitHub account 501, in a session that began 2 days ago
+    When I submit a registration with techs "Node.js", latitude "-22.9068" and longitude "-43.1729"
     Then the response status should be 409
     And the response should be a JSON error with code "github_username_conflict"
     And the response should be an error with details
     And the response should not mention "seed fixture"
     And the stored developer "alice" should be unchanged
     And the database should contain exactly 1 developer
+
+  @edge @regression @P1
+  Scenario: An older session's update keeps its own login when a newer read gave the login to someone else
+    Given a developer "alice2" owned by GitHub account 501 already exists with techs "Node.js"
+    And a developer "alice" owned by GitHub account 502 already exists with techs "Go"
+    And I signed in through GitHub as "alice" with GitHub account 502
+    And I remember the stored developer "alice"
+    And I am signed in as "alice" with GitHub account 501, in a session that began 2 days ago
+    When I update my profile with techs "Elixir", latitude "-23.5505" and longitude "-46.6333"
+    Then the response status should be 200
+    And the developer of GitHub account 501 should show github_username "alice2"
+    And the developer of GitHub account 501 should have techs "Elixir"
+    And the stored developer "alice" should be unchanged
+
+  # A write with a newer read than the holder's state displaces it (QA-AUTH6-4), here an update
+  # whose session read "carol" after the holder's profile last confirmed it.
+  @edge @regression @P1
+  Scenario: An update with a newer GitHub read displaces a profile still showing the session's login
+    Given a developer "alice" owned by GitHub account 501 already exists with techs "Node.js"
+    And a developer "carol" owned by GitHub account 503 already exists with techs "Go"
+    And I remember the stored developer "carol"
+    And I am signed in as "carol" with GitHub account 501
+    When I update my profile with techs "Elixir", latitude "-23.5505" and longitude "-46.6333"
+    Then the response status should be 200
+    And the registered developer should be "carol"
+    And the developer of GitHub account 501 should show github_username "carol"
+    And the remembered developer should be displaced, with everything else unchanged
 
   @smoke @P1
   Scenario: The previous owner signs in under the new login: the profile is still theirs, and the old login is freed
@@ -296,9 +340,12 @@ Feature: Profiles belong to a GitHub account, and legacy profiles are claimed by
     Given a developer "alice" owned by GitHub account 501 already exists with techs "Node.js"
     And I remember the stored developer "alice"
     And I signed in through GitHub as "alice" with GitHub account 502
+    # The seeded name was the login "alice": cleared by the displacement (it is 502's login now).
+    And the developer of GitHub account 501 should have no name
     When I signed in through GitHub as "alice2" with GitHub account 501
     Then the developer of GitHub account 501 should show github_username "alice2"
     And the developer of GitHub account 501 should not be marked stale
+    And the developer of GitHub account 501 should have name "alice2"
     When I request my profile
     Then the response should be the remembered developer
     And the registered developer should be "alice2"
