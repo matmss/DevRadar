@@ -196,13 +196,13 @@ rather than a single cross-language framework:
   GitHub's server-side OAuth API, `context.route` for the authorize page and avatar images, and
   a hook (`support/github-network.js`) fails any scenario whose browser reaches real GitHub.
   Runs with `workers: 1` (scenarios share one backend and its `/__test__` reset).
+  Run `bddgen` before `playwright test` (or use the `pretest`/`test:*` npm scripts, which do
+  it automatically) — it compiles `.feature` files into Playwright test files.
 - **Test servers bind `127.0.0.1` only, and clients use `127.0.0.1`, never `localhost`** (BUG-013):
   a server listening on `::` lets another macOS process bind `127.0.0.1` on the same port and steal
   the traffic (foreign 404/400 bodies, flaky scenarios). Backend tests go through
   `support/loopback.js`; the web harness backend uses `127.0.0.1:3334` and CRA `127.0.0.1:3000`.
   Cucumber runs with `forceExit`.
-  Run `bddgen` before `playwright test` (or use the `pretest`/`test:*` npm scripts, which do
-  it automatically) — it compiles `.feature` files into Playwright test files.
 - `qa/mobile-tests/` — Detox + `jest-cucumber` is the intended primary suite
   (`.detoxrc.js` targets `Pixel_6a_API_34` emulator / `iPhone 15` simulator), but per
   BUG-009 the Detox run currently times out on `device.launchApp` (suspected host resource
