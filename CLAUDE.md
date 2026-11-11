@@ -195,7 +195,8 @@ rather than a single cross-language framework:
   mocking; only GitHub and browser geolocation (`context.setGeolocation`) are faked: nock for
   GitHub's server-side OAuth API, `context.route` for the authorize page and avatar images, and
   a hook (`support/github-network.js`) fails any scenario whose browser reaches real GitHub.
-  Runs with `workers: 1` (scenarios share one backend and its `/__test__` reset).
+  Runs with `workers: 1` (scenarios share one backend); `step_definitions/isolation.hooks.js` empties
+  it before **every** scenario (BUG-014), so seed whatever a scenario needs in its own steps.
   Run `bddgen` before `playwright test` (or use the `pretest`/`test:*` npm scripts, which do
   it automatically) — it compiles `.feature` files into Playwright test files.
 - **Test servers bind `127.0.0.1` only, and clients use `127.0.0.1`, never `localhost`** (BUG-013):
