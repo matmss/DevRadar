@@ -42,10 +42,15 @@ http.Server.prototype.listen = function listenOnLoopback(...args) {
   return realListen.apply(this, withLoopbackHost(args));
 };
 
+// supertest >= 7.3 starts its own server on 127.0.0.1 and completes the URL once listening
+// (Test#_whenServerReady), which is this same fix; patching it there breaks its URL handling
+// ("Invalid URL"). Only older supertest needs the patch below.
+const SUPERTEST_BINDS_LOOPBACK = typeof Test.prototype._whenServerReady === 'function';
+
 const PENDING_PORT = 'pending-loopback-port';
 const realEnd = Test.prototype.end;
 
-Test.prototype.serverAddress = function loopbackServerAddress(app, path) {
+if (!SUPERTEST_BINDS_LOOPBACK) Test.prototype.serverAddress = function loopbackServerAddress(app, path) {
   const protocol = app instanceof require('tls').Server ? 'https' : 'http';
   const addr = app.address();
   if (addr) return `${protocol}://${LOOPBACK}:${addr.port}${path}`;
@@ -58,7 +63,7 @@ Test.prototype.serverAddress = function loopbackServerAddress(app, path) {
   return `${protocol}://${LOOPBACK}:${PENDING_PORT}${path}`;
 };
 
-Test.prototype.end = function endWhenListening(fn) {
+if (!SUPERTEST_BINDS_LOOPBACK) Test.prototype.end = function endWhenListening(fn) {
   const listening = this._loopbackListening;
   if (!listening) return realEnd.call(this, fn);
   this._loopbackListening = null;
