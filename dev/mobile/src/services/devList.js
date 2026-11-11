@@ -3,8 +3,12 @@
 //   dev-deleted           -> removeDev
 // The backend only pushes to subscribers the dev matches (position and techs; for dev-updated,
 // the NEW ones, auth spec Q4), so a pushed dev that is not on the map yet now belongs there.
-// A dev is the same entry if it has the same _id or the same github_username in any letter case
-// (GitHub logins are case-insensitive; a dev deleted and registered again gets a new _id).
+// A dev is the same entry if it has the same _id; otherwise, if both carry a GitHub account id
+// (`github_id`, auth slice 6), if those are equal; otherwise (a legacy profile has no github_id
+// yet) if they have the same github_username in any letter case (GitHub logins are
+// case-insensitive). The id comes before the login because a login can be renamed and then taken
+// by another account (auth spec Q10). A dev deleted and registered again gets a new _id but keeps
+// its github_id.
 
 /**
  * @param {unknown} value
@@ -15,12 +19,21 @@ function loginKey(value) {
 }
 
 /**
- * @param {{ _id?: unknown, github_username?: unknown }} a
- * @param {{ _id?: unknown, github_username?: unknown }} b
+ * @param {unknown} value
+ * @returns {boolean} true for a GitHub account id (a positive safe integer)
+ */
+function isGithubId(value) {
+  return Number.isSafeInteger(value) && value > 0;
+}
+
+/**
+ * @param {{ _id?: unknown, github_id?: unknown, github_username?: unknown }} a
+ * @param {{ _id?: unknown, github_id?: unknown, github_username?: unknown }} b
  * @returns {boolean}
  */
 function isSameDev(a, b) {
   if (a._id != null && b._id != null && String(a._id) === String(b._id)) return true;
+  if (isGithubId(a.github_id) && isGithubId(b.github_id)) return a.github_id === b.github_id;
   const login = loginKey(a.github_username);
   return login !== null && login === loginKey(b.github_username);
 }
@@ -64,9 +77,9 @@ function upsertDev(devs, dev) {
 }
 
 /**
- * The list without the dev (matched by _id or github_username).
+ * The list without the dev (matched like isSameDev: _id, then github_id, then github_username).
  * @param {object[]} devs
- * @param {{ _id?: unknown, github_username?: unknown } | null | undefined} dev
+ * @param {{ _id?: unknown, github_id?: unknown, github_username?: unknown } | null | undefined} dev
  * @returns {object[]} a new array, or `devs` itself if nothing matched
  */
 function removeDev(devs, dev) {

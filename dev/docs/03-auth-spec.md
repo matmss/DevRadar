@@ -1,7 +1,9 @@
 # DevRadar: GitHub sign-in (BUG-006 auth part + BUG-008)
 
-Status: **approved for development** (2026-11-08). Written by the PO agent; product decisions
-confirmed by the product owner. This is the source of truth for DEV and QA on this feature.
+Status: **delivered** (2026-11-10, all six slices; BUG-006 and BUG-008 fixed). Approved for
+development 2026-11-08. Written by the PO agent; product decisions confirmed by the product
+owner. This is the source of truth for DEV and QA on this feature; how it is built is in
+`dev/docs/00-architecture.md`, Authentication.
 
 ## Product decisions (confirmed)
 
@@ -16,13 +18,14 @@ confirmed by the product owner. This is the source of truth for DEV and QA on th
 | Q7 | Delete is a **hard delete**. |
 | Q8 | The product owner registers the GitHub OAuth App. Scope: **public profile only, no email** (`read:user` not needed; no scope = public data). Development and tests mock GitHub, so they don't wait for it. |
 | Q9 | A `github_username` in the request body is **ignored**; the token's identity always wins. |
+| Q10 | (Added for slice 6.) **A DevRadar profile belongs to a GitHub account by its numeric id** (`id` from GitHub `GET /user`), not by its login. Logins can be renamed and then registered by someone else; matching by login would let the new holder of a login take over, move or delete the previous owner's profile. The login stays as display data, refreshed from GitHub on every sign-in, and is how a legacy profile (no id yet) is matched, case-insensitively (Q5): its owner's first write claims it for their id. A profile of another id that shows the user's login is never theirs. **Logins stay unique across all profiles** (product decision on QA-AUTH6-1), and **the newest GitHub read always wins**: logins are ordered by when GitHub was read (at sign-in), whatever the order of sign-ins and writes. Whenever an account takes its login (at sign-in, and when it registers or saves its profile, including a claim), another profile showing that login from an older read is **displaced** (placeholder login, marked stale, a name that was only that login cleared, nothing else changed, never deleted; shown without a GitHub link) and the account's profile takes the login; the displaced owner's next sign-in gives them their current login. A profile whose login comes from a read at least as recent is never touched: an older session never takes or sets back a login, and its `POST /devs` answers 409 `github_username_conflict` (only then). Session tokens issued before this decision carry no id and are rejected, so each user signs in again once. |
 
 ## Access matrix
 
 | Surface | Auth |
 |---|---|
 | `GET /auth/github`, `GET /auth/github/callback`, token exchange endpoint | Public (rate limited) |
-| `POST /devs` | Required, username from token |
+| `POST /devs` | Required, identity (GitHub id and login) from token |
 | `PUT /devs/me`, `DELETE /devs/me` (new) | Required |
 | `GET /devs`, `GET /search` | Required |
 | Socket.io handshake (`new-dev`, `dev-updated`) | Required |
@@ -65,7 +68,7 @@ Scenario: Invalid or expired token
   Then I get 401 and the body lets the client distinguish "expired" from "invalid"
 
 Scenario: Valid token
-  Then the request proceeds with my GitHub login available server-side as the identity
+  Then the request proceeds with my GitHub account id (Q10) and login available server-side as the identity
 ```
 
 ### US-3 Register as myself
@@ -196,6 +199,30 @@ Scenario: Legacy profiles remain visible
 
 Scenario: No data migration required
   Then deploying auth does not delete or rewrite existing documents
+
+Scenario: The legacy profile is claimed for my GitHub account (Q10)
+  Given a profile for "alice" created before auth
+  When "alice" first updates, registers or deletes it (any letter case)
+  Then it is tied to her GitHub id, keeps its _id and data, and is hers from then on
+  And of two accounts claiming it at the same time, exactly one wins (no server error)
+
+Scenario: A renamed login does not hand over a profile (Q10)
+  Given account A registered as "alice", then renamed itself to "alice2" on GitHub without signing in again
+  And account B now holds the login "alice"
+  When B signs in as "alice"
+  Then A's profile is displaced (no login shown, no GitHub link, nothing else changed, not deleted)
+  And B cannot read, update or delete A's profile (404), and B can register as "alice"
+  When A signs in as "alice2"
+  Then the profile is still A's, now showing "alice2"
+  # Without B's sign-in (e.g. A signs in first) A's sign-in alone frees "alice". Swaps and cycles
+  # of logins converge once each owner signs in, in any order.
+  # If A's two-day-old "alice" session registers or claims "alice" after B signed in, B's own
+  # registration still succeeds: B's read is newer, so A's profile is displaced (QA-AUTH6-4).
+  # An older session never takes a login confirmed by a newer read: its registration gets 409.
+
+Scenario: Old sessions
+  Given a session token issued before GitHub ids were captured
+  Then every protected route and the socket answer token_invalid, and the client shows its signed-out view
 ```
 
 ## Security and non-functional criteria
@@ -215,13 +242,14 @@ Scenario: No data migration required
 - Mobile sign-in covered by Maestro flows (Detox blocked by BUG-009).
 - Docs: `qa/docs/01`–`05`, BUG-006 and BUG-008 status, `dev/docs/00-architecture.md`, `CLAUDE.md`.
 
-## Delivery order (each slice is its own PR)
-1. Backend OAuth flow + token middleware (US-1, US-2), no routes protected yet.
-2. Protect `POST /devs`, username from token (US-3); test sign-in helper for harnesses. Closes the squatting hole.
-3. Web sign-in/out + registration form (US-6, minus update/delete).
-4. Protect `GET /devs`, `GET /search` and the socket, plus mobile sign-in (US-5, US-7). Ship together.
-5. `PUT`/`DELETE /devs/me` + `dev-updated` event + web update/delete UI + mobile marker update (US-4, rest of US-6/US-7).
-6. Legacy handling verification, docs, bug-tracker closure (US-8).
+## Delivery order (each slice is its own PR, all delivered)
+0. CORS restricted to an origin allow-list (#61, before slice 1).
+1. Backend OAuth flow + token middleware (US-1, US-2), no routes protected yet (#62).
+2. Protect `POST /devs`, username from token (US-3); test sign-in helper for harnesses. Closes the squatting hole (#66).
+3. Web sign-in/out + registration form (US-6, minus update/delete) (#66, with slice 2).
+4. Protect `GET /devs`, `GET /search` and the socket, plus mobile sign-in (US-5, US-7). Ship together (#67).
+5. `PUT`/`DELETE /devs/me` + `dev-updated` event + web update/delete UI + mobile marker update (US-4, rest of US-6/US-7) (#69).
+6. Legacy handling (US-8), profiles owned by GitHub id (Q10), docs, bug-tracker closure (branch `feat/auth-slice-6-dev`).
 
 ## Out of scope
 Username/password or other providers; roles/admin/moderation; refresh tokens; mobile registration or

@@ -40,6 +40,16 @@ const {
 let mongod;
 let server;
 
+// The harness backend listens on 127.0.0.1 and every client (the browser through
+// REACT_APP_API_URL, the steps' fetch calls, the GitHub callback) dials 127.0.0.1, never
+// "localhost". A server listening without a host binds the wildcard "::", and on macOS another
+// process can still bind 127.0.0.1 (or ::1) on the same port and receive the traffic meant for
+// it; "localhost" may also resolve to ::1. That caused one-off foreign answers under load (QA
+// re-check of auth slice 6, see qa/docs/05-bug-tracker.md BUG-013). Bound on 127.0.0.1 itself,
+// the port cannot be shared: a second process gets EADDRINUSE. The CRA dev server runs on
+// 127.0.0.1:3000 for the same reason (playwright.config.js, HOST).
+const LOOPBACK = '127.0.0.1';
+
 /**
  * Auth configuration for the harness backend (dev/backend/src/config/auth.js reads env at
  * request time). Set before the app is built. The GitHub credentials are dummies: GitHub is
@@ -49,9 +59,9 @@ let server;
 function applyTestAuthEnv(port) {
   process.env.GITHUB_CLIENT_ID = 'web-test-client-id';
   process.env.GITHUB_CLIENT_SECRET = 'web-test-client-secret';
-  process.env.GITHUB_CALLBACK_URL = `http://localhost:${port}/auth/github/callback`;
+  process.env.GITHUB_CALLBACK_URL = `http://${LOOPBACK}:${port}/auth/github/callback`;
   process.env.JWT_SECRET = TEST_JWT_SECRET;
-  process.env.CORS_ORIGINS = 'http://localhost:3000';
+  process.env.CORS_ORIGINS = 'http://127.0.0.1:3000';
   // Every scenario signs in (3 sign-in requests) and reloads (GET /auth/me), from one IP.
   process.env.AUTH_RATE_LIMIT_MAX = '100000';
   process.env.AUTH_SESSION_RATE_LIMIT_MAX = '100000';
@@ -121,12 +131,15 @@ function testRoutes() {
   });
 
   // One specific developer, as a legacy (pre-sign-in) record would look: e.g. the signed-in
-  // user's own profile for the update/delete scenarios (auth slice 5), in any letter case.
+  // user's own profile for the update/delete scenarios (auth slice 5), in any letter case. With
+  // `github_id`, a developer owned by that GitHub account instead (auth slice 6); `name` defaults
+  // to the login.
   router.post('/seed-dev', async (req, res) => {
-    const { github_username, techs, latitude, longitude } = req.body;
+    const { github_username, github_id, name, techs, latitude, longitude } = req.body;
     await Dev.create({
+      ...(github_id === undefined ? {} : { github_id }),
       github_username,
-      name: github_username,
+      name: name || github_username,
       avatar_url: 'https://avatars.githubusercontent.com/u/0?v=4',
       bio: 'Seeded for an @integration scenario',
       techs: String(techs).split(',').map((tech) => tech.trim()),
@@ -150,7 +163,11 @@ async function startBackend(port) {
     beforeRoutes: (app) => app.use('/__test__', testRoutes()),
   }));
 
-  await new Promise((resolve) => server.listen(port, resolve));
+  // On 127.0.0.1 explicitly, the address every client here dials (see LOOPBACK above).
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, LOOPBACK, resolve);
+  });
 }
 
 async function stopBackend() {

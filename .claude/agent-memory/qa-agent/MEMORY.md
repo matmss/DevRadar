@@ -1,1 +1,1 @@
-- [QA harness quirks](qa-harness-quirks.md) — cucumber path merging, sandbox path rules, install (npm ci --workspaces=false in qa/*), scratch-tree main/mutant checks
+- [QA harness quirks](qa-harness-quirks.md) — cucumber path merging, sandbox path rules, install (npm ci --workspaces=false in qa/*), scratch-tree main/mutant checks, multi-device sign-in, mobile Jest flakes under load

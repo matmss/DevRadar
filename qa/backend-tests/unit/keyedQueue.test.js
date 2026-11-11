@@ -42,6 +42,44 @@ describe('createKeyedQueue', () => {
     expect(queue.size()).toBe(0);
   });
 
+  // Auth slice 6: a sign-in that displaces another account's dev holds both accounts' keys.
+  it('runAll holds every key for the task and waits for each key\'s earlier tasks', async () => {
+    const queue = createKeyedQueue();
+    const log = [];
+    const a = queue.run('a', async () => { await sleep(20); log.push('a'); });
+    const b = queue.run('b', async () => { await sleep(10); log.push('b'); });
+    const both = queue.runAll(['b', 'a', 'b'], async () => { log.push('both'); return 'done'; });
+    const laterA = queue.run('a', async () => { log.push('later-a'); });
+    await expect(both).resolves.toBe('done');
+    await Promise.all([a, b, laterA]);
+    expect(log).toEqual(['b', 'a', 'both', 'later-a']);
+    await sleep(0);
+    expect(queue.size()).toBe(0);
+  });
+
+  it('runAll never deadlocks when two tasks ask for the same keys in opposite orders', async () => {
+    const queue = createKeyedQueue();
+    const log = [];
+    const results = await Promise.race([
+      Promise.all([
+        queue.runAll(['x', 'y'], async () => { await sleep(10); log.push('xy'); return 1; }),
+        queue.runAll(['y', 'x'], async () => { await sleep(10); log.push('yx'); return 2; }),
+        queue.run('y', async () => { log.push('y'); return 3; }),
+      ]),
+      sleep(1000).then(() => 'deadlock'),
+    ]);
+    expect(results).toEqual([1, 2, 3]);
+    expect(log).toHaveLength(3);
+  });
+
+  it('runAll rejects only its own caller and releases every key', async () => {
+    const queue = createKeyedQueue();
+    await expect(queue.runAll(['p', 'q'], async () => { throw new Error('boom'); })).rejects.toThrow('boom');
+    await expect(queue.runAll(['q', 'p'], async () => 'next')).resolves.toBe('next');
+    await sleep(0);
+    expect(queue.size()).toBe(0);
+  });
+
   it('keeps a key while a task queued after the first is still pending', async () => {
     const queue = createKeyedQueue();
     const first = queue.run('gaearon', () => sleep(5));

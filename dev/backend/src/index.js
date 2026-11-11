@@ -19,10 +19,12 @@ const { server } = createServer();
 
 mongoose.connect(process.env.MONGO_URI);
 
-// Builds the Dev indexes, including the unique case-insensitive github_username index that keeps
-// one dev per GitHub login (models/Dev.js). Existing legacy duplicates (same login in different
-// letter case) make the build fail: the server still runs, registration still upserts, but two
-// exactly simultaneous first registrations could then both insert. Logged so it gets fixed.
+// Builds the Dev indexes (models/Dev.js): the partial unique github_id index (one dev per GitHub
+// account; legacy devs without an id are not in it, so it always builds and no document is
+// touched: no migration, US-8) and the unique case-insensitive github_username index. Existing
+// legacy duplicates (same login in different letter case) make the login index fail: the server
+// still runs and mongoose still builds the other indexes, but then two devs could share a login.
+// Logged so it gets fixed.
 Dev.init().catch((err) => {
   console.error(
     'Could not build the Dev indexes. If this is a duplicate key error, merge the developers '

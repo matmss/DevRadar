@@ -83,7 +83,13 @@ jobs:
 
       - name: Install Playwright browsers
         working-directory: qa/web-tests
-        run: npx playwright install --with-deps chromium
+        # Browser first, then system packages as best effort: GitHub's Ubuntu images already ship
+        # Chromium's libraries, and apt mirror outages (DNS failures resolving archive.ubuntu.com)
+        # used to fail this step after ~10 minutes before any test ran.
+        run: |
+          npx playwright install chromium
+          timeout 180 npx playwright install-deps chromium \
+            || echo "::warning::playwright install-deps failed or timed out; relying on the runner image's libraries"
 
       - name: Run web @regression suite
         working-directory: qa

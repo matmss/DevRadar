@@ -26,7 +26,7 @@ const { unexpectedGithubRequests } = require('../support/github-network');
 
 const { Given, When, Then } = createBdd();
 
-const BACKEND_URL = `http://localhost:${INTEGRATION_BACKEND_PORT}`;
+const BACKEND_URL = `http://127.0.0.1:${INTEGRATION_BACKEND_PORT}`;
 const GITHUB_AUTHORIZE_URL = 'https://github.com/login/oauth/authorize';
 const isSignInStart = (url) => url.origin === BACKEND_URL && url.pathname === '/auth/github';
 // Keys the web app uses (dev/web/src/services/session.js, services/auth.js).
@@ -72,7 +72,7 @@ function expiredSessionToken(login, secondsAgo = 3600) {
   const exp = Math.floor(Date.now() / 1000) - secondsAgo;
   const { name, avatar_url, bio } = githubUserFixture(login);
   return jwt.sign(
-    { sub: login, iss: 'devradar', iat: exp - SEVEN_DAYS_SECONDS, exp, profile: { name, avatar_url, bio } },
+    { sub: String(githubUserFixture(login).id), login, login_read_at: (exp - SEVEN_DAYS_SECONDS) * 1000, iss: 'devradar', iat: exp - SEVEN_DAYS_SECONDS, exp, profile: { name, avatar_url, bio } },
     TEST_JWT_SECRET,
     { algorithm: 'HS256' }
   );

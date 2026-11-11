@@ -3,8 +3,9 @@ Feature: Developer registration as the signed-in GitHub user (US-3)
   I want to register my location and techs
   So that I become discoverable to nearby developers, and nobody can register as me
 
-  # Spec: dev/docs/03-auth-spec.md, US-3, US-8 and Q9. POST /devs requires a session token. The
-  # dev is the token's GitHub login; name, avatar_url and bio come from the profile captured at
+  # Spec: dev/docs/03-auth-spec.md, US-3, US-8, Q9 and Q10. POST /devs requires a session token. The
+  # dev is the token's GitHub account (its id; the login is display data, see
+  # legacy-profiles.feature); name, avatar_url and bio come from the profile captured at
   # sign-in (the token's `profile` claim, a snapshot as of sign-in). Registration makes no call
   # to GitHub's public users API: hooks.js records any call to api.github.com/users/* and fails
   # the scenario. "I am signed in as" is a test-only sign-in (registration.steps.js) that signs a
@@ -43,6 +44,7 @@ Feature: Developer registration as the signed-in GitHub user (US-3)
     Examples:
       # profile-less: correctly signed but without the sign-in profile claim (slice 1 format)
       # forged-profile: correctly signed, but with a profile claim the backend never produces
+      # id-less: correctly signed, subject = login and no GitHub id (slices 1-5 format, Q10)
       | kind           |
       | tampered       |
       | foreign-signed |
@@ -50,6 +52,7 @@ Feature: Developer registration as the signed-in GitHub user (US-3)
       | malformed      |
       | profile-less   |
       | forged-profile |
+      | id-less        |
 
   # --- Username from identity (Q9) ------------------------------------------------------------
 
@@ -113,15 +116,18 @@ Feature: Developer registration as the signed-in GitHub user (US-3)
     And exactly 1 developer with github_username "gaearon" should exist in the database
     And the developer's techs should be "Node.js"
 
+  # Auth slice 6 (Q10): registering claims the legacy profile for the signed-in GitHub account;
+  # its data stays, and its login becomes GitHub's current spelling. More in legacy-profiles.feature.
   @regression @P1
   Scenario Outline: A legacy profile created before sign-in is returned to its owner signing in with different letter case
     Given a developer already exists with github_username "<legacy username>" and techs "Node.js"
     And I signed in through GitHub as "<github login>"
     When I submit a registration with techs "ReactJS", latitude "-23.5505" and longitude "-46.6333"
     Then the response status should be 200
-    And the registered developer should be "<legacy username>"
+    And the registered developer should be "<github login>"
     And the database should contain exactly 1 developer
     And the developer's techs should be "Node.js"
+    And the stored developer "<github login>" should belong to the GitHub account of "<github login>"
     And no call should have been made to GitHub's public users API
 
     Examples:

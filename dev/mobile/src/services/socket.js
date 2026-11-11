@@ -1,6 +1,8 @@
 // Live pushes for the current map region: `new-dev` (a dev registered), `dev-updated` (a dev
-// changed techs or position; sent for the NEW ones) and `dev-deleted` ({ _id, github_username }),
-// see dev/backend/src/websocket.js. The backend requires a session token at
+// changed techs or position, sent for the NEW ones; or its login changed: a rename, or a
+// displacement with `github_username_stale: true` and a placeholder login, see
+// services/githubLogin.js) and `dev-deleted` ({ _id, github_id, github_username }; a legacy dev
+// is claimed before it is deleted, so github_id is set), see dev/backend/src/websocket.js. The backend requires a session token at
 // handshake (dev/backend/src/websocket.js): it goes in the Socket.io `auth` payload, never in
 // the query string, so it does not end up in URLs or access logs. A refused handshake arrives as
 // connect_error with `data.code`; socket.io-client does not retry it on its own.
@@ -42,7 +44,7 @@ function subscribeToDevUpdates(listener) {
 
 /**
  * A dev that could be on this map deleted their profile (DELETE /devs/me).
- * @param {(dev: { _id: string, github_username: string }) => void} listener
+ * @param {(dev: { _id: string, github_id: number, github_username: string }) => void} listener
  * @returns {() => void} unsubscribe
  */
 function subscribeToDevDeletions(listener) {

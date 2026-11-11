@@ -50,7 +50,7 @@ const { getToken } = require('../../mobile/src/services/session');
 const { AUTH_REDIRECT_URI } = require('../../mobile/src/config');
 
 const TOKEN_KEY = 'devradar.session_token';
-const USER = { github_username: 'gaearon', name: 'Dan Abramov', avatar_url: null };
+const USER = { github_id: 810438, github_username: 'gaearon', name: 'Dan Abramov', avatar_url: null };
 
 let routes; // path -> (config) => [status, data]
 
@@ -124,6 +124,27 @@ describe('SessionProvider', () => {
     expect(SecureStore.__store.has(TOKEN_KEY)).toBe(false);
   });
 
+  // Auth slice 6 (Q10): tokens stored by earlier versions (subject = login, no GitHub id) are
+  // answered token_invalid. The app goes to the sign-in screen (never an empty map), forgets the
+  // token, and signing in again works.
+  it('goes to the sign-in screen when the stored token predates GitHub ids, and signing in again works', async () => {
+    SecureStore.__store.set(TOKEN_KEY, 'pre-slice-6-token');
+    routes['GET /auth/me'] = (config) => (config.headers.Authorization === 'Bearer fresh-token'
+      ? [200, USER]
+      : [401, { error: 'Invalid session token', code: 'token_invalid', details: [] }]);
+    renderer = await launch();
+    await flush();
+    expect(session.state).toEqual({ status: 'signedOut', user: null, notice: 'Sua sessão não é mais válida, entre novamente' });
+    expect(SecureStore.__store.has(TOKEN_KEY)).toBe(false);
+    expect(getToken()).toBeNull();
+
+    WebBrowser.openAuthSessionAsync.mockResolvedValue({ type: 'success', url: `${AUTH_REDIRECT_URI}?code=c` });
+    routes['POST /auth/token'] = () => [200, { token: 'fresh-token', user: USER }];
+    await act(async () => session.signIn());
+    expect(session.state).toEqual({ status: 'signedIn', user: USER, notice: null });
+    expect(SecureStore.__store.get(TOKEN_KEY)).toBe('fresh-token');
+  });
+
   it('keeps the token and offers a retry when the server is unreachable', async () => {
     SecureStore.__store.set(TOKEN_KEY, 'stored-token');
     routes['GET /auth/me'] = () => [0];
@@ -165,6 +186,22 @@ describe('SessionProvider', () => {
     });
     await flush();
     expect(session.state).toEqual({ status: 'signedOut', user: null, notice: 'Sessão expirada, entre novamente' });
+    expect(SecureStore.__store.has(TOKEN_KEY)).toBe(false);
+  });
+
+  it('returns to the sign-in screen when the socket handshake is refused as invalid (a token without a GitHub id)', async () => {
+    SecureStore.__store.set(TOKEN_KEY, 'stored-token');
+    routes['GET /auth/me'] = () => [200, USER];
+    renderer = await launch();
+    socketService.connect(1, 2, 'Go', getToken());
+
+    await act(async () => {
+      fakeSocket.emitLocal('connect_error', Object.assign(new Error('Invalid session token'), {
+        data: { code: 'token_invalid', details: ['The session token is malformed or its signature is invalid'] },
+      }));
+    });
+    await flush();
+    expect(session.state).toEqual({ status: 'signedOut', user: null, notice: 'Sua sessão não é mais válida, entre novamente' });
     expect(SecureStore.__store.has(TOKEN_KEY)).toBe(false);
   });
 

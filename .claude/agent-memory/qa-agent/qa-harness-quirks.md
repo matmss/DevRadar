@@ -36,3 +36,18 @@ Added during the auth slice 5 review (2026-11-10):
 
 **Why:** each cost a wasted run or produced a false pass.
 **How to apply:** use this when writing backend probes or log-assertion steps; see [[auth-review-findings]] if it is ever written.
+
+Added during the auth slice 6 review (2026-11-10):
+
+- `dev/mobile` `npm test` failed 12/159 once while the Playwright web suite ran at the same time, then passed 159/159 alone. Run mobile Jest after (not alongside) Playwright before calling a failure real.
+- A second, parallel sign-in of the same account (two devices): call `completeSignIn` from auth.steps.js with a detached world `{ app: this.app, signInCount: 900 }` (distinct mock codes), keep its `oneTimeCode` + `pkceVerifier`, and POST /auth/token later. Combine with the `{int} seconds pass` clock-shift step (auth.steps.js) to order token `iat`s without sleeping.
+- Login-refresh bugs are easiest to assert straight on Mongo by account: `Dev.findOne({ github_id }).lean()` (step "the developer of GitHub account N should show github_username X" in auth-slice6-review.steps.js).
+
+Added during the auth slice 6 re-check (2026-11-11):
+
+- One-off backend failures under load (a 404 with text/html, 400 instead of 413, socket connect_error without `data`, a 404 on POST /auth/token) are NOT slice-specific: they happen on main too when several suites run at once. Mechanism, proven with two-process probes: supertest and the realtime/CORS steps listen on "::" (no host) but dial 127.0.0.1; on macOS another process can still bind 127.0.0.1 on that port and receives the traffic. Fix lives in qa/backend-tests/features/support/loopback.js (forces 127.0.0.1 for host-less listen) if it got merged; check before re-diagnosing.
+- After a scenario times out, cucumber on main can print its summary and then never exit (0% CPU). Background runners need a watchdog kill.
+- Comparing revisions under equal load: scratch trees via `git archive <rev> dev/backend qa/backend-tests | tar -x`, node_modules symlinked, run them concurrently with `./node_modules/.bin/cucumber-js` (scratchpad diagruns.sh pattern).
+- Caveat: a run WITH loopback.js binds 127.0.0.1 and so captures traffic of concurrent runs WITHOUT it (seen as 401 token_invalid bodies from another revision's backend). When comparing revisions under load, patch all trees or none.
+- Since auth slice 6 a legacy claim re-spells the login as the claimant's GitHub spelling. Race scenarios whose winner varies must look stored devs up case-insensitively (collation strength 2), or they fail only when the "other" account wins (seen once in 6 loaded runs).
+- `forceExit: true` in qa/backend-tests/cucumber.js (since 082adfd): exit code and html/json reports are still correct, but leaked handles no longer show up as a hang.

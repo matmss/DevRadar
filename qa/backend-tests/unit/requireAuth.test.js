@@ -1,6 +1,8 @@
 const { requireAuth, readBearerToken, verifyToken } = require('../../../dev/backend/src/middleware/auth');
 const { signSessionToken, verifySessionToken } = require('../../../dev/backend/src/utils/sessionToken');
 
+const GAEARON = { github_id: 810438, github_username: 'gaearon' };
+
 function fakeRes() {
   const res = { statusCode: 200, headers: {}, body: undefined };
   res.status = (code) => { res.statusCode = code; return res; };
@@ -27,17 +29,17 @@ describe('requireAuth', () => {
     else process.env.JWT_SECRET = originalSecret;
   });
 
-  it('sets req.user (login + sign-in profile) and continues for a valid token', () => {
+  it('sets req.user (GitHub id, login, sign-in profile, GitHub read time) and continues for a valid token', () => {
     const profile = { name: 'Dan Abramov', avatar_url: 'https://avatars.githubusercontent.com/u/810438?v=4', bio: null };
-    const { token } = signSessionToken('gaearon', profile);
+    const { token, loginReadAt } = signSessionToken({ ...GAEARON, profile });
     const { req, res, next } = run(`Bearer ${token}`);
     expect(next).toHaveBeenCalledTimes(1);
-    expect(req.user).toEqual({ github_username: 'gaearon', profile });
+    expect(req.user).toEqual({ github_id: 810438, github_username: 'gaearon', profile, login_read_at: loginReadAt });
     expect(res.body).toBeUndefined();
   });
 
   it('accepts the scheme case-insensitively', () => {
-    const { token } = signSessionToken('gaearon');
+    const { token } = signSessionToken(GAEARON);
     expect(run(`bearer ${token}`).next).toHaveBeenCalled();
   });
 
@@ -64,7 +66,7 @@ describe('requireAuth', () => {
 
   it('answers 401 token_expired for an expired token', () => {
     const realNow = Date.now;
-    const { token } = signSessionToken('gaearon');
+    const { token } = signSessionToken(GAEARON);
     try {
       Date.now = () => realNow() + 8 * 24 * 60 * 60 * 1000;
       const { res, next } = run(`Bearer ${token}`);
@@ -77,7 +79,7 @@ describe('requireAuth', () => {
   });
 
   it('rejects a header with more than one token', () => {
-    const { token } = signSessionToken('gaearon');
+    const { token } = signSessionToken(GAEARON);
     expect(run(`Bearer ${token} ${token}`).res.body.code).toBe('token_missing');
   });
 

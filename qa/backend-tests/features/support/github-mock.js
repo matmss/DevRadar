@@ -1,19 +1,26 @@
+const crypto = require('crypto');
 const nock = require('nock');
 
+// GitHub's GET /user answers carry the account's numeric `id`, which is what a DevRadar profile
+// belongs to (auth spec Q10). Fixture ids are fixed; other logins get one derived from the login
+// in lower case, so "Gaearon" and "gaearon" are the same account, as on GitHub.
 const FIXTURES = {
   gaearon: {
+    id: 810438,
     login: 'gaearon',
     name: 'Dan Abramov',
     avatar_url: 'https://avatars.githubusercontent.com/u/810438?v=4',
     bio: 'Working on React',
   },
   'near-match': {
+    id: 1001,
     login: 'near-match',
     name: 'Near Match',
     avatar_url: 'https://avatars.githubusercontent.com/u/1?v=4',
     bio: 'Test fixture',
   },
   alice: {
+    id: 1002,
     login: 'alice',
     name: 'Alice Liddell',
     avatar_url: 'https://avatars.githubusercontent.com/u/2?v=4',
@@ -22,13 +29,26 @@ const FIXTURES = {
 };
 
 /**
+ * The GitHub account id the fixtures use for `username` (any letter case).
+ * @param {string} username
+ * @returns {number} a positive safe integer
+ */
+function githubIdFor(username) {
+  const key = username.toLowerCase();
+  if (FIXTURES[key]) return FIXTURES[key].id;
+  // 48 bits of a hash, above the fixed ids: stable, distinct per login, a safe integer.
+  return 1000000 + crypto.createHash('sha256').update(key).digest().readUIntBE(0, 6);
+}
+
+/**
  * The GET https://api.github.com/user response for a fixture user. Unknown names get a generated
  * fixture with `name: null`, so DevController's fallback to the login applies.
  * @param {string} username
- * @returns {{ login: string, name: string | null, avatar_url: string, bio: string }}
+ * @returns {{ id: number, login: string, name: string | null, avatar_url: string, bio: string }}
  */
 function githubUserFixture(username) {
   return FIXTURES[username] || {
+    id: githubIdFor(username),
     login: username,
     name: null,
     avatar_url: 'https://avatars.githubusercontent.com/u/0?v=4',
@@ -115,12 +135,15 @@ function mockGithubOAuthTokenExchangeFailure(kind) {
 
 /**
  * Stubs GET https://api.github.com/user, answering only for `Authorization: Bearer <accessToken>`.
- * `overrides` replace fixture fields (e.g. a hostile bio).
+ * `overrides` replace fixture fields (e.g. a hostile bio, another account id); a field
+ * overridden with undefined is left out of the answer.
  */
 function mockGithubAuthenticatedUser(accessToken, username, overrides = {}) {
+  const body = { ...githubUserFixture(username), ...overrides };
+  Object.keys(body).forEach((key) => body[key] === undefined && delete body[key]);
   nock('https://api.github.com', { reqheaders: { authorization: `Bearer ${accessToken}` } })
     .get('/user')
-    .reply(200, { ...githubUserFixture(username), ...overrides });
+    .reply(200, body);
 }
 
 /** Stubs a failing GET https://api.github.com/user. `kind`: "unauthorized" (401) or "rate limited". */
@@ -142,6 +165,7 @@ module.exports = {
   mockGithubAuthenticatedUser,
   mockGithubAuthenticatedUserFailure,
   githubUserFixture,
+  githubIdFor,
   watchGithubUsersApi,
   FIXTURES,
 };

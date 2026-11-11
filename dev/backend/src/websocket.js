@@ -3,9 +3,15 @@
 // subscribers whose position and techs match the dev (findConnections, DevController):
 //   new-dev      a dev registered (POST /devs created it)               payload: the dev
 //   dev-updated  a dev changed techs/position (PUT /devs/me), matched
-//                against the NEW position and techs (Q4)                  payload: the dev
+//                against the NEW position and techs (Q4); or its login
+//                changed (a renamed GitHub account signing in or
+//                registering again, or a dev displaced from a login
+//                GitHub gave to someone else: placeholder login and
+//                github_username_stale), matched against its
+//                position/techs                                          payload: the dev
 //   dev-deleted  a dev deleted their profile (DELETE /devs/me), matched
-//                against its last position and techs                     payload: { _id, github_username }
+//                against its last position and techs                     payload: { _id, github_id, github_username }
+// (Events are sent from services/devEvents.js.)
 //
 // Handshake contract:
 //   auth:  { token: "<session token>" }            (socket.io-client `auth` option)
@@ -26,7 +32,9 @@
 // The token is checked first, so an unauthenticated client learns nothing about validation.
 // socket.io-client does not retry a connection refused by a middleware, so a rejected client
 // does not loop. The token is checked on connect only: an open socket is not closed when its
-// token expires (Q6). The next connect with that token is rejected as token_expired.
+// token expires (Q6). The next connect with that token is rejected as token_expired. A token
+// issued before GitHub ids were captured is token_invalid (utils/sessionToken.js).
+// socket.data.user is { github_id, github_username, profile }, like req.user.
 const socketio = require('socket.io');
 const parseStringAsArray = require('./utils/parseStringAsArray');
 const { isNearby } = require('./utils/nearby');

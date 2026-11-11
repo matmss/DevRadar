@@ -8,6 +8,7 @@ import {
   isSignInCallback,
   SIGN_IN_RESULT,
 } from './services/auth';
+import { upsertDev, removeDev } from './services/devList';
 
 import './Global.css'
 import './App.css'
@@ -83,40 +84,6 @@ function requestErrorMessage(err) {
  */
 function isDevNotFound(err) {
   return hasStatus(err, 404) && Boolean(err.response.data) && err.response.data.code === 'dev_not_found';
-}
-
-/**
- * Same dev: same _id, or the same GitHub login in any letter case (a profile deleted and
- * registered again in another tab has a new _id).
- * @param {{ _id?: string, github_username?: string }} a
- * @param {{ _id?: string, github_username?: string }} b
- * @returns {boolean}
- */
-function isSameDev(a, b) {
-  if (a._id && b._id && a._id === b._id) return true;
-  return typeof a.github_username === 'string' && typeof b.github_username === 'string'
-    && a.github_username.toLowerCase() === b.github_username.toLowerCase();
-}
-
-/**
- * The list with `dev` in place of its entry (and without other entries for the same dev), or
- * appended if it is not there.
- * @param {object[]} devs
- * @param {object} dev
- * @returns {object[]}
- */
-function upsertDev(devs, dev) {
-  let replaced = false;
-  const next = [];
-  devs.forEach(item => {
-    if (!isSameDev(item, dev)) next.push(item);
-    else if (!replaced) {
-      next.push(dev);
-      replaced = true;
-    }
-  });
-  if (!replaced) next.push(dev);
-  return next;
 }
 
 /**
@@ -354,7 +321,7 @@ function App() {
    */
   function showProfileRemoved(removed, notice, draft = null) {
     setProfile(null);
-    if (removed) setDevs(current => current.filter(dev => !isSameDev(dev, removed)));
+    if (removed) setDevs(current => removeDev(current, removed));
     setFormDraft(draft);
     setFormRevision(revision => revision + 1);
     setFormNotice(notice);

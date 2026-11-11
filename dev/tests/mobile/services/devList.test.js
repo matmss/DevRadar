@@ -28,6 +28,26 @@ describe('devList', () => {
       expect(isSameDev({ _id: 'a1' }, { _id: 'b2' })).toBe(false);
       expect(isSameDev({ github_username: '' }, { github_username: '' })).toBe(false);
     });
+
+    // Auth slice 6 (Q10): a profile belongs to a GitHub account id; logins can be renamed and
+    // then taken by another account.
+    it('matches the same GitHub account under a new _id or a new login', () => {
+      const alice = { _id: 'a1', github_id: 501, github_username: 'alice' };
+      expect(isSameDev(alice, { _id: 'a2', github_id: 501, github_username: 'alice' })).toBe(true);
+      expect(isSameDev(alice, { _id: 'a2', github_id: 501, github_username: 'alice2' })).toBe(true);
+    });
+
+    it('does not match two GitHub accounts that show the same login', () => {
+      const alice = { _id: 'a1', github_id: 501, github_username: 'alice' };
+      expect(isSameDev(alice, { _id: 'b1', github_id: 502, github_username: 'ALICE' })).toBe(false);
+    });
+
+    it('falls back to the login when either dev has no usable GitHub id (legacy profile)', () => {
+      const claimed = { _id: 'a2', github_id: 501, github_username: 'alice' };
+      expect(isSameDev({ _id: 'l1', github_username: 'ALICE' }, claimed)).toBe(true);
+      expect(isSameDev(claimed, { _id: 'l1', github_username: 'ALICE' })).toBe(true);
+      expect(isSameDev({ _id: 'l1', github_id: '501', github_username: 'bob' }, claimed)).toBe(false);
+    });
   });
 
   describe('isRenderableDev', () => {
@@ -74,6 +94,18 @@ describe('devList', () => {
       expect(next[0].techs).toEqual(['Go']);
     });
 
+    it('moves a renamed dev of the same GitHub account instead of adding a second marker', () => {
+      const withIds = [dev('a1', 'alice', { github_id: 501 }), dev('b1', 'bob', { github_id: 502 })];
+      const next = upsertDev(withIds, dev('a1', 'alice2', { github_id: 501 }));
+      expect(next.map(item => item.github_username)).toEqual(['alice2', 'bob']);
+    });
+
+    it('adds another GitHub account that shows a login already on the map', () => {
+      const withIds = [dev('a1', 'alice', { github_id: 501 })];
+      const next = upsertDev(withIds, dev('c1', 'alice', { github_id: 503 }));
+      expect(next.map(item => item._id)).toEqual(['a1', 'c1']);
+    });
+
     it('ignores a malformed push', () => {
       expect(upsertDev(list, { _id: 'g1', github_username: 'gaearon' })).toBe(list);
       expect(upsertDev(list, null)).toBe(list);
@@ -89,6 +121,11 @@ describe('devList', () => {
 
     it('removes the dev by login in any letter case', () => {
       expect(removeDev(list, { _id: 'zz', github_username: 'GAEARON' }).map(item => item._id)).toEqual(['a1']);
+    });
+
+    it('removes by GitHub account, never another account that shows the same login', () => {
+      const withIds = [dev('a1', 'alice', { github_id: 501 }), dev('c1', 'alice', { github_id: 503 })];
+      expect(removeDev(withIds, { _id: 'zz', github_id: 503, github_username: 'alice' }).map(item => item._id)).toEqual(['a1']);
     });
 
     it('returns the same list when nothing matches or the push is malformed', () => {

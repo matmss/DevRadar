@@ -1,11 +1,13 @@
 // GitHub OAuth web flow calls, the backend's only calls to GitHub (registration uses the
 // profile captured here, see utils/githubProfile.js). Failures map to an HTTP status + message:
-// 503 for rate limits, 502 otherwise.
+// 503 for rate limits, 502 otherwise. A failure may carry a `reason`, the sign_in_failed reason
+// AuthController sends the client (otherwise it is derived from the status).
 // Never log request bodies, axios configs or responses here: they contain the client secret
 // and access tokens. Log `err.message` only.
 const axios = require('axios');
 const { githubClientId, githubClientSecret, githubCallbackUrl } = require('../config/auth');
 const { isValidGithubUsername } = require('../utils/githubUsername');
+const { isValidGithubId } = require('../utils/githubId');
 const { sanitizeGithubProfile } = require('../utils/githubProfile');
 
 const AUTHORIZE_URL = 'https://github.com/login/oauth/authorize';
@@ -15,8 +17,11 @@ const REQUEST_TIMEOUT_MS = 10000;
 const ERROR_CODE_PATTERN = /^[a-z_]{1,64}$/;
 
 /**
- * @typedef {{ status: number, error: string, details: string[] }} GithubFailure
+ * @typedef {{ status: number, error: string, details: string[], reason?: string }} GithubFailure
  */
+
+// GET /user answered 200 without a usable account id or login.
+const USER_INVALID_REASON = 'github_user_invalid';
 
 /**
  * GitHub signals rate limiting with 429, or 403 + x-ratelimit-remaining: 0.
@@ -99,10 +104,13 @@ async function exchangeCodeForToken(code) {
 }
 
 /**
- * Reads the signed-in user's public profile with their access token. The profile is sanitized
+ * Reads the signed-in user's account id, login and public profile with their access token. The
+ * id (a positive integer) is the identity a DevRadar profile belongs to (auth spec Q10); without
+ * a valid id or login the sign-in fails with reason github_user_invalid. The profile is sanitized
  * and length-limited (utils/githubProfile.js); it becomes the session token's `profile` claim.
  * @param {string} accessToken
- * @returns {Promise<{ user: { login: string, profile: import('../utils/githubProfile').GithubProfile } } | GithubFailure>}
+ * @returns {Promise<{ user: { id: number, login: string,
+ *   profile: import('../utils/githubProfile').GithubProfile } } | GithubFailure>}
  */
 async function fetchAuthenticatedUser(accessToken) {
   let response;
@@ -119,18 +127,29 @@ async function fetchAuthenticatedUser(accessToken) {
     return mapAxiosError(err, 'user lookup');
   }
 
-  const data = response.data || {};
-  if (!isValidGithubUsername(data.login)) {
-    console.error('GitHub user lookup returned no valid login');
-    return { status: 502, error: 'Could not complete GitHub sign-in, try again later', details: ['user lookup'] };
+  const data = response.data && typeof response.data === 'object' ? response.data : {};
+  const invalid = [
+    isValidGithubId(data.id) ? null : 'id',
+    isValidGithubUsername(data.login) ? null : 'login',
+  ].filter(Boolean);
+  if (invalid.length > 0) {
+    // Names the missing fields only, never their values.
+    console.error(`GitHub user lookup returned no valid ${invalid.join(' or ')}`);
+    return {
+      status: 502,
+      reason: USER_INVALID_REASON,
+      error: 'Could not complete GitHub sign-in, try again later',
+      details: ['user lookup'],
+    };
   }
-  return { user: { login: data.login, profile: sanitizeGithubProfile(data) } };
+  return { user: { id: data.id, login: data.login, profile: sanitizeGithubProfile(data) } };
 }
 
 module.exports = {
   AUTHORIZE_URL,
   ACCESS_TOKEN_URL,
   USER_URL,
+  USER_INVALID_REASON,
   buildAuthorizeUrl,
   exchangeCodeForToken,
   fetchAuthenticatedUser,

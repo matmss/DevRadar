@@ -109,8 +109,12 @@ Per team convention, before writing new code, check for:
   test-location table above) before adding a parallel one.
 - **Security surface** — identity comes only from the session token
   (`req.user`, set by `requireAuth`; see `00-architecture.md`,
-  Authentication). Never take an identity from `req.body`/`req.query`. Since
-  auth slice 4 only `/auth/*` is public: a new route that shows or changes
+  Authentication). Never take an identity from `req.body`/`req.query`. A user
+  is a GitHub account, `req.user.github_id` (auth spec Q10); the login
+  (`req.user.github_username`) is display data that can be renamed and reused
+  by someone else, so never decide whose dev a request may touch by login:
+  use `resolveOwnDev` in `services/devOwnership.js`, and run writes through
+  its `inAccountOrder` queue. Only `/auth/*` is public: a new route that shows or changes
   devs needs `requireAuth`, and the socket identity is `socket.data.user`
   (set by the handshake middleware in `websocket.js`). Tokens never go in URLs:
   HTTP uses the `Authorization` header, the socket its handshake `auth`

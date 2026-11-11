@@ -22,7 +22,7 @@ BeforeAll({ timeout: 60000 }, async function () {
   await Dev.init();
 });
 
-AfterAll(async function () {
+AfterAll({ timeout: 30000 }, async function () {
   await mongoose.disconnect();
   if (mongod) await mongod.stop();
 });
@@ -65,14 +65,39 @@ After(function () {
   }
 });
 
+// Closes everything a scenario opened, also after a step timed out mid-request: every client
+// socket (connected or still connecting: disconnect() stops it either way), every connection to
+// the scenario's server (server.close() alone waits for open connections, so a hung request would
+// make this hook, and then the whole run, wait forever), and the server itself, bounded by a
+// timeout. cucumber.js also sets forceExit, so a handle left behind by a timed-out step (e.g. a
+// supertest server) cannot keep the process alive after the summary.
+const CLOSE_TIMEOUT_MS = 2000;
+
+/**
+ * @param {import('http').Server} server
+ * @returns {Promise<void>} resolves when closed, or after CLOSE_TIMEOUT_MS at the latest
+ */
+function closeServer(server) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, CLOSE_TIMEOUT_MS);
+    timer.unref();
+    server.close(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+    if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+  });
+}
+
 After(async function () {
   for (const socket of this.sockets) {
-    if (socket.connected) socket.disconnect();
+    socket.removeAllListeners();
+    socket.disconnect();
   }
   this.sockets = [];
 
   if (this.server && this.server.listening) {
-    await new Promise((resolve) => this.server.close(resolve));
+    await closeServer(this.server);
   }
 
   nock.cleanAll();

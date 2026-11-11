@@ -3,10 +3,10 @@ const { Given, When, Then, After } = require('@cucumber/cucumber');
 const { expect } = require('chai');
 const request = require('supertest');
 const nock = require('nock');
-const { signSessionToken } = require('../../../../dev/backend/src/utils/sessionToken');
 const { createTestApp } = require('../support/testApp');
 const {
   SEVEN_DAYS_SECONDS,
+  testSessionToken,
   expiredSessionToken,
   forgedSessionToken,
   decodeJwtPart,
@@ -17,6 +17,7 @@ const {
   mockGithubAuthenticatedUser,
   mockGithubAuthenticatedUserFailure,
   githubUserFixture,
+  githubIdFor,
 } = require('../support/github-mock');
 
 const GITHUB_ACCESS_TOKEN = 'gho_test_access_token_must_never_leak';
@@ -109,10 +110,15 @@ Given(
 );
 
 async function completeSignIn(world, username, profileOverrides = {}) {
-  mockGithubOAuthTokenExchange('good-code', GITHUB_ACCESS_TOKEN);
-  mockGithubAuthenticatedUser(GITHUB_ACCESS_TOKEN, username, profileOverrides);
+  // Each sign-in its own one-time code and access token, so a scenario can sign in several times.
+  world.signInCount = (world.signInCount || 0) + 1;
+  const code = `good-code-${world.signInCount}`;
+  const accessToken = `${GITHUB_ACCESS_TOKEN}_${world.signInCount}`;
+  mockGithubOAuthTokenExchange(code, accessToken);
+  mockGithubAuthenticatedUser(accessToken, username, profileOverrides);
+  world.oneTimeCode = undefined;
   await startSignIn(world, 'http://localhost:3000/');
-  await callBack(world, { code: 'good-code', state: world.authState });
+  await callBack(world, { code, state: world.authState });
   world.oneTimeCode = oneTimeCodeFrom(world.response);
   expect(world.oneTimeCode, 'sign-in should have produced a one-time code').to.be.a('string').that.is.not.empty;
 }
@@ -124,6 +130,8 @@ async function signInThroughGithub(world, username, profileOverrides) {
   expect(world.response.status, 'token exchange should succeed').to.equal(200);
   expect(world.sessionToken, 'token exchange should issue a session token').to.be.a('string').that.is.not.empty;
 }
+
+module.exports = { signInThroughGithub, completeSignIn };
 
 Given('I completed GitHub sign-in as {string}', async function (username) {
   await completeSignIn(this, username);
@@ -144,7 +152,7 @@ Given('I signed in through GitHub as {string} whose GitHub bio is {int} characte
 });
 
 Given('I have a valid session token for {string}', function (username) {
-  this.sessionToken = signSessionToken(username, githubUserFixture(username)).token;
+  this.sessionToken = testSessionToken(username);
 });
 
 Given('I have a session token for {string} that expired {int} hour(s) ago', function (username, hours) {
@@ -393,12 +401,14 @@ Then('the response should contain a Bearer session token for {string} valid for 
   const { body } = this.response;
   expect(body.token_type).to.equal('Bearer');
   expect(body.expires_in).to.equal(SEVEN_DAYS_SECONDS);
-  expect(body.user).to.include({ github_username: username });
+  expect(body.user).to.include({ github_id: githubIdFor(username), github_username: username });
 
+  // Q10: the subject is the GitHub account id (a string, per JWT), the login a separate claim.
   const [header, payload] = body.token.split('.');
   expect(decodeJwtPart(header).alg).to.equal('HS256');
   const claims = decodeJwtPart(payload);
-  expect(claims.sub).to.equal(username);
+  expect(claims.sub).to.equal(String(githubIdFor(username)));
+  expect(claims.login).to.equal(username);
   expect(claims.exp - claims.iat).to.equal(SEVEN_DAYS_SECONDS);
 });
 
@@ -423,7 +433,7 @@ Then('the signed-in identity should be {string}', function (username) {
 
 Then("the signed-in user should have the name and avatar_url of {string}'s GitHub profile", function (username) {
   const { name, avatar_url } = githubUserFixture(username);
-  expect(this.response.body).to.deep.equal({ github_username: username, name, avatar_url });
+  expect(this.response.body).to.deep.equal({ github_id: githubIdFor(username), github_username: username, name, avatar_url });
 });
 
 Then("the session token should carry {string}'s GitHub profile from sign-in", function (username) {

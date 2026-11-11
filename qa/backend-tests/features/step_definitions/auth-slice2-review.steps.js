@@ -3,8 +3,7 @@ const { Given, When, Then } = require('@cucumber/cucumber');
 const { expect } = require('chai');
 const request = require('supertest');
 const Dev = require('../../../../dev/backend/src/models/Dev');
-const { signSessionToken } = require('../../../../dev/backend/src/utils/sessionToken');
-const { githubUserFixture } = require('../support/github-mock');
+const { testSessionToken } = require('../support/session');
 
 /**
  * Sends one POST /devs per token, all started before any is awaited, so the requests overlap
@@ -22,8 +21,9 @@ async function postConcurrently(world, tokens, body) {
   );
 }
 
+// The same GitHub account (the fixture id is case-insensitive), signed in with another letter case.
 Given('a second session token for {string}', function (username) {
-  this.secondSessionToken = signSessionToken(username, githubUserFixture(username.toLowerCase())).token;
+  this.secondSessionToken = testSessionToken(username);
 });
 
 When(

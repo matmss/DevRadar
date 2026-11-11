@@ -49,3 +49,7 @@ li.dev-item {
   li.dev-item a:hover {
     color: #5A2EA6;
   }
+  li.dev-item .dev-item-no-profile {
+    color: #999;
+    font-size: 14px;
+  }

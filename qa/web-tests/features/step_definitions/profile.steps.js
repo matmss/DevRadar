@@ -7,7 +7,7 @@ const { harnessSessionToken, inspectorAuthHeaders } = require('../support/auth-f
 
 const { Given, When, Then } = createBdd();
 
-const BACKEND_URL = `http://localhost:${INTEGRATION_BACKEND_PORT}`;
+const BACKEND_URL = `http://127.0.0.1:${INTEGRATION_BACKEND_PORT}`;
 const PUT_DELAY_MS = 1500;
 
 const isPutMe = (request) => request.method() === 'PUT' && request.url() === `${BACKEND_URL}/devs/me`;

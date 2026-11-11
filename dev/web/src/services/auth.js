@@ -53,7 +53,7 @@ export async function startSignIn() {
 }
 
 /**
- * @typedef {{ github_username: string, name: string | null, avatar_url: string | null }} SignedInUser
+ * @typedef {{ github_id: number, github_username: string, name: string | null, avatar_url: string | null }} SignedInUser
  * @typedef {{ ok: true, token: string, user: SignedInUser } | { ok: false, error: string, reason?: string }} SignInResult
  */
 

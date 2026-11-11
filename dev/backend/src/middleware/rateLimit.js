@@ -4,11 +4,12 @@
 //     AUTH_RATE_LIMIT_MAX, default 60. Each sign-in uses 3 requests.
 //   - sessionRateLimiter: GET /auth/me, which clients call on every load.
 //     AUTH_SESSION_RATE_LIMIT_MAX, default 600.
-// Per signed-in GitHub login (case-insensitive), after requireAuth:
+// Per signed-in GitHub account (its numeric id, auth spec Q10), after requireAuth:
 //   - profileRateLimiter: PUT and DELETE /devs/me. PROFILE_RATE_LIMIT_MAX, default 30. Each change
 //     is pushed to every matching socket, so this caps how much one account can make the backend
-//     broadcast (QA-AUTH5 hardening 2). Keyed on the login, not the IP, so one account cannot
+//     broadcast (QA-AUTH5 hardening 2). Keyed on the account, not the IP, so one account cannot
 //     spread its changes over many addresses, and users behind one NAT do not share a budget.
+//     Not on the login: a rename would otherwise start a fresh budget.
 // The client IP is req.ip, so behind a reverse proxy set TRUST_PROXY (config/proxy.js) or every
 // client shares the proxy's key. Counters are in memory, per process (like the OAuth state).
 const { rateLimit, MemoryStore } = require('express-rate-limit');
@@ -38,7 +39,7 @@ function authSessionRateLimitMax() {
   return limitFromEnv('AUTH_SESSION_RATE_LIMIT_MAX', DEFAULT_AUTH_SESSION_RATE_LIMIT_MAX);
 }
 
-/** @returns {number} PUT/DELETE /devs/me requests allowed per login per window */
+/** @returns {number} PUT/DELETE /devs/me requests allowed per GitHub account per window */
 function profileRateLimitMax() {
   return limitFromEnv('PROFILE_RATE_LIMIT_MAX', DEFAULT_PROFILE_RATE_LIMIT_MAX);
 }
@@ -79,7 +80,7 @@ const profileRateLimiter = createLimiter(
   profileRateLimitMax,
   'profile changes',
   profileStore,
-  (req) => `login:${req.user.github_username.toLowerCase()}`
+  (req) => `github_id:${req.user.github_id}`
 );
 
 /**
