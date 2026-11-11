@@ -51,3 +51,11 @@ Added during the auth slice 6 re-check (2026-11-11):
 - Caveat: a run WITH loopback.js binds 127.0.0.1 and so captures traffic of concurrent runs WITHOUT it (seen as 401 token_invalid bodies from another revision's backend). When comparing revisions under load, patch all trees or none.
 - Since auth slice 6 a legacy claim re-spells the login as the claimant's GitHub spelling. Race scenarios whose winner varies must look stored devs up case-insensitively (collation strength 2), or they fail only when the "other" account wins (seen once in 6 loaded runs).
 - `forceExit: true` in qa/backend-tests/cucumber.js (since 082adfd): exit code and html/json reports are still correct, but leaked handles no longer show up as a hang.
+
+Added during the BUG-014 review (2026-11-11):
+
+- The nightly runs only `--grep @regression`, the PR the full suite: with `workers: 1` the neighbour scenarios differ. Verify web harness changes with full + @regression + @smoke; an order bug shows on main as regression 35/36 while full is 49/49.
+- Order-dependence check, backend: `./node_modules/.bin/cucumber-js --order random:<seed>` (309/309 with two seeds at 24b25e1). Web has no random order; prove hook-vs-Background order with a throwaway feature whose Background seeds and whose scenario asserts the count (playwright-bdd emits Background as a describe-level beforeEach, hooks as a file-level one, so hooks run first).
+- The web harness backend's rate limits are raised to 100000 (backend-server.js), so the per-scenario reset (DB only) needs no rate-limit reset; the backend suite resets all three limiter stores itself.
+- CI install path (`npm install` at qa/ root, no root lockfile) ignores the per-suite lockfiles; test it in a `git archive` scratch tree so it doesn't rewrite the worktree's per-suite node_modules.
+- Waiting for a background run: end the turn; the completion notification resumes the run.
