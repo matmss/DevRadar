@@ -200,11 +200,16 @@ Then(
   }
 );
 
+// Case-insensitive: a claim takes the claimant's login as GitHub spells it (QA-AUTH6-2), so when
+// the account that presented "ALICE" wins, the stored login is "ALICE". An exact-case lookup
+// failed whenever the second request won the race (seen under load, QA final re-check).
 Then('the stored developer {string} should belong to the GitHub account that was answered 200', async function (username) {
   const winner = this.concurrent.find(({ response }) => response.status === 200);
-  const dev = await storedDev(username);
-  expect(dev, `developer "${username}" should be persisted`).to.not.be.null;
+  expect(winner, 'one concurrent request should be answered 200').to.not.equal(undefined);
+  const dev = await Dev.findOne({ github_username: username }).collation({ locale: 'en', strength: 2 }).lean();
+  expect(dev, `developer "${username}" (any letter case) should be persisted`).to.not.be.null;
   expect(dev.github_id).to.equal(winner.githubId);
+  expect(dev.github_username, "the winner's spelling of the login").to.equal(winner.login);
 });
 
 // --- Startup ----------------------------------------------------------------------------------
