@@ -87,13 +87,29 @@ Routes (`dev/backend/src/routes.js`):
   `GET`/`PUT`/`DELETE /devs/me` and the Socket.io handshake** (only `/auth/*` is public). Backend and web tests
   must sign in first (use the harnesses' test sign-in helpers). The JWT carries a sanitized, size-capped `profile` claim
   (`utils/githubProfile.js`; keep tokens well under 2048 bytes, the `expo-secure-store` limit).
+  **Identity is GitHub's numeric user id, not the login** (spec Q10): token `sub` = the id (decimal
+  string), plus `login` and `login_read_at` (when GitHub was read at the callback); `req.user` is
+  `{ github_id, github_username, profile, login_read_at }`. Tokens without these are `token_invalid`.
+
+- **Profile ownership** (`services/devOwnership.js`): a dev with my `github_id` is mine; a legacy
+  dev (no or null `github_id`) whose login matches mine case-insensitively is claimed on my first
+  POST/PUT/DELETE (atomic conditional update, keeps `_id`/data; `GET /devs/me` reads without
+  claiming); a dev owned by another id is never readable or writable by me. Logins stay **unique**
+  (case-insensitive index) and the **newest GitHub read wins**: a sign-in, POST or PUT whose
+  `login_read_at` is strictly newer than the holder's `github_username_seen_at` *displaces* the
+  holder (login → `_stale_<_id>`, `github_username_stale: true`, nothing else changed, never
+  deleted, `dev-updated` pushed) and takes the login; an older session gets 409
+  `github_username_conflict` (POST) or keeps its stored login (PUT). Clients show "Perfil do GitHub
+  indisponível" and no link for stale logins. Displaced legacy devs can't be claimed (manual merge).
+  These multi-account writes take both accounts' queue keys in sorted order
+  (`keyedQueue.runAll` via `inLoginOrder`); don't add another lock order.
 
 - `POST /devs` (`DevController.store`, behind `requireAuth`) — registers **the signed-in user**:
   the username and `name`/`avatar_url`/`bio` come from the token (`req.user`, captured from
   GitHub's `/user` at sign-in); a body `github_username` is ignored, and there is **no GitHub API
   call** at registration any more. Input is validated by `utils/validateDevInput.js` (400 with
   `{ error, details[] }`). The dev is created with one atomic `findOneAndUpdate` upsert, backed by
-  a **unique case-insensitive index on `github_username`** (`models/Dev.js`, collation
+  a **unique case-insensitive index on `github_username`** and a partial unique index on `github_id` (`models/Dev.js`, collation
   `{locale:'en', strength:2}`); a lost race (E11000) returns the existing dev, and only the
   request that created the dev pushes `new-dev` (`websocket.findConnections()` + `sendMessage()`)
   to nearby, tech-matching sockets. An already registered user gets their dev back unchanged.
@@ -105,9 +121,9 @@ Routes (`dev/backend/src/routes.js`):
   404 `dev_not_found` without a profile, and pushes **`dev-updated`** to sockets matching the *new*
   location/techs (never `new-dev`; sockets that only matched the old values get nothing). `DELETE`
   is a hard delete → 204 (404 `dev_not_found` without a profile) and pushes **`dev-deleted`**
-  `{ _id, github_username }` to sockets matching the old location/techs. PUT/DELETE are rate
-  limited per login (`PROFILE_RATE_LIMIT_MAX`, default 30/15 min, 429 `rate_limited`).
-  **Writes for one login (POST, PUT, DELETE) are serialized** by `utils/keyedQueue.js` so the DB
+  `{ _id, github_id, github_username }` to sockets matching the old location/techs. PUT/DELETE are rate
+  limited per account id (`PROFILE_RATE_LIMIT_MAX`, default 30/15 min, 429 `rate_limited`).
+  **Writes for one account (POST, PUT, DELETE; key `github_id:<id>`) are serialized** by `utils/keyedQueue.js` so the DB
   write and its live event happen in arrival order — route new per-user writes through it.
   `validateDevInput` caps techs at 30 entries of 50 characters (POST and PUT).
 - `GET /devs` and `GET /search` are behind `requireAuth` (auth is checked before query params, so
@@ -155,9 +171,10 @@ Routes (`dev/backend/src/routes.js`):
   `GET /search` (Bearer token) → renders `react-native-maps` markers → opens a Socket.io connection
   scoped to the current map region (`services/socket.js`, token in the handshake `auth` payload)
   to receive live `new-dev`, `dev-updated` and `dev-deleted` pushes (merged by `services/devList.js`:
-  replace by `_id` or case-insensitive login, add if new, remove on delete). It only connects if still mounted and the token the search
+  replace by `_id`, then `github_id`, then (legacy only) case-insensitive login, add if new, remove on delete). It only connects if still mounted and the token the search
   used is still the session's (QA-AUTH4-1).
-  `dev/mobile/src/pages/Profile.js` is just a `WebView` pointed at the dev's GitHub profile URL —
+  `dev/mobile/src/pages/Profile.js` is just a `WebView` pointed at the dev's GitHub profile URL
+  (only for a valid GitHub login, `services/githubLogin.js`) —
   there's no native profile screen.
 - Both web and mobile read their backend URL from an env var with a `localhost:3333`
   fallback: `REACT_APP_API_URL` (web, CRA convention) / `EXPO_PUBLIC_API_URL` (mobile, Expo's
@@ -179,6 +196,11 @@ rather than a single cross-language framework:
   GitHub's server-side OAuth API, `context.route` for the authorize page and avatar images, and
   a hook (`support/github-network.js`) fails any scenario whose browser reaches real GitHub.
   Runs with `workers: 1` (scenarios share one backend and its `/__test__` reset).
+- **Test servers bind `127.0.0.1` only, and clients use `127.0.0.1`, never `localhost`** (BUG-013):
+  a server listening on `::` lets another macOS process bind `127.0.0.1` on the same port and steal
+  the traffic (foreign 404/400 bodies, flaky scenarios). Backend tests go through
+  `support/loopback.js`; the web harness backend uses `127.0.0.1:3334` and CRA `127.0.0.1:3000`.
+  Cucumber runs with `forceExit`.
   Run `bddgen` before `playwright test` (or use the `pretest`/`test:*` npm scripts, which do
   it automatically) — it compiles `.feature` files into Playwright test files.
 - `qa/mobile-tests/` — Detox + `jest-cucumber` is the intended primary suite
@@ -195,9 +217,7 @@ rather than a single cross-language framework:
   was reverse-engineered from the code (there's no separate product spec), so treat it as
   descriptive, not aspirational.
 - Known **open** issues worth checking before you "fix" related behavior yourself:
-  BUG-006 (GitHub sign-in in progress, delivered in slices per `dev/docs/03-auth-spec.md`; slices 1-5 done,
-  slice 6 = legacy profiles + closure. CORS is already
-  restricted: browser origins must be in `CORS_ORIGINS`, see `dev/backend/src/config/cors.js`,
-  which both Express and Socket.io use. Requests with no `Origin`, like the native mobile app,
-  are unaffected. If you add a web client origin, add it there), BUG-009 (Detox timeout, above). Full detail and status in
+  BUG-009 (Detox timeout, above). BUG-006 (auth + CORS) is fixed: browser origins must be in
+  `CORS_ORIGINS` (`dev/backend/src/config/cors.js`, used by Express and Socket.io; requests with
+  no `Origin`, like the native app, are unaffected), so add any new web client origin there. Full detail and status in
   `qa/docs/05-bug-tracker.md`.
