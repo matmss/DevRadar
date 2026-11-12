@@ -30,7 +30,7 @@ cp .env.example .env   # REACT_APP_API_URL, defaults to http://localhost:3333
 npm install
 npm start                # CRA dev server, port 3000
 npm run build
-npm test                  # CRA/Jest unit tests (services/*.test.js), not run in CI
+npm test                  # CRA/Jest unit tests (src/services, src/components), run on every PR (pr.yml `web-unit`, CI=true --watchAll=false)
 ```
 
 ### Mobile (`dev/mobile/`)
@@ -38,7 +38,7 @@ npm test                  # CRA/Jest unit tests (services/*.test.js), not run in
 cp .env.example .env   # EXPO_PUBLIC_API_URL, defaults to http://localhost:3333
 npm install
 npm start                # expo start
-npm test                 # Jest unit tests in dev/tests/mobile/ (not run in CI)
+npm test                 # Jest unit tests in dev/tests/mobile/ (run on every PR, pr.yml `mobile-unit`)
 npm run android / ios / web
 ```
 `dev/mobile/android` was generated via `expo prebuild` (Expo SDK 57) and is checked in.

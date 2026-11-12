@@ -1,13 +1,16 @@
 name: PR Checks
 
-# Fast-feedback gate for every pull request into main: unit tests, then the
-# functional/integration BDD suites for the layers a PR can touch (backend,
-# web). See qa/docs/04-qa-process.md §1/§7 for the level definitions and the
-# "PR merge" entry/exit criteria this workflow enforces.
+# Fast-feedback gate for every pull request into main: unit tests for every
+# layer (backend, web, mobile), then the functional/integration BDD suites for
+# backend and web. See qa/docs/04-qa-process.md §1/§7 for the level definitions
+# and the "PR merge" entry/exit criteria this workflow enforces. Each job runs
+# independently, so one layer's failure never hides another layer's result.
 #
-# Mobile is intentionally not run here — it needs a simulator/emulator and is
+# Mobile *unit* tests (Jest + jest-expo: dev/tests/mobile/ and
+# qa/mobile-tests/unit/) run here; they need no simulator. Mobile E2E (Detox,
+# Maestro) is intentionally not run: it needs a simulator/emulator and is
 # opt-in even locally (`RUN_MOBILE=true`), and BUG-009 (qa/docs/05-bug-tracker.md)
-# flags the automated mobile run as environment-suspect. It stays manual.
+# flags the automated Detox run as environment-suspect. It stays manual.
 
 on:
   pull_request:
@@ -18,8 +21,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # No lockfiles are committed (see .gitignore), so every install below uses
-  # `npm install`, never `npm ci`.
+  # dev/* and the qa/ workspace root have no committed lockfile (see .gitignore);
+  # the per-workspace qa/*-tests lockfiles are ignored by npm when installing
+  # from qa/. So every install below uses `npm install`, never `npm ci`.
   NODE_VERSION: lts/*
 
 jobs:
@@ -65,6 +69,62 @@ jobs:
           path: qa/reports/backend.json
           if-no-files-found: ignore
           retention-days: 14
+
+  web-unit:
+    name: Web unit (Jest, react-scripts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install web app dependencies
+        working-directory: dev/web
+        run: npm install
+
+      # react-scripts test starts in watch mode unless CI is set; --watchAll=false
+      # makes the single run explicit, so the step always terminates.
+      - name: Run web unit tests (src/services + src/components)
+        working-directory: dev/web
+        env:
+          CI: 'true'
+        run: npm test -- --watchAll=false
+
+  mobile-unit:
+    name: Mobile unit (Jest, jest-expo)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install mobile app dependencies
+        id: install-mobile
+        working-directory: dev/mobile
+        run: npm install
+
+      # qa/mobile-tests' unit run uses dev/mobile's Jest and jest-expo preset
+      # (qa/mobile-tests/unit/jest.config.js); only that workspace is installed,
+      # which skips the backend/web suites' mongod and Playwright downloads.
+      - name: Install QA mobile-tests workspace dependencies
+        id: install-qa
+        working-directory: qa
+        run: npm install --workspace=mobile-tests
+
+      - name: Run mobile unit tests (dev/tests/mobile/)
+        working-directory: dev/mobile
+        run: npm test -- --ci
+
+      # Runs even when the step above failed, so a dev-side failure never hides
+      # the QA-side result (and vice versa); skipped only if an install failed.
+      - name: Run QA mobile unit tests (qa/mobile-tests/unit/)
+        if: ${{ !cancelled() && steps.install-mobile.outcome == 'success' && steps.install-qa.outcome == 'success' }}
+        working-directory: qa/mobile-tests
+        run: npm run unit -- --ci
 
   web:
     name: Web (functional, real backend + real Mongo)
