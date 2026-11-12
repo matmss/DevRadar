@@ -24,7 +24,7 @@
   },
   "overrides": {
     "body-parser": "^2.4.0",
-    "engine.io": "~6.6.10",
+    "engine.io@~6.6.0": "~6.6.10",
     "qs": "^6.16.1"
   }
 }

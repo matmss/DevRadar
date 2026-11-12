@@ -23,5 +23,9 @@
   },
   "devDependencies": {
     "rimraf": "^5.0.5"
+  },
+  "overrides": {
+    "uuid": "^11.1.0",
+    "glob@^10": "^14.0.2"
   }
 }
