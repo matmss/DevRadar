@@ -41,6 +41,10 @@ Added during the Dependabot dependency review (2026-11-12):
 - GitHub's dependency graph parses dev/*/package.json (GraphQL `dependencyGraphManifests`), but Dependabot raises no alerts on range-only manifests; the backend's runtime alerts come from the qa/backend-tests "mirror" dependencies.
 - dev/mobile `Main.test.js`: with a cold Jest cache (`--no-cache`) its first test takes ~3 s at load 18 on 8 cores (5 s default timeout); one timeout cascades into ~17 failures ("Can't access .root on unmounted test renderer"), reproduced with `--testTimeout=150`. Warm runs pass in ~5 s. Pre-existing, not dependency-related.
 
+- A file-level `jest.setTimeout(N)` overrides the CLI `--testTimeout` (a `--testTimeout=10` run of dev/mobile Main.test.js passed 18/18). To force timeouts there, copy the file into a scratch tree (dev/mobile src + configs, node_modules symlinked) and sed the setTimeout value. The same scratch tree works for old-vs-new test mutation checks (scratchpad qa-mut/run.sh).
+- npm version-keyed overrides (`"engine.io@~6.6.0": "~6.6.10"`) lift a stale lock's 6.6.9 and leave other minors (socket.io 4.7.5 -> engine.io 6.5.5) alone; proven with `--package-lock-only` and a hand-edited lock (scratchpad qa-eio/stale.sh).
+- The qa root's CI-path install (scratch tree from `git archive HEAD dev/backend dev/web qa`) runs `npm run test:web` fine; its Playwright may be newer than the per-suite lock's, so check `playwright-core/browsers.json` against `~/Library/Caches/ms-playwright`. `test:ci` writes the web JSON report to stdout, not reports/.
+
 **Why:** each cost a wasted run or produced a false pass.
 **How to apply:** use this when writing backend probes or log-assertion steps; see [[auth-review-findings]] if it is ever written.
 

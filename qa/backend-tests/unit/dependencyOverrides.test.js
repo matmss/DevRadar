@@ -62,4 +62,17 @@ describe('dependency overrides and floors (QA review, QA-DEPS)', () => {
     }
     expect(lagging).toEqual([]);
   });
+
+  // QA-DEPS-5 (re-check): 04-qa-process.md §9 now says the mirror "is the backend scan" and is
+  // "the only place Dependabot sees the backend's runtime tree", but it lists 5 of dev/backend's
+  // 8 runtime dependencies. jsonwebtoken (the session tokens), express-rate-limit and dotenv, and
+  // their subtrees (jws, jwa, ...), are in none of the tracked lockfiles, so no alert can ever
+  // be raised for them. The test harnesses load dev/backend's own jsonwebtoken
+  // (features/support/session.js, web-tests auth-fixtures.js), so the mirror entries are scan-only.
+  it('QA-DEPS-5: every dev/backend runtime dependency is in the qa/backend-tests mirror', () => {
+    const backend = readJson(path.join(QA, '..', 'dev', 'backend', 'package.json')).dependencies;
+    const mirror = readJson(path.join(QA, 'backend-tests', 'package.json')).dependencies;
+    const unscanned = Object.keys(backend).filter((name) => !mirror[name]);
+    expect(unscanned).toEqual([]);
+  });
 });
