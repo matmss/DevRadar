@@ -5,4 +5,5 @@
 - [Web suite reuses :3000](feedback_web_suite_port_reuse.md) - check ports, run qa/web-tests with CI=1 so another worktree's dev server is never tested
 - [Worktree installs](project_worktree_install.md) - dev/* npm install (no locks), qa/* npm ci --workspaces=false, PW_CHROMIUM_PATH for cached browser
 - [PR full vs nightly @regression](project_ci_subset_order.md) - nightly runs only @regression, neighbours differ; run both; check web.json order first
-- [Test loopback + timing](project_backend_suite_timing.md) - one-off foreign answers = server on "::" vs client on 127.0.0.1 (BUG-013); bind/dial 127.0.0.1; cucumber forceExit; use --tags
+- [Test loopback + timing](project_backend_suite_timing.md) - foreign answers = "::" vs 127.0.0.1 (BUG-013); forceExit; --tags; mobile Main.test.js times out under load
+- [npm overrides](project_npm_overrides_peer_scope.md) - root-only (declare in qa/package.json too); scoped ones hit peers; key by version; stream-json 3 is ESM

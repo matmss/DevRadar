@@ -65,5 +65,15 @@ Defines how functional, regression, integration, and exploratory testing are run
 | `staging` | Real MongoDB Atlas test cluster | Real (rate-limit aware) | Exploratory, pre-release regression, manual mobile testing |
 | `production` | Real | Real | Smoke-only, post-deploy |
 
-## 9. Defect workflow
+## 9. Dependency security
+
+- **What Dependabot sees.** Only the three tracked `qa/*-tests/package-lock.json` files. They are maintained standalone: run `npm install`/`npm update` with `--workspaces=false` inside each `qa/*-tests` dir. `dev/backend`, `dev/web`, `dev/mobile` and `qa/` have gitignored lockfiles, so Dependabot never scans the apps directly.
+- **`qa/backend-tests` is the backend scan.** Its `dependencies` mirror `dev/backend`'s runtime dependencies, and that mirror is the only place Dependabot sees the backend's runtime tree. Keep it in sync: when a `dev/backend` runtime floor moves, raise the same floor in `qa/backend-tests/package.json` and regenerate its lockfile standalone (`qa/backend-tests/unit/dependencyOverrides.test.js` fails on a lagging floor).
+- **Overrides go in two places.** npm applies `overrides` only from the root it installs from, and CI installs from `qa/`. Declare every `qa/*-tests` override in `qa/package.json` as well as in the member's `package.json` (the member copy keeps the standalone lockfile, and so Dependabot's view, correct). The same unit test checks this. Key an override by the version it replaces (`"glob@^10"`, `"engine.io@~6.6.0"`) so that it neither rewrites other majors nor holds a package back when its parent moves on.
+- **`npm audit` in `dev/*`.** Run it in each `dev/*` dir after a fresh install whenever dependencies change, and triage each finding as runtime or tooling:
+  - *Runtime* (in `dependencies` and actually loaded by the server, or bundled into the web/mobile app): fix it. Raise the `package.json` floor to the patched version, or add a version-keyed override in `dev/backend` when the parent's range still admits a vulnerable version.
+  - *Build/test tooling* (dev server, bundler, test runner, CLI): record it as accepted risk with a one-line reason if the only fix is a major upgrade. Note that `npm audit --omit=dev` doesn't separate these in `dev/web`, because CRA lists `react-scripts` under `dependencies`.
+  - Current accepted tooling findings, none of which run in production: `react-scripts` 5.0.1's build, dev-server and Jest tree in `dev/web`; `nodemon`'s minimatch in `dev/backend`; `@expo/fingerprint`'s minimatch (Expo CLI build fingerprinting) and detox/jest in `dev/mobile`.
+
+## 10. Defect workflow
 See `05-bug-tracker.md` for the template, severity/priority matrix, and lifecycle states.

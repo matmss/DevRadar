@@ -13,12 +13,13 @@
     "unit": "../../dev/mobile/node_modules/.bin/jest --config unit/jest.config.js"
   },
   "devDependencies": {
-    "axios": "^1.19.0",
+    "axios": "^1.20.0",
     "detox": "^20.28.4",
     "jest": "^29.7.0",
     "jest-cucumber": "^4.4.0"
   },
   "overrides": {
-    "uuid": "^11.1.0"
+    "uuid": "^11.1.0",
+    "glob@^10": "^14.0.2"
   }
 }
