@@ -34,6 +34,13 @@ Added during the auth slice 5 review (2026-11-10):
 - `auth-review.feature` "A state is still accepted just before its 10-minute lifetime ends" (599 s of a 600 s TTL) has a 1 s real-time margin and failed once (400 instead of 302) while several suites ran at once. Re-run before blaming the change under test.
 - Several mutants in one go: a bash script in the scratchpad with literal paths looping over modes (fresh scratch copy per mode, a node script doing exact-string replacements that throws if the pattern is missing) worked well, run as `bash <script>`.
 
+Added during the Dependabot dependency review (2026-11-12):
+
+- "Does this dependency change alter what CI installs?" Fastest proof, no node_modules: `git show <rev>:<path>/package.json > <scratch>/<rev>/package.json` (one plain command per file; Bash refuses chained `git show > file && cd ...` with variables), then `npm install --package-lock-only` in each scratch dir and diff the `packages` versions (scratchpad qa-main/cmp.js). For qa/ use `git archive <rev> qa/package.json qa/*-tests/package.json | tar -x`. On that branch: 0 differences for dev/* and for the qa root, i.e. the change only touched the tracked lockfiles.
+- npm ignores `overrides` in workspace members; only qa/package.json's apply to CI's `npm install` in qa/. Guard: qa/backend-tests/unit/dependencyOverrides.test.js (QA-DEPS-1) if merged.
+- GitHub's dependency graph parses dev/*/package.json (GraphQL `dependencyGraphManifests`), but Dependabot raises no alerts on range-only manifests; the backend's runtime alerts come from the qa/backend-tests "mirror" dependencies.
+- dev/mobile `Main.test.js`: with a cold Jest cache (`--no-cache`) its first test takes ~3 s at load 18 on 8 cores (5 s default timeout); one timeout cascades into ~17 failures ("Can't access .root on unmounted test renderer"), reproduced with `--testTimeout=150`. Warm runs pass in ~5 s. Pre-existing, not dependency-related.
+
 **Why:** each cost a wasted run or produced a false pass.
 **How to apply:** use this when writing backend probes or log-assertion steps; see [[auth-review-findings]] if it is ever written.
 
