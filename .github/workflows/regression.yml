@@ -5,9 +5,11 @@ name: Regression
 # release tag (release.yml calls this as a gate via workflow_call). A
 # release cannot ship with a failing regression run.
 #
-# Mobile stays out of the automated run — see the note in pr.yml and
-# BUG-009 in qa/docs/05-bug-tracker.md; run `cd qa && npm run test:mobile`
-# manually against a simulator/emulator instead.
+# This nightly run covers the backend + web BDD suites only. Unit tests (all
+# layers, including mobile) run on every PR in pr.yml, not here. Mobile E2E
+# (Detox/Maestro) stays out of every automated run (BUG-009 in
+# qa/docs/05-bug-tracker.md); run `cd qa && npm run test:mobile` manually
+# against a simulator/emulator instead.
 
 on:
   schedule:

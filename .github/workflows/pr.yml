@@ -102,27 +102,23 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      # The only install this job needs: qa/mobile-tests' unit run uses
+      # dev/mobile's Jest binary and jest-expo preset, and its config
+      # (qa/mobile-tests/unit/jest.config.js) resolves every module from
+      # dev/mobile/node_modules, so the qa/ workspace is not installed here.
       - name: Install mobile app dependencies
         id: install-mobile
         working-directory: dev/mobile
         run: npm install
-
-      # qa/mobile-tests' unit run uses dev/mobile's Jest and jest-expo preset
-      # (qa/mobile-tests/unit/jest.config.js); only that workspace is installed,
-      # which skips the backend/web suites' mongod and Playwright downloads.
-      - name: Install QA mobile-tests workspace dependencies
-        id: install-qa
-        working-directory: qa
-        run: npm install --workspace=mobile-tests
 
       - name: Run mobile unit tests (dev/tests/mobile/)
         working-directory: dev/mobile
         run: npm test -- --ci
 
       # Runs even when the step above failed, so a dev-side failure never hides
-      # the QA-side result (and vice versa); skipped only if an install failed.
+      # the QA-side result; skipped only if the install failed.
       - name: Run QA mobile unit tests (qa/mobile-tests/unit/)
-        if: ${{ !cancelled() && steps.install-mobile.outcome == 'success' && steps.install-qa.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.install-mobile.outcome == 'success' }}
         working-directory: qa/mobile-tests
         run: npm run unit -- --ci
 
