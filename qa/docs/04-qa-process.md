@@ -65,5 +65,7 @@ Defines how functional, regression, integration, and exploratory testing are run
 | `staging` | Real MongoDB Atlas test cluster | Real (rate-limit aware) | Exploratory, pre-release regression, manual mobile testing |
 | `production` | Real | Real | Smoke-only, post-deploy |
 
+**Dependency security blind spot.** Dependabot only sees the three tracked `qa/*-tests/package-lock.json` files (kept standalone: `npm install --workspaces=false` inside each dir; their `overrides` apply only there, not to installs run from `qa/`). `dev/backend`, `dev/web`, `dev/mobile` and `qa/` have gitignored lockfiles, so nothing scans the shipped apps: run `npm audit` in each `dev/*` dir when bumping dependencies, and keep `dev/backend`'s `package.json` floors (and its `overrides`) at patched versions.
+
 ## 9. Defect workflow
 See `05-bug-tracker.md` for the template, severity/priority matrix, and lifecycle states.
