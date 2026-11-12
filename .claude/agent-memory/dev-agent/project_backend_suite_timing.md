@@ -9,7 +9,7 @@ In auth slice 6 (2026-11-10/11) the backend Cucumber suite failed one scenario p
 
 Also: a timed-out step can leave a handle open, and cucumber then prints its summary and never exits; `qa/backend-tests/cucumber.js` now sets `forceExit: true` (verified with a timed-out probe step: hang without it, exit in 7 s with it). And `npm test -- features/x.feature` in qa/backend-tests still runs every feature (`paths` in cucumber.js); use `--tags`.
 
-dev/mobile Jest (2026-11-12, load average 80-250 from other sessions): `tests/mobile/pages/Main.test.js` hit the 5 s Jest timeout in "moves and updates the marker..." and the rest of that file cascaded ("Can't access .root on unmounted test renderer"), 9-18 failures; running it alone right after gave 174/174 twice. Don't run it in parallel with the web suite.
+dev/mobile Jest (2026-11-12, load average 80-250 from other sessions): `tests/mobile/pages/Main.test.js` hit the 5 s Jest timeout in "moves and updates the marker..." and the rest of that file cascaded ("Can't access .root on unmounted test renderer"), 9-18 failures; running it alone right after gave 174/174 twice. Root cause (QA): one shared `renderer` variable, and Jest doesn't stop a timed-out test, so its leftover steps hit the next tests. Fixed test-side in 7349d0d (per-test `mount()` views, leftovers throw, 30 s file timeout). Repro trick: `npx jest --ci --no-cache --testTimeout=150 Main.test`, but an in-file `jest.setTimeout` beats the CLI flag, so strip it temporarily for the repro.
 
 **Why:** a load-induced foreign answer looks like a regression; it cost several reruns and a wrong "environmental" call before the cause was known.
 
