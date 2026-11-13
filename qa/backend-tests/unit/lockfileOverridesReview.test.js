@@ -16,8 +16,7 @@
 // glob 10.x fails and an unrelated glob 7.x does not. Unkeyed overrides select every copy.
 // Object overrides are checked through their "." value only; `$name` references are skipped.
 //
-// `semver` comes from the qa workspace's hoisted install (a dependency of jest and cucumber). If
-// this test is adopted, declare it in qa/backend-tests' devDependencies.
+// `semver` is declared in qa/backend-tests' devDependencies (it is also hoisted for jest and cucumber).
 const fs = require('fs');
 const path = require('path');
 const semver = require('semver');
