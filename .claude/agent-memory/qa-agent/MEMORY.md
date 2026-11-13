@@ -1,1 +1,1 @@
-- [QA harness quirks](qa-harness-quirks.md) — cucumber paths, sandbox rules, installs, scratch-tree + package-lock-only resolution diffs, member overrides ignored, mobile Jest cold-cache timeouts
+- [QA harness quirks](qa-harness-quirks.md) — cucumber paths, sandbox rules, installs, lockfile/override drift, linux dry-run, scratch trees, mobile Jest timeouts

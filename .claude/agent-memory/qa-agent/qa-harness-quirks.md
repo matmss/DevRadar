@@ -21,7 +21,7 @@ Added during the auth slices 2+3 review (2026-11-08):
 
 Added during the auth slice 4 review (2026-11-09):
 
-- dev/backend, dev/web, dev/mobile have no lockfile: `npm install --no-audit --no-fund`. qa/backend-tests, qa/web-tests, qa/mobile-tests DO have lockfiles: `npm ci --workspaces=false` inside each (plain `npm ci` resolves the qa workspace root and fails); their deps then live in each suite's own node_modules. All six in parallel in the background take about 5 min.
+- (Superseded once the lockfile-tracking change is merged: then it's `npm ci` in dev/backend, dev/web, dev/mobile and qa/, no member lockfiles; see the 2026-11-12 lockfile notes at the end.) dev/backend, dev/web, dev/mobile have no lockfile: `npm install --no-audit --no-fund`. qa/backend-tests, qa/web-tests, qa/mobile-tests DO have lockfiles: `npm ci --workspaces=false` inside each (plain `npm ci` resolves the qa workspace root and fails); their deps then live in each suite's own node_modules. All six in parallel in the background take about 5 min.
 - QA mobile Jest tests live in `qa/mobile-tests/unit/` (`npm run unit` there) and run with dev/mobile's jest binary + jest-expo via `unit/jest.config.js` (rootDir = dev/mobile). qa/node_modules has its own `axios` and `socket.io-client`, so that config pins them (and react) to dev/mobile/node_modules with moduleNameMapper; without it a `jest.mock('socket.io-client')` in a qa test silently mocks the wrong copy.
 - To check the web Playwright ports are free before a run (reuseExistingServer would silently test another worktree's server): `lsof -nP -iTCP -sTCP:LISTEN`. Port 5000 is macOS ControlCenter, not ours.
 
@@ -70,3 +70,12 @@ Added during the BUG-014 review (2026-11-11):
 - The web harness backend's rate limits are raised to 100000 (backend-server.js), so the per-scenario reset (DB only) needs no rate-limit reset; the backend suite resets all three limiter stores itself.
 - CI install path (`npm install` at qa/ root, no root lockfile) ignores the per-suite lockfiles; test it in a `git archive` scratch tree so it doesn't rewrite the worktree's per-suite node_modules.
 - Waiting for a background run: end the turn; the completion notification resumes the run.
+
+Added during the lockfile-tracking review (2026-11-12):
+
+- The scratchpad path is shared across sessions: `scratchpad/ci` already held another review's files. Make a fresh, uniquely named dir for every scratch tree.
+- No Docker on this Mac. Emulate the Linux CI install with `npm ci --dry-run --ignore-scripts --os=linux --cpu=x64 --libc=glibc` in a copy holding only package.json + package-lock.json (fsevents drops out, lightningcss-linux-x64-gnu comes in). Node's LTS -> npm mapping: https://nodejs.org/dist/index.json.
+- "Is this lockfile in sync?" `npm ci` misses changed `overrides`. In the qa workspace, raising an existing unkeyed override (uuid ^11.1.0 -> ^12.0.0) leaves the lock at 11.1.1 through `npm install` AND `npm ci`; only `npm ls --all --package-lock-only` reports it as invalid. In dev/backend, raising ws ^8.0.0 -> ^8.23.0 was caught. Guard: QA-DEPS-6 (qa/backend-tests/unit/lockfileOverridesReview.test.js), if merged.
+- Mutating package.json/lockfile and asking "does the guard or npm ci catch it" is quick: `git init` the scratch tree (the hygiene test calls `git check-ignore --no-index`), then per mutation run jest on the test file plus `npm ci --dry-run --ignore-scripts` (scratchpad lockmut/run.sh pattern).
+- `npm audit fix --package-lock-only` in a manifest-only copy, then diff the lock, shows whether an "accepted" finding has a non-major fix (dev/web: bfj 7.1.0 -> 7.0.2 drops jsonpath/underscore).
+- Backend unit Jest prints "A worker process has failed to exit gracefully" in about 4 of 5 runs, also with dependencyOverrides.test.js removed. It's pre-existing and not lockfile-related; --detectOpenHandles (in band) shows nothing.
