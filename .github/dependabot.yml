@@ -1,0 +1,82 @@
+# Dependabot: what it scans and what it may open (qa/docs/04-qa-process.md §9).
+#
+# Security updates (alerts + fix PRs) are a repository setting, not this file: they cover
+# every tracked package-lock.json (dev/backend, dev/web, dev/mobile, qa) and nothing below
+# restricts them. `allow.update-types` and `cooldown` apply to version updates only, and
+# security PRs have their own fixed limit of 10.
+#
+# Version updates (this file) are deliberately conservative:
+# - weekly, minor + patch only, one grouped PR per directory (majors are planned work);
+# - a new release waits 7 days before it is proposed (supply-chain cooldown);
+# - dev/mobile gets none: its versions are pinned to the Expo SDK and move together with
+#   `npx expo install --fix` / an SDK upgrade, which Dependabot can't run. Security updates
+#   still apply there.
+# To go security-only everywhere, set every npm `open-pull-requests-limit` to 0.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /dev/backend
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    allow:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+    groups:
+      backend-minor-patch:
+        update-types: [minor, patch]
+    open-pull-requests-limit: 2
+
+  - package-ecosystem: npm
+    directory: /dev/web
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    allow:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+    groups:
+      web-minor-patch:
+        update-types: [minor, patch]
+    open-pull-requests-limit: 2
+
+  - package-ecosystem: npm
+    directory: /dev/mobile
+    schedule:
+      interval: weekly
+      day: monday
+    # Security updates only (see above).
+    open-pull-requests-limit: 0
+
+  # The qa/ workspace root: one lockfile for backend-tests, web-tests and mobile-tests.
+  # Dependabot updates the member package.json files and qa/package-lock.json together.
+  - package-ecosystem: npm
+    directory: /qa
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    allow:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+    groups:
+      qa-minor-patch:
+        update-types: [minor, patch]
+    open-pull-requests-limit: 2
+
+  # Workflows pin actions by major tag (actions/checkout@v4), so every update here is a
+  # major; they are few, and CI on the PR exercises them.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      github-actions:
+        patterns: ["*"]
+    open-pull-requests-limit: 2
