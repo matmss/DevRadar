@@ -18,8 +18,5 @@
     "mongodb-memory-server": "^10.1.2",
     "nock": "^13.5.5",
     "playwright-bdd": "^9.2.0"
-  },
-  "allowScripts": {
-    "mongodb-memory-server@10.4.3": true
   }
 }

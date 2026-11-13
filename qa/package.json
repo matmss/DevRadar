@@ -27,5 +27,8 @@
   "overrides": {
     "uuid": "^11.1.0",
     "glob@^10": "^14.0.2"
+  },
+  "allowScripts": {
+    "mongodb-memory-server@10.4.3": true
   }
 }

@@ -15,10 +15,18 @@ nearby devs on a map in real time. Four independent npm projects, no monorepo to
 
 ## Commands
 
+Each install root (`dev/backend`, `dev/web`, `dev/mobile`, `qa`) has a committed
+`package-lock.json` (lockfileVersion 3, generated with the npm that CI's Node `lts/*` ships).
+Install with `npm ci`, as CI does. Use `npm install <pkg>` / `npm update` only to change
+dependencies, and commit the lockfile with the `package.json`. The `qa/*-tests` workspaces have no
+lockfile of their own: change their deps from `qa/` (`npm install -D <pkg> --workspace=web-tests`),
+and put `overrides`/`allowScripts` in `qa/package.json` (npm ignores them in members). See
+`qa/docs/04-qa-process.md` §9.
+
 ### Backend (`dev/backend/`)
 ```bash
 cp .env.example .env   # MONGO_URI; for sign-in also GITHUB_CLIENT_ID/SECRET and JWT_SECRET (see the file)
-npm install
+npm ci
 npm run dev             # nodemon src/index.js, port 3333 by default
 ```
 No lint/build/test scripts are defined in `dev/backend/package.json` — its tests live entirely
@@ -27,7 +35,7 @@ under `qa/backend-tests/`.
 ### Web (`dev/web/`)
 ```bash
 cp .env.example .env   # REACT_APP_API_URL, defaults to http://localhost:3333
-npm install
+npm ci
 npm start                # CRA dev server, port 3000
 npm run build
 npm test                  # CRA/Jest unit tests (src/services, src/components), run on every PR (pr.yml `web-unit`, CI=true --watchAll=false)
@@ -36,7 +44,7 @@ npm test                  # CRA/Jest unit tests (src/services, src/components), 
 ### Mobile (`dev/mobile/`)
 ```bash
 cp .env.example .env   # EXPO_PUBLIC_API_URL, defaults to http://localhost:3333
-npm install
+npm ci
 npm start                # expo start
 npm test                 # Jest unit tests in dev/tests/mobile/ (run on every PR, pr.yml `mobile-unit`)
 npm run android / ios / web
@@ -46,7 +54,7 @@ npm run android / ios / web
 ### QA (`qa/` — separate npm workspace, install here too)
 ```bash
 cd qa
-npm install               # sets up the backend-tests/web-tests/mobile-tests workspaces
+npm ci                    # sets up the backend-tests/web-tests/mobile-tests workspaces (one lockfile, qa/package-lock.json)
 npm run test:backend      # Cucumber.js against dev/backend/src, in-process (supertest + mongodb-memory-server)
 npm run test:web          # Playwright + playwright-bdd, real backend+Mongo, only GitHub API mocked
 npm run test:mobile       # prints guidance, then runs Maestro (Detox needs a simulator/emulator)
@@ -60,7 +68,7 @@ cd qa/backend-tests && npx cucumber-js --tags '@smoke'
 cd qa/backend-tests && npm run unit              # plain Jest: calculateDistance, parseStringAsArray
 cd qa/web-tests && npx bddgen && npx playwright test --grep @smoke
 cd qa/mobile-tests && npm run maestro            # maestro test maestro/ — no simulator needed
-cd qa/mobile-tests && npm run unit               # QA mobile unit tests (uses dev/mobile's Jest; npm install there first)
+cd qa/mobile-tests && npm run unit               # QA mobile unit tests (uses dev/mobile's Jest; npm ci there first)
 ```
 `run-all-tests.sh` accepts `TAGS="@smoke" ./run-all-tests.sh` and `RUN_MOBILE=true` (mobile
 is opt-in since it needs a simulator/emulator or the Maestro CLI).

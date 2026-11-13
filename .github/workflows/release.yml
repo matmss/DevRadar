@@ -38,9 +38,11 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      # npm ci needs dev/web/package-lock.json in the checked-out tag; a tag cut before the
+      # lockfiles were committed can't be re-released by this workflow (none existed then).
       - name: Install web app dependencies
         working-directory: dev/web
-        run: npm install
+        run: npm ci
 
       - name: Build web client
         working-directory: dev/web

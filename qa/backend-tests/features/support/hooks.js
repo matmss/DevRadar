@@ -1,7 +1,8 @@
 const { Before, After, BeforeAll, AfterAll } = require('@cucumber/cucumber');
 // Must be the SAME mongoose instance dev/backend/src/models/Dev.js uses (dev/backend/node_modules/mongoose),
-// not this package's own copy — mongoose's connection is a module-level singleton, so connecting a
-// different copy here leaves the app's models pointed at an unconnected instance and every query hangs.
+// hence the path: the qa workspace has no mongoose of its own, and mongoose's connection is a module-level
+// singleton, so connecting any other copy leaves the app's models pointed at an unconnected instance and
+// every query hangs.
 const mongoose = require('../../../../dev/backend/node_modules/mongoose');
 const nock = require('nock');
 const { MongoMemoryServer } = require('mongodb-memory-server');

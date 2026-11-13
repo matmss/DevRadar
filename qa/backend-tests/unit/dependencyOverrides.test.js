@@ -1,78 +1,89 @@
-// QA review of the Dependabot/security dependency change (QA-DEPS-1, QA-DEPS-2).
+// Dependency hygiene guards (qa/docs/04-qa-process.md §9).
 //
-// QA-DEPS-1: the security `overrides` of the qa/*-tests packages only apply to a standalone
-// install inside that directory (`npm install --workspaces=false`), which is what Dependabot
-// scans through the tracked per-suite lockfiles. Every real install of the qa workspace runs
-// from qa/ (`.github/workflows/pr.yml` and regression.yml run `npm install` in qa/, and so does
-// the setup in CLAUDE.md), and npm ignores `overrides` declared in workspace members: only the
-// workspace root's apply. So CI resolves jest-cucumber's glob 10 -> minimatch 9 (GHSA-g3hv-75wg-m249)
-// and uuid < 11.1.1 (GHSA-w5hq-g745-h8pq) although the alerts read "resolved". Verified with
-// `npm install --package-lock-only` in a copy of qa/: `npm audit` 17 findings; with the same
-// overrides added to qa/package.json, 11 (only deepmerge and stream-json, which have no usable fix).
+// Install roots: dev/backend, dev/web, dev/mobile and qa/ (the workspace root for
+// qa/backend-tests, qa/web-tests, qa/mobile-tests). Each has one tracked package-lock.json;
+// CI runs `npm ci` in each and Dependabot scans each. The qa/*-tests members have no lockfile
+// of their own.
 //
-// QA-DEPS-2: qa/backend-tests declares dev/backend's runtime dependencies as its own
-// `dependencies` (the tests load dev/backend's copies). That mirror is the only place Dependabot
-// sees the backend's runtime tree (its alerts are the "runtime"-scope ones), so a mirror floor
-// below dev/backend's floor scans a version the backend can no longer install.
+// QA-DEPS-1 (QA review of the Dependabot change): npm applies `overrides` only from the root it
+// installs from, and ignores them in workspace members, so a member override silently does
+// nothing (CI resolved jest-cucumber's glob 10 -> minimatch 9 and uuid < 11.1.1 while the
+// alerts read "resolved"). npm 11 treats `allowScripts` the same way. Both belong in
+// qa/package.json only.
+//
+// QA-DEPS-2/QA-DEPS-5 (retired): qa/backend-tests used to mirror dev/backend's runtime
+// dependencies so that Dependabot could see them; those tests checked the mirror's floors and
+// completeness. dev/backend/package-lock.json is now tracked and scanned directly, and the
+// harnesses always loaded dev/backend's own copies, so the mirror is gone. The lockfile checks
+// below take over: every install root has a tracked, registry-only lockfile in sync with its
+// package.json.
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const QA = path.join(__dirname, '..', '..');
+const REPO = path.join(QA, '..');
 const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
 
-/** `^1.2.3` / `~1.2.3` / `1.2.3` -> [1, 2, 3]; anything else -> null (not compared). */
-function floorOf(range) {
-  const match = /^[\^~]?(\d+)\.(\d+)\.(\d+)$/.exec(String(range).trim());
-  return match ? match.slice(1).map(Number) : null;
-}
+const INSTALL_ROOTS = ['dev/backend', 'dev/web', 'dev/mobile', 'qa'];
+const QA_MEMBERS = ['backend-tests', 'web-tests', 'mobile-tests'];
+const DEP_FIELDS = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
+const REGISTRY = 'https://registry.npmjs.org/';
 
-function isBelow(a, b) {
-  for (let i = 0; i < 3; i += 1) {
-    if (a[i] !== b[i]) return a[i] < b[i];
+/** The dependency ranges a manifest (package.json or a lockfile `packages` entry) declares. */
+function declared(manifest) {
+  const out = {};
+  for (const field of DEP_FIELDS) {
+    if (manifest[field] && Object.keys(manifest[field]).length) out[field] = manifest[field];
   }
-  return false;
+  return out;
 }
 
-describe('dependency overrides and floors (QA review, QA-DEPS)', () => {
-  it('QA-DEPS-1: every qa/*-tests override is also declared in qa/package.json, so the install CI runs from qa/ applies it', () => {
-    const rootOverrides = readJson(path.join(QA, 'package.json')).overrides || {};
-    const missing = [];
-    for (const suite of ['backend-tests', 'web-tests', 'mobile-tests']) {
-      const overrides = readJson(path.join(QA, suite, 'package.json')).overrides || {};
-      for (const [name, spec] of Object.entries(overrides)) {
-        if (JSON.stringify(rootOverrides[name]) !== JSON.stringify(spec)) {
-          missing.push(`${suite}: "${name}": ${JSON.stringify(spec)}`);
-        }
+/** true if .gitignore rules ignore the path (whether or not it is tracked). */
+function isIgnored(relPath) {
+  try {
+    execFileSync('git', ['check-ignore', '-q', '--no-index', relPath], { cwd: REPO, stdio: 'ignore' });
+    return true;
+  } catch (err) {
+    if (err.status === 1) return false; // 1 = not ignored; anything else is a real error
+    throw err;
+  }
+}
+
+describe('dependency hygiene (04-qa-process.md §9)', () => {
+  it('QA-DEPS-1: no qa/*-tests member declares overrides or allowScripts (npm reads them from qa/package.json only)', () => {
+    const misplaced = [];
+    for (const member of QA_MEMBERS) {
+      const pkg = readJson(path.join(QA, member, 'package.json'));
+      for (const field of ['overrides', 'allowScripts']) {
+        if (pkg[field] !== undefined) misplaced.push(`qa/${member}/package.json: "${field}"`);
       }
     }
-    expect(missing).toEqual([]);
+    expect(misplaced).toEqual([]);
   });
 
-  it('QA-DEPS-2: the dev/backend runtime mirror in qa/backend-tests has no floor below dev/backend\'s', () => {
-    const backend = readJson(path.join(QA, '..', 'dev', 'backend', 'package.json')).dependencies;
-    const mirror = readJson(path.join(QA, 'backend-tests', 'package.json')).dependencies;
-    const lagging = [];
-    for (const [name, mirrorRange] of Object.entries(mirror)) {
-      if (!backend[name]) continue;
-      const mirrorFloor = floorOf(mirrorRange);
-      const backendFloor = floorOf(backend[name]);
-      if (mirrorFloor && backendFloor && isBelow(mirrorFloor, backendFloor)) {
-        lagging.push(`${name}: qa/backend-tests ${mirrorRange} < dev/backend ${backend[name]}`);
-      }
+  it.each(INSTALL_ROOTS)('%s has a lockfile that .gitignore does not ignore', (root) => {
+    expect(fs.existsSync(path.join(REPO, root, 'package-lock.json'))).toBe(true);
+    expect(isIgnored(`${root}/package-lock.json`)).toBe(false);
+  });
+
+  it.each(INSTALL_ROOTS)('%s/package-lock.json is lockfileVersion 3 and resolves only from registry.npmjs.org', (root) => {
+    const lock = readJson(path.join(REPO, root, 'package-lock.json'));
+    expect(lock.lockfileVersion).toBe(3);
+    const foreign = Object.entries(lock.packages)
+      .filter(([key, meta]) => key !== '' && !meta.link && meta.resolved && !meta.resolved.startsWith(REGISTRY))
+      .map(([key, meta]) => `${key}: ${meta.resolved}`);
+    expect(foreign).toEqual([]);
+  });
+
+  it.each(INSTALL_ROOTS)('%s/package-lock.json matches its package.json (and its workspaces\')', (root) => {
+    const dir = path.join(REPO, root);
+    const lock = readJson(path.join(dir, 'package-lock.json'));
+    const pkg = readJson(path.join(dir, 'package.json'));
+    expect(declared(lock.packages[''])).toEqual(declared(pkg));
+    for (const member of pkg.workspaces || []) {
+      expect({ [member]: declared(lock.packages[member] || {}) })
+        .toEqual({ [member]: declared(readJson(path.join(dir, member, 'package.json'))) });
     }
-    expect(lagging).toEqual([]);
-  });
-
-  // QA-DEPS-5 (re-check): 04-qa-process.md §9 now says the mirror "is the backend scan" and is
-  // "the only place Dependabot sees the backend's runtime tree", but it lists 5 of dev/backend's
-  // 8 runtime dependencies. jsonwebtoken (the session tokens), express-rate-limit and dotenv, and
-  // their subtrees (jws, jwa, ...), are in none of the tracked lockfiles, so no alert can ever
-  // be raised for them. The test harnesses load dev/backend's own jsonwebtoken
-  // (features/support/session.js, web-tests auth-fixtures.js), so the mirror entries are scan-only.
-  it('QA-DEPS-5: every dev/backend runtime dependency is in the qa/backend-tests mirror', () => {
-    const backend = readJson(path.join(QA, '..', 'dev', 'backend', 'package.json')).dependencies;
-    const mirror = readJson(path.join(QA, 'backend-tests', 'package.json')).dependencies;
-    const unscanned = Object.keys(backend).filter((name) => !mirror[name]);
-    expect(unscanned).toEqual([]);
   });
 });

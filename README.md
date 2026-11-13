@@ -87,18 +87,18 @@ three suites and calls `qa/merge-report.js` to combine their JSON output into on
 ```bash
 # Backend
 cd dev/backend && cp .env.example .env   # fill in MONGO_URI
-npm install && npm run dev
+npm ci && npm run dev
 
 # Web
 cd dev/web && cp .env.example .env
-npm install && npm start
+npm ci && npm start
 
 # Mobile
 cd dev/mobile && cp .env.example .env    # set EXPO_PUBLIC_API_URL if not on localhost
-npm install && npm start
+npm ci && npm start
 
 # QA — run everything against a running backend
-cd qa && npm install
+cd qa && npm ci
 npm run test:backend   # or test:web, or test:all
 ```
 
