@@ -47,7 +47,7 @@ npm run build:android && npm run test:android
 brew install maestro   # or: curl -Ls "https://get.maestro.mobile.dev" | bash
 npm run maestro
 
-# QA unit tests (Jest, no device; needs `npm install` in dev/mobile first)
+# QA unit tests (Jest, no device; needs `npm ci` in dev/mobile first)
 npm run unit
 ```
 
