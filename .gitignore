@@ -2,7 +2,13 @@
 .env
 **/.env
 qa/reports/
+# Lockfiles: one per install root (what CI runs `npm ci` in and Dependabot scans).
+# Any other package-lock.json, e.g. from a standalone install inside qa/*-tests, is a stray.
 **/package-lock.json
+!/dev/backend/package-lock.json
+!/dev/web/package-lock.json
+!/dev/mobile/package-lock.json
+!/qa/package-lock.json
 .DS_Store
 # Claude Code agent worktrees (temporary)
 .claude/worktrees/
