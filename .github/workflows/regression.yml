@@ -18,6 +18,7 @@ on:
   workflow_call: {}
 
 env:
+  # Installs are `npm ci` from the committed lockfiles; see the note in pr.yml.
   NODE_VERSION: lts/*
 
 jobs:
@@ -30,6 +31,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            dev/backend/package-lock.json
+            qa/package-lock.json
 
       - name: Cache mongodb-memory-server binaries
         uses: actions/cache@v4
@@ -39,11 +44,11 @@ jobs:
 
       - name: Install backend app dependencies
         working-directory: dev/backend
-        run: npm install
+        run: npm ci
 
       - name: Install QA workspace dependencies
         working-directory: qa
-        run: npm install
+        run: npm ci
 
       - name: Run backend @regression suite
         working-directory: qa
@@ -58,6 +63,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            dev/backend/package-lock.json
+            dev/web/package-lock.json
+            qa/package-lock.json
 
       - name: Cache mongodb-memory-server binaries
         uses: actions/cache@v4
@@ -73,15 +83,15 @@ jobs:
 
       - name: Install backend app dependencies
         working-directory: dev/backend
-        run: npm install
+        run: npm ci
 
       - name: Install web app dependencies
         working-directory: dev/web
-        run: npm install
+        run: npm ci
 
       - name: Install QA workspace dependencies
         working-directory: qa
-        run: npm install
+        run: npm ci
 
       - name: Install Playwright browsers
         working-directory: qa/web-tests

@@ -21,9 +21,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # dev/* and the qa/ workspace root have no committed lockfile (see .gitignore);
-  # the per-workspace qa/*-tests lockfiles are ignored by npm when installing
-  # from qa/. So every install below uses `npm install`, never `npm ci`.
+  # Every install root (dev/backend, dev/web, dev/mobile, and qa/ for the three
+  # qa/*-tests workspaces) has a committed package-lock.json, so every install
+  # below is `npm ci`: exact locked versions, and it fails if a lockfile is out
+  # of sync with its package.json. setup-node caches ~/.npm keyed on the
+  # lockfiles each job installs from.
   NODE_VERSION: lts/*
 
 jobs:
@@ -36,6 +38,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            dev/backend/package-lock.json
+            qa/package-lock.json
 
       # mongodb-memory-server downloads a real mongod binary on first use;
       # cache it so PRs don't re-pay that download every run.
@@ -47,11 +53,11 @@ jobs:
 
       - name: Install backend app dependencies
         working-directory: dev/backend
-        run: npm install
+        run: npm ci
 
       - name: Install QA workspace dependencies
         working-directory: qa
-        run: npm install
+        run: npm ci
 
       - name: Run backend unit tests (calculateDistance, parseStringAsArray)
         working-directory: qa
@@ -79,10 +85,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: dev/web/package-lock.json
 
       - name: Install web app dependencies
         working-directory: dev/web
-        run: npm install
+        run: npm ci
 
       # react-scripts test starts in watch mode unless CI is set; --watchAll=false
       # makes the single run explicit, so the step always terminates.
@@ -101,6 +109,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: dev/mobile/package-lock.json
 
       # The only install this job needs: qa/mobile-tests' unit run uses
       # dev/mobile's Jest binary and jest-expo preset, and its config
@@ -109,7 +119,7 @@ jobs:
       - name: Install mobile app dependencies
         id: install-mobile
         working-directory: dev/mobile
-        run: npm install
+        run: npm ci
 
       - name: Run mobile unit tests (dev/tests/mobile/)
         working-directory: dev/mobile
@@ -131,6 +141,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            dev/backend/package-lock.json
+            dev/web/package-lock.json
+            qa/package-lock.json
 
       - name: Cache mongodb-memory-server binaries
         uses: actions/cache@v4
@@ -149,15 +164,15 @@ jobs:
       # dev/backend and dev/web need their own node_modules present.
       - name: Install backend app dependencies
         working-directory: dev/backend
-        run: npm install
+        run: npm ci
 
       - name: Install web app dependencies
         working-directory: dev/web
-        run: npm install
+        run: npm ci
 
       - name: Install QA workspace dependencies
         working-directory: qa
-        run: npm install
+        run: npm ci
 
       - name: Install Playwright browsers
         working-directory: qa/web-tests
