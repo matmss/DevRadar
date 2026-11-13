@@ -153,11 +153,18 @@ jobs:
           path: ~/.cache/mongodb-binaries
           key: ${{ runner.os }}-mongodb-binaries-v10
 
+      # Key the browser cache on the locked playwright-core version: each version pins its own
+      # browser builds, and unrelated qa dependency bumps leave the cache valid. Fails if missing.
+      - name: Read locked Playwright version
+        id: playwright-version
+        run: |
+          node -e "const v = require('./qa/package-lock.json').packages['node_modules/playwright-core']?.version; if (!v) throw new Error('playwright-core is not in qa/package-lock.json'); console.log('version=' + v)" >> "$GITHUB_OUTPUT"
+
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-1.48
+          key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}
 
       # web-tests boots the real backend in-process (features/support/backend-server.js)
       # and the real CRA dev server (features/support/global-setup.js), so both
