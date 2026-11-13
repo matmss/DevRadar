@@ -79,3 +79,11 @@ Added during the lockfile-tracking review (2026-11-12):
 - Mutating package.json/lockfile and asking "does the guard or npm ci catch it" is quick: `git init` the scratch tree (the hygiene test calls `git check-ignore --no-index`), then per mutation run jest on the test file plus `npm ci --dry-run --ignore-scripts` (scratchpad lockmut/run.sh pattern).
 - `npm audit fix --package-lock-only` in a manifest-only copy, then diff the lock, shows whether an "accepted" finding has a non-major fix (dev/web: bfj 7.1.0 -> 7.0.2 drops jsonpath/underscore).
 - Backend unit Jest prints "A worker process has failed to exit gracefully" in about 4 of 5 runs, also with dependencyOverrides.test.js removed. It's pre-existing and not lockfile-related; --detectOpenHandles (in band) shows nothing.
+
+Added during the CI unit-test gap review (2026-11-12):
+
+- Scratch trees for `dev/mobile` `npm test` must include `dev/backend` sources: `dev/tests/mobile/config.test.js` reads `dev/backend/src/config/auth.js` (ENOENT otherwise, a false failure).
+- `qa/mobile-tests` `npm run unit` passes with no `qa/node_modules` at all (everything resolves from dev/mobile via unit/jest.config.js). Only `dev/mobile` needs installing.
+- Local npm 11.19 asks you to approve install scripts and skips postinstalls (detox, core-js) by default (`npm warn install-scripts`). Tests still pass, but CI's npm may behave differently.
+- Branch protection on `main` (since 2026-11-12): the four pr.yml checks are required, PRs required (0 approvals), no force pushes, admin bypass allowed. Renaming a pr.yml job `name:` blocks every merge until protection is updated.
+- Probe pattern for "does a failure fail the command": plant `test('probe', () => expect(1).toBe(2))` in a scratch tree and check the exit code. Jest also exits 1 for a test file with zero tests.

@@ -1,1 +1,1 @@
-- [QA harness quirks](qa-harness-quirks.md) — cucumber paths, sandbox rules, installs, lockfile/override drift, linux dry-run, scratch trees, mobile Jest timeouts
+- [QA harness quirks](qa-harness-quirks.md) — cucumber paths, sandbox rules, installs, lockfile/override drift, linux dry-run, scratch trees, mobile Jest timeouts, CI probes, branch protection
