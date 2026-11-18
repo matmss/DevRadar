@@ -36,6 +36,10 @@ Feature: QA review of the legacy-devs operator tool (spec 04, option A)
     Then the command should succeed
     And the output should mention "pwned"
     And the output should contain no raw control or bidi characters
+    # Re-check of the fix (b823d2b): the JSON listing too, and it must still parse.
+    When the operator lists the legacy developers as JSON
+    Then the output should contain no raw control or bidi characters
+    And the listing should contain 3 developers
 
   @edge @regression @P3
   Scenario: QA-LM-2 The avatar host counts are right for any host name
@@ -133,6 +137,8 @@ Feature: QA review of the legacy-devs operator tool (spec 04, option A)
     When the operator runs "list"
     Then the command should succeed
     And the output should contain no raw control or bidi characters
+    When the operator lists the legacy developers as JSON
+    Then the output should contain no raw control or bidi characters
     When the operator runs "assign <odd> --github-id 777 --force"
     Then the command should succeed
     And the output should contain no raw control or bidi characters
