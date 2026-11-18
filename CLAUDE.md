@@ -28,9 +28,12 @@ and put `overrides`/`allowScripts` in `qa/package.json` (npm ignores them in mem
 cp .env.example .env   # MONGO_URI; for sign-in also GITHUB_CLIENT_ID/SECRET and JWT_SECRET (see the file)
 npm ci
 npm run dev             # nodemon src/index.js, port 3333 by default
+node scripts/legacy-devs.js help   # operator CLI for legacy/displaced profiles: list, assign, merge, restore
 ```
 No lint/build/test scripts are defined in `dev/backend/package.json` — its tests live entirely
-under `qa/backend-tests/`.
+under `qa/backend-tests/`. `scripts/legacy-devs.js` (spec `dev/docs/04-legacy-merge-spec.md`) is
+dry-run unless `--apply`, reads `MONGO_URI` from the environment or `.env` only, sends no socket
+events (clients see changes on their next search/reconnect); runbook in `dev/docs/00-architecture.md`.
 
 ### Web (`dev/web/`)
 ```bash
@@ -108,7 +111,9 @@ Routes (`dev/backend/src/routes.js`):
   holder (login → `_stale_<_id>`, `github_username_stale: true`, nothing else changed, never
   deleted, `dev-updated` pushed) and takes the login; an older session gets 409
   `github_username_conflict` (POST) or keeps its stored login (PUT). Clients show "Perfil do GitHub
-  indisponível" and no link for stale logins. Displaced legacy devs can't be claimed (manual merge).
+  indisponível" and no link for stale logins. Displaced legacy devs can't be claimed: an operator assigns or merges them with
+  `dev/backend/scripts/legacy-devs.js` (separate process, single-document conditional writes, no
+  queue keys; the avatar id parser `utils/githubAvatarId.js` is only evidence for devs without a `github_id`).
   These multi-account writes take both accounts' queue keys in sorted order
   (`keyedQueue.runAll` via `inLoginOrder`); don't add another lock order.
 

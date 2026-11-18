@@ -219,6 +219,9 @@ Scenario: A renamed login does not hand over a profile (Q10)
   # If A's two-day-old "alice" session registers or claims "alice" after B signed in, B's own
   # registration still succeeds: B's read is newer, so A's profile is displaced (QA-AUTH6-4).
   # An older session never takes a login confirmed by a newer read: its registration gets 409.
+  # A displaced legacy profile (A never signed in before B took "alice", and B already had a
+  # profile) can no longer be claimed: an operator assigns or merges it with
+  # dev/backend/scripts/legacy-devs.js (dev/docs/04-legacy-merge-spec.md).
 
 Scenario: Old sessions
   Given a session token issued before GitHub ids were captured

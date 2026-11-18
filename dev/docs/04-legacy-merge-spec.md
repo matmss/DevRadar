@@ -1,6 +1,8 @@
 # DevRadar: displaced legacy profiles need a manual merge
 
-Status: **proposed, awaiting product-owner decisions** (section "Open questions"). Written by the
+Status: **decided (section 8); option A implemented** as `dev/backend/scripts/legacy-devs.js`
+(runbook in `dev/docs/00-architecture.md`, "Displaced legacy devs"; tests in
+`qa/backend-tests/features/legacy-merge.feature`). B1 is the next item. Written by the
 PO agent against `main` at `eee2d97`. This defines **what** to build and how we accept it; **how**
 is DEV's. Follows `dev/docs/03-auth-spec.md` (Q5, Q10, US-8) and `dev/docs/00-architecture.md`
 ("Profile ownership"). Backlog item: "displaced legacy profiles need a manual merge".
