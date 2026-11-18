@@ -8,7 +8,7 @@ const {
   formatMongoTarget,
   redactMongoUri,
 } = require('../../../dev/backend/scripts/lib/mongoTarget');
-const { EXIT, HELP, parseArgs, escapeUnsafe } = require('../../../dev/backend/scripts/lib/legacyDevs');
+const { EXIT, HELP, parseArgs, escapeUnsafe, preflight } = require('../../../dev/backend/scripts/lib/legacyDevs');
 
 const BACKEND = path.resolve(__dirname, '../../../dev/backend');
 
@@ -160,6 +160,37 @@ function jsFiles(dir) {
 function requiresOf(file) {
   return [...fs.readFileSync(file, 'utf8').matchAll(/require\(\s*['"]([^'"]+)['"]\s*\)/g)].map((match) => match[1]);
 }
+
+describe('preflight: restore checks its file before any connection', () => {
+  const collect = () => {
+    const lines = [];
+    return { lines, out: { log: (line) => lines.push(line), error: (line) => lines.push(line) } };
+  };
+
+  it('stops a missing file as invalid usage', () => {
+    const { lines, out } = collect();
+    expect(preflight({ command: 'restore', positionals: ['/nonexistent/devradar-record.json'] }, out)).toBe(EXIT.USAGE);
+    expect(lines.join('\n')).toContain('Cannot read the recovery file');
+  });
+
+  it('refuses a record with a github_id', () => {
+    const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'devradar-preflight-'));
+    const file = path.join(dir, 'record.json');
+    fs.writeFileSync(file, '{"_id":{"$oid":"0123456789abcdef01234567"},"github_id":{"$numberInt":"7"},"github_username":"x","techs":[]}');
+    const { lines, out } = collect();
+    try {
+      expect(preflight({ command: 'restore', positionals: [file] }, out)).toBe(EXIT.REFUSED);
+      expect(lines.join('\n')).toContain('the record has a github_id');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('lets every other command through', () => {
+    const { out } = collect();
+    expect(preflight({ command: 'list', positionals: [] }, out)).toBeNull();
+  });
+});
 
 describe('isolation from the API (AC-23, AC-24, AC-25)', () => {
   const scriptFiles = jsFiles(path.join(BACKEND, 'scripts'));

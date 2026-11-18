@@ -20,7 +20,7 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env'), quiet: true });
 
 const mongoose = require('mongoose');
-const { EXIT, HELP, parseArgs, isJsonListing, run } = require('./lib/legacyDevs');
+const { EXIT, HELP, parseArgs, isJsonListing, preflight, run } = require('./lib/legacyDevs');
 const { formatMongoTarget, redactMongoUri } = require('./lib/mongoTarget');
 
 const out = {
@@ -46,6 +46,10 @@ async function main(argv) {
     out.log(HELP);
     return EXIT.OK;
   }
+
+  // A restore file that is missing or invalid fails here, before any connection.
+  const early = preflight(parsed, out);
+  if (early !== null) return early;
 
   const uri = process.env.MONGO_URI;
   if (!uri) {

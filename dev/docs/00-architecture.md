@@ -278,13 +278,20 @@ existed) is found (Q5, US-8).
       account that held the login at registration; a hint, not proof, and only for devs without a
       `github_id`), whether that account already has a profile, duplicate ids, and counts.
       Read-only.
-    - `assign <_id> --github-id <id> | --from-avatar [--force] [--apply]`: the owner has no
-      profile. Sets `github_id` only; `_id` and data are kept, and the owner's next sign-in
+    - `assign <_id> --github-id <id> [--force] [--apply]` or `assign <_id> --from-avatar [--apply]`
+      (`--force` only goes with `--github-id`): the owner has no profile. Sets `github_id` only; `_id` and data are kept, and the owner's next sign-in
       restores their current login (`refreshLoginAtSignIn`). Refused if the account already has a
       profile (use merge), or if the avatar id differs or is missing, unless `--force`.
     - `merge <legacy _id> --into <profile _id> [--force] [--apply]`: the owner already has a
       profile. **The owner's profile wins, unchanged**; the legacy dev is deleted after its full
-      document is printed (canonical Extended JSON). `restore <file> --apply` inserts it back.
+      document is printed (canonical Extended JSON). Only into a profile whose `github_id` is a
+      valid GitHub id (a positive integer), even with `--force`.
+    - `restore <file> [--apply]` inserts a printed record back, **always as a displaced dev**
+      (login `_stale_<_id>`, `github_username_stale: true`, a name that was only the login
+      cleared; the original login is printed), so no account can claim it by login and the file
+      cannot create a claimable legacy dev; give it to its owner with `assign`. The record must
+      match the Dev schema (types, `techs` an array of strings, a GeoJSON Point), have no
+      `github_id` and no future `github_username_seen_at`; the file is checked before connecting.
     - Dry run unless `--apply`. Connects with `MONGO_URI` from the environment or
       `dev/backend/.env` (never an option), prints only its hosts and database name, builds no
       index and calls no GitHub API.

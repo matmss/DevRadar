@@ -288,8 +288,13 @@ Feature: Operator tool for legacy and displaced profiles: list, assign, merge (s
   # merge (AC-16 to AC-20)
   Scenario: Merge is a dry run unless --apply
   Scenario: Merge deletes the displaced developer, keeps the owner's profile byte for byte, and prints the deleted document (AC-17)
-  Scenario: A merged developer can be restored exactly from its recovery record
-  Scenario: A recovery record whose login was taken meanwhile is not restored
+  Scenario: A merged developer is restored from its recovery record as a displaced developer
+  Scenario: A restored legacy developer that still showed a login comes back displaced and cannot be claimed by that login
+  Scenario: A recovery record whose login was taken meanwhile is restored displaced, without touching the new holder
+  Scenario Outline: restore refuses a record that is not a developer as merge prints it
+    # techs not an array of strings, unknown field, future or non-date seen_at, no login, wrong types, not a Point, github_id
+  Scenario: restore checks its file before connecting to the database
+  Scenario: The listing shows techs that are not an array as what they are
   Scenario Outline: Merge loses a race to the API: nothing is deleted
   Scenario Outline: Merge refuses a wrong pair (AC-19)
   Scenario Outline: The avatar id guards merge unless --force (AC-20)
@@ -309,7 +314,7 @@ Feature: Operator tool for legacy and displaced profiles: list, assign, merge (s
   Scenario: QA-LM guard: the owner deletes their profile during a merge: the legacy record is still printed, with a warning
   Scenario: QA-LM guard: assigning to an account that has a profile is refused already on a dry run (AC-10)
   Scenario: QA-LM guard: the command line never builds an index, so a missing github_id index still refuses assign
-  Scenario: QA-LM guard: stored control and bidi characters are escaped in every command's output, and the recovery record restores them exactly
+  Scenario: QA-LM guard: stored control and bidi characters are escaped in every command's output, and the recovery record restores them (displaced, spec restore decision)
 ```
 
 ## Feature: Reads and live updates require sign-in (Backend) — covers FR-2.1, FR-3.1, FR-4.1, US-5, Q6

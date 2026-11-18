@@ -26,7 +26,7 @@
 const fs = require('fs');
 const mongoose = require('mongoose');
 const Dev = require('../../src/models/Dev');
-const { githubIdFromSubject } = require('../../src/utils/githubId');
+const { githubIdFromSubject, isValidGithubId } = require('../../src/utils/githubId');
 const { AVATAR_ID_STATUS, legacyAvatarEvidence } = require('../../src/utils/githubAvatarId');
 
 const { EJSON } = mongoose.mongo.BSON;
@@ -70,7 +70,10 @@ Commands:
       profile exactly as it is. The legacy developer's avatar id must equal the profile's
       github_id unless --force. Prints the deleted document (canonical Extended JSON) to keep.
   restore <file> [--apply]
-      Inserts back a document printed by merge (the file holds that one line).
+      Inserts back a document printed by merge (the file holds that one line), always as a
+      DISPLACED developer: login _stale_<_id>, github_username_stale true, the original login
+      printed. Nobody can claim it by login; give it to its owner with assign. The record must
+      match the Dev schema and have no github_id; checked before connecting.
   help
       This text.
 
@@ -127,10 +130,34 @@ function escapeUnsafe(text) {
   return out;
 }
 
+/**
+ * A last line of defense (QA-LM-1): every printed line is escaped again, line by line, so a value
+ * that skipped show() still cannot reach the terminal raw. Escaped text is plain ASCII escapes, so
+ * escaping it twice changes nothing.
+ * @param {Output} out
+ * @returns {Output}
+ */
+function safeOutput(out) {
+  const escapeLines = (text) => String(text).split('\n').map(escapeUnsafe).join('\n');
+  return { log: (text) => out.log(escapeLines(text)), error: (text) => out.error(escapeLines(text)) };
+}
+
 /** @param {unknown} value @returns {string} a database value for a human-readable line */
 function show(value) {
   if (value === undefined || value === null || value === '') return '(none)';
   return escapeUnsafe(typeof value === 'string' ? value : JSON.stringify(value));
+}
+
+/**
+ * @param {unknown} value - a stored techs value that is not an array (hand-edited data)
+ * @returns {string} what it is, e.g. "(not an array: string)", or "(missing)"
+ */
+function notAnArray(value) {
+  if (value === undefined) return '(missing)';
+  let type = typeof value;
+  if (value === null) type = 'null';
+  else if (type === 'object' && typeof value._bsontype === 'string') type = value._bsontype;
+  return `(not an array: ${type})`;
 }
 
 /** @param {object} doc @returns {string} relaxed Extended JSON on one line, for reading */
@@ -253,7 +280,8 @@ async function buildListing() {
     total: entries.length,
     by_status: { legacy: 0, displaced: 0 },
     by_avatar_id: { parsed: 0, unparseable: 0, none: 0 },
-    by_avatar_host: {},
+    // No prototype: a host may be named "constructor" or "__proto__" (QA-LM-2).
+    by_avatar_host: Object.create(null),
   };
   const devs = entries.map((entry) => {
     const { doc, evidence } = entry;
@@ -280,7 +308,7 @@ async function buildListing() {
       status,
       name: doc.name ?? null,
       coordinates,
-      techs: Array.isArray(doc.techs) ? doc.techs : [],
+      techs: Array.isArray(doc.techs) ? doc.techs : notAnArray(doc.techs),
       avatar_url: doc.avatar_url ?? null,
       avatar_id: parsed ? evidence.id : evidence.status,
       avatar_host: evidence.host,
@@ -322,19 +350,23 @@ async function list({ json = false }, out) {
       : '(none)';
     let ownerLine = 'no';
     if (dev.owner_has_profile) {
-      ownerLine = `yes: ${dev.owner_profile._id} (login ${show(dev.owner_profile.github_username)})`
-        + ` -> merge ${dev._id} --into ${dev.owner_profile._id}`;
+      // Every stored value goes through show(), _ids too: hand-edited data can hold a string _id
+      // with control characters (QA-LM-1).
+      ownerLine = `yes: ${show(dev.owner_profile._id)} (login ${show(dev.owner_profile.github_username)})`
+        + ` -> merge ${show(dev._id)} --into ${show(dev.owner_profile._id)}`;
     }
-    out.log(`_id                  ${dev._id}`);
+    out.log(`_id                  ${show(dev._id)}`);
     out.log(`  login              ${show(dev.login)}`);
     out.log(`  status             ${dev.status}`);
     out.log(`  name               ${show(dev.name)}`);
     out.log(`  coordinates        ${coordinates}`);
-    out.log(`  techs              ${dev.techs.length > 0 ? dev.techs.map(show).join(', ') : '(none)'}`);
+    let techs = dev.techs;
+    if (Array.isArray(techs)) techs = techs.length > 0 ? techs.map(show).join(', ') : '(none)';
+    out.log(`  techs              ${techs}`);
     out.log(`  avatar_url         ${show(dev.avatar_url)}`);
     out.log(`  avatar id          ${dev.avatar_id}`);
     out.log(`  owner_has_profile  ${ownerLine}`);
-    out.log(`  duplicate_avatar_id ${dev.duplicate_avatar_id ? `yes: ${dev.duplicate_of.join(', ')}` : 'no'}`);
+    out.log(`  duplicate_avatar_id ${dev.duplicate_avatar_id ? `yes: ${dev.duplicate_of.map(show).join(', ')}` : 'no'}`);
     out.log('');
   });
   const { summary } = listing;
@@ -463,6 +495,11 @@ async function merge({ devId, into, force = false, apply = false }, out) {
   if (isLegacy(profile)) {
     throw refusal(`developer ${profileId} has no github_id; merge only into an account's profile (assign one first).`);
   }
+  // Only an id a GitHub account can have (what the github_id index and sign-in know). --force never
+  // overrides this: it only overrides the avatar id check (QA-LM-3).
+  if (!isValidGithubId(profile.github_id)) {
+    throw refusal(`developer ${profileId} has github_id ${show(profile.github_id)}, which no GitHub account can have (a positive integer); merge only into an account's profile.`);
+  }
 
   const evidence = legacyAvatarEvidence(dev);
   let forced = null;
@@ -490,7 +527,7 @@ async function merge({ devId, into, force = false, apply = false }, out) {
   if (!deleted) throw refusal(await changedSinceRead(dev));
 
   out.log(`Applied${forced ? ' (FORCED)' : ''}: developer ${legacyId} was deleted.`);
-  out.log(`Recovery record (save the next line to a file; ${SCRIPT} restore <file> --apply puts it back):`);
+  out.log(`Recovery record (save the next line to a file; ${SCRIPT} restore <file> --apply puts it back, as a displaced developer):`);
   out.log(recoveryJson(deleted));
   const after = await Dev.collection.findOne({ _id: profileId });
   if (!after || after.github_id !== profile.github_id) {
@@ -502,13 +539,76 @@ async function merge({ devId, into, force = false, apply = false }, out) {
 
 // --- restore -------------------------------------------------------------------------------------
 
+// A restored dev is always DISPLACED: its login becomes the same placeholder
+// services/devOwnership.js gives a displaced dev (`_stale_<_id>`, never a valid GitHub login), so
+// no account can ever claim it by login, whatever the file says. Only `assign` (a human decision,
+// with the avatar id guard) gives it an owner. Otherwise a crafted record could create a new
+// claimable legacy dev, which the spec rules out (no new legacy devs can arise; B1 relies on it).
+const STALE_LOGIN_PREFIX = '_stale_';
+
+// The fields a Dev document can have (models/Dev.js), and those of its location (PointSchema).
+const RECORD_FIELDS = new Set(Object.keys(Dev.schema.paths));
+const LOCATION_FIELDS = new Set(['type', 'coordinates', '_id']);
+
+/** @param {unknown} value @returns {boolean} */
+const isObjectId = (value) => Boolean(value) && typeof value === 'object' && value._bsontype === 'ObjectId';
+/** @param {unknown} value @returns {boolean} missing or null */
+const isAbsent = (value) => value === undefined || value === null;
+
 /**
- * Inserts back a dev deleted by merge, from its recovery record.
- * @param {{ file: string, apply?: boolean }} options
- * @param {Output} out
- * @returns {Promise<number>}
+ * @param {unknown} value - a number as canonical Extended JSON parses it (Double, Int32) or a number
+ * @returns {number} its value, or NaN
  */
-async function restore({ file, apply = false }, out) {
+function numberOf(value) {
+  if (typeof value === 'number') return value;
+  if (value && typeof value === 'object' && (value._bsontype === 'Double' || value._bsontype === 'Int32')) {
+    return value.valueOf();
+  }
+  return NaN;
+}
+
+/**
+ * Checks a recovery record against the Dev schema, strictly (no casting).
+ * @param {object} doc
+ * @returns {string | null} what is wrong with it, or null
+ */
+function recordProblem(doc) {
+  const unknown = Object.keys(doc).filter((key) => !RECORD_FIELDS.has(key));
+  if (unknown.length > 0) return `unknown field(s) ${unknown.map(show).join(', ')}`;
+  if (typeof doc.github_username !== 'string' || doc.github_username === '') return 'github_username must be a non-empty string';
+  if (!isAbsent(doc.github_username_stale) && typeof doc.github_username_stale !== 'boolean') return 'github_username_stale must be a boolean';
+  for (const field of ['name', 'bio', 'avatar_url']) {
+    if (!isAbsent(doc[field]) && typeof doc[field] !== 'string') return `${field} must be a string or null`;
+  }
+  if (!Array.isArray(doc.techs) || !doc.techs.every((tech) => typeof tech === 'string')) return 'techs must be an array of strings';
+  const seenAt = doc.github_username_seen_at;
+  if (!isAbsent(seenAt)) {
+    if (!(seenAt instanceof Date) || Number.isNaN(seenAt.getTime())) return 'github_username_seen_at must be a date';
+    // A future login read would block the owner's next sign-in from refreshing the login.
+    if (seenAt.getTime() > Date.now()) return 'github_username_seen_at is in the future';
+  }
+  if (!isAbsent(doc.location)) {
+    const { location } = doc;
+    if (typeof location !== 'object' || Array.isArray(location) || location instanceof Date
+      || !Object.keys(location).every((key) => LOCATION_FIELDS.has(key))) return 'location must be a GeoJSON Point';
+    if (location.type !== 'Point' || !Array.isArray(location.coordinates) || location.coordinates.length !== 2) {
+      return 'location must be a GeoJSON Point';
+    }
+    const [longitude, latitude] = location.coordinates.map(numberOf);
+    if (!(longitude >= -180 && longitude <= 180 && latitude >= -90 && latitude <= 90)) return 'location coordinates are out of range';
+    if (location._id !== undefined && !isObjectId(location._id)) return 'location._id must be an ObjectId';
+  }
+  if (doc.__v !== undefined && !Number.isInteger(numberOf(doc.__v))) return '__v must be an integer';
+  return null;
+}
+
+/**
+ * Reads and checks a recovery record (no database needed, so the command line runs this before it
+ * connects).
+ * @param {string} file
+ * @returns {object} the record, as canonical Extended JSON parses it
+ */
+function loadRecoveryRecord(file) {
   let text;
   try {
     if (fs.statSync(file).size > MAX_RESTORE_FILE_BYTES) throw new Error('too large');
@@ -522,19 +622,47 @@ async function restore({ file, apply = false }, out) {
   } catch {
     throw usage('The file must hold one recovery record: the Extended JSON line merge printed.');
   }
-  if (!doc || typeof doc !== 'object' || Array.isArray(doc) || !doc._id || doc._id._bsontype !== 'ObjectId') {
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc) || !isObjectId(doc._id)) {
     throw usage('The file must hold one recovery record: the Extended JSON line merge printed.');
   }
   if (!isLegacy(doc)) throw refusal('the record has a github_id; this tool only deletes, and so only restores, legacy developers.');
-  if (await Dev.collection.findOne({ _id: doc._id }, { projection: { _id: 1 } })) {
-    throw refusal(`a developer with _id ${doc._id} already exists.`);
+  const problem = recordProblem(doc);
+  if (problem) throw refusal(`the record is not a developer as merge prints it: ${problem}.`);
+  return doc;
+}
+
+/**
+ * The record as it is inserted: displaced (placeholder login, stale flag), and a name that was
+ * only the login cleared, as a displacement does. Everything else as recorded.
+ * @param {object} doc
+ * @returns {object}
+ */
+function asDisplaced(doc) {
+  const restored = { ...doc, github_username: `${STALE_LOGIN_PREFIX}${doc._id.toHexString()}`, github_username_stale: true };
+  if (typeof doc.name === 'string' && doc.name.toLowerCase() === doc.github_username.toLowerCase()) restored.name = null;
+  return restored;
+}
+
+/**
+ * Inserts back a dev deleted by merge, from its recovery record, always as a displaced dev.
+ * @param {{ file: string, apply?: boolean }} options
+ * @param {Output} out
+ * @returns {Promise<number>}
+ */
+async function restore({ file, apply = false }, out) {
+  const record = loadRecoveryRecord(file);
+  if (await Dev.collection.findOne({ _id: record._id }, { projection: { _id: 1 } })) {
+    throw refusal(`a developer with _id ${record._id} already exists.`);
   }
   if (!await hasIndex(GITHUB_USERNAME_INDEX)) {
     throw refusal(`the ${GITHUB_USERNAME_INDEX} index is missing, so a duplicate login could not be detected. Start the API once, then retry.`);
   }
+  const doc = asDisplaced(record);
 
-  out.log(`Restore developer ${doc._id}`);
-  out.log(`  record: ${readableJson(doc)}`);
+  out.log(`Restore developer ${doc._id} as displaced`);
+  out.log(`  original login: ${show(record.github_username)}`);
+  out.log(`  restored login: ${doc.github_username} (displaced: no account can claim it by login; use assign to give it to its owner)`);
+  out.log(`  record:         ${readableJson(doc)}`);
   if (!apply) {
     out.log('Dry run: nothing was written. Re-run with --apply to insert it.');
     return EXIT.OK;
@@ -542,12 +670,10 @@ async function restore({ file, apply = false }, out) {
   try {
     await Dev.collection.insertOne(doc);
   } catch (err) {
-    if (err && err.code === DUPLICATE_KEY) {
-      throw refusal(`another developer now uses this record's _id or login (${show(doc.github_username)}).`);
-    }
+    if (err && err.code === DUPLICATE_KEY) throw refusal(`another developer now uses this record's _id (${doc._id}).`);
     throw err;
   }
-  out.log(`Applied: developer ${doc._id} was restored.`);
+  out.log(`Applied: developer ${doc._id} was restored as displaced (original login ${show(record.github_username)}).`);
   out.log(NO_LIVE_EVENTS);
   return EXIT.OK;
 }
@@ -622,7 +748,8 @@ function isJsonListing(parsed) {
  * @param {Output} out
  * @returns {Promise<number>} the exit code (EXIT)
  */
-async function run(argv, out) {
+async function run(argv, rawOut) {
+  const out = safeOutput(rawOut);
   try {
     const { command, positionals, options } = parseArgs(argv);
     if (command === 'help') {
@@ -661,6 +788,27 @@ async function run(argv, out) {
   }
 }
 
+/**
+ * Checks what can be checked without a database, so the command line fails before it connects
+ * (a restore file that is missing, unreadable or not a valid record).
+ * @param {{ command: string, positionals: string[] }} parsed - parseArgs' result
+ * @param {Output} rawOut
+ * @returns {number | null} an exit code to stop with, or null to go on
+ */
+function preflight(parsed, rawOut) {
+  if (parsed.command !== 'restore') return null;
+  const out = safeOutput(rawOut);
+  try {
+    loadRecoveryRecord(parsed.positionals[0]);
+    return null;
+  } catch (err) {
+    if (!(err instanceof CommandError)) throw err;
+    out.error(err.message);
+    if (err.exitCode === EXIT.USAGE) out.error(`Run "${SCRIPT} help" for usage.`);
+    return err.exitCode;
+  }
+}
+
 module.exports = {
   EXIT,
   HELP,
@@ -668,6 +816,7 @@ module.exports = {
   escapeUnsafe,
   parseArgs,
   isJsonListing,
+  preflight,
   buildListing,
   run,
 };

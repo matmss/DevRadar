@@ -414,6 +414,54 @@ Then('the developer {string} should be exactly as before the first operator comm
   expect(now.get(_id)).to.equal(this.snapshots[0].get(_id));
 });
 
+// restore always inserts the record as a displaced dev: placeholder login, stale flag, and a name
+// that was only the login cleared, everything else exactly as recorded (same rule as asDisplaced).
+Then(
+  'the developer {string} should be as before the first operator command, but displaced',
+  async function (alias) {
+    const _id = await devIdOf(this, alias);
+    const before = EJSON.parse(this.snapshots[0].get(_id), { relaxed: false });
+    const expected = { ...before, github_username: `_stale_${_id}`, github_username_stale: true };
+    if (typeof before.name === 'string' && before.name.toLowerCase() === before.github_username.toLowerCase()) {
+      expected.name = null;
+    }
+    const now = await snapshot();
+    expect(now.get(_id), `developer "${alias}" should exist`).to.be.a('string');
+    expect(now.get(_id)).to.equal(exact(expected));
+  }
+);
+
+Given(
+  'the legacy developer {string} was stored before sign-in with techs stored as the string {string}',
+  async function (login, techs) {
+    const { insertedId } = await Dev.collection.insertOne({
+      github_username: login, name: login, techs, location: SEED_LOCATION, __v: 0,
+    });
+    rememberAlias(this, login, insertedId);
+  }
+);
+
+// A record as merge prints it for a displaced-or-not legacy dev, with one field replaced by a
+// canonical Extended JSON value (e.g. techs "\"Go\"", github_username_seen_at a future date).
+Given(
+  'a recovery record file for a legacy developer whose {word} is {string}',
+  function (field, valueJson) {
+    const record = {
+      _id: new mongoose.mongo.ObjectId(),
+      github_username: 'restored',
+      name: 'restored',
+      bio: 'seed fixture',
+      avatar_url: 'https://avatars.githubusercontent.com/u/501?v=4',
+      techs: ['Go'],
+      location: { type: 'Point', coordinates: [-46.6333, -23.5505] },
+      __v: 0,
+    };
+    record[field] = EJSON.parse(valueJson, { relaxed: false });
+    this.recoveryFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'devradar-legacy-')), 'record.json');
+    fs.writeFileSync(this.recoveryFile, `${exact(record)}\n`);
+  }
+);
+
 // AC-8: the only difference is github_id (set in place if it was null, else added at the end).
 Then(
   'the developer {string} should be exactly as before the command except github_id {int}',

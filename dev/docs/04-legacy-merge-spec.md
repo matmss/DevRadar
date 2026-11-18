@@ -2,7 +2,13 @@
 
 Status: **decided (section 8); option A implemented** as `dev/backend/scripts/legacy-devs.js`
 (runbook in `dev/docs/00-architecture.md`, "Displaced legacy devs"; tests in
-`qa/backend-tests/features/legacy-merge.feature`). B1 is the next item. Written by the
+`qa/backend-tests/features/legacy-merge.feature`). B1 is the next item. Beyond section 6 the
+tool has `restore <file>`, the recovery path for `merge`. By the main session's decision of
+2026-11-18 (QA review) it always restores the record as a **displaced** dev (login
+`_stale_<_id>`, stale flag, original login printed) after checking it against the Dev schema (no
+`github_id`, no future `github_username_seen_at`). So a restored or crafted record can never
+become a dev that is claimable by login, the premise of section 2 and of B1 holds (no new legacy
+devs arise), and only `assign` gives a restored dev an owner. Written by the
 PO agent against `main` at `eee2d97`. This defines **what** to build and how we accept it; **how**
 is DEV's. Follows `dev/docs/03-auth-spec.md` (Q5, Q10, US-8) and `dev/docs/00-architecture.md`
 ("Profile ownership"). Backlog item: "displaced legacy profiles need a manual merge".

@@ -127,7 +127,7 @@ Feature: QA review of the legacy-devs operator tool (spec 04, option A)
     And the github_id_unique index should still be missing
 
   @edge @regression @P1
-  Scenario: QA-LM guard: stored control and bidi characters are escaped in every command's output, and the recovery record restores them exactly
+  Scenario: QA-LM guard: stored control and bidi characters are escaped in every command's output, and the recovery record restores them (displaced, spec restore decision)
     Given a legacy developer "odd" whose login, name, bio and techs hold control and bidi characters, with avatar "https://avatars.githubusercontent.com/u/501?v=4"
     And a developer "alice2" owned by GitHub account 501 with avatar "https://avatars.githubusercontent.com/u/501?v=4" already exists
     When the operator runs "list"
@@ -144,4 +144,4 @@ Feature: QA review of the legacy-devs operator tool (spec 04, option A)
     And the operator runs "restore <file> --apply"
     Then the command should succeed
     And the output should contain no raw control or bidi characters
-    And the developer "odd" should be exactly as before the first operator command
+    And the developer "odd" should be as before the first operator command, but displaced

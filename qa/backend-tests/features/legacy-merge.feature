@@ -304,7 +304,9 @@ Feature: Operator tool for legacy and displaced profiles: list, assign, merge (s
     And the response should include the developer "alice2"
 
   @regression @P1
-  Scenario: A merged developer can be restored exactly from its recovery record
+  # restore puts a merged dev back, always DISPLACED (login "_stale_<_id>", stale flag, a name that
+  # was only the login cleared): a restored dev can never be claimed by login, only assigned.
+  Scenario: A merged developer is restored from its recovery record as a displaced developer
     Given the legacy developer "alice" was stored before sign-in with avatar "https://avatars.githubusercontent.com/u/501?v=4"
     And the legacy developer "alice" has been displaced
     And a developer "alice2" owned by GitHub account 501 with avatar "https://avatars.githubusercontent.com/u/501?v=4" already exists
@@ -313,22 +315,81 @@ Feature: Operator tool for legacy and displaced profiles: list, assign, merge (s
     And the operator runs "restore <file>"
     Then the command should succeed
     And nothing should have been written to the database
+    And the output should contain "Restore developer <alice> as displaced"
     When the operator runs "restore <file> --apply"
     Then the command should succeed
-    And the developer "alice" should be exactly as before the first operator command
+    And the developer "alice" should be as before the first operator command, but displaced
     When the operator runs "restore <file> --apply"
     Then the command should be refused with "already exists"
 
+  @edge @regression @P1
+  Scenario: A restored legacy developer that still showed a login comes back displaced and cannot be claimed by that login
+    Given the legacy developer "alice" was stored before sign-in with avatar "https://avatars.githubusercontent.com/u/501?v=4"
+    And a developer "alice2" owned by GitHub account 501 with avatar "https://avatars.githubusercontent.com/u/501?v=4" already exists
+    When the operator runs "merge <alice> --into <alice2> --apply"
+    And the operator saves the recovery record to a file
+    And the operator runs "restore <file> --apply"
+    Then the command should succeed
+    And the output should contain "original login alice"
+    And the developer "alice" should be displaced
+    And the developer "alice" should be as before the first operator command, but displaced
+    Given I am signed in as "alice" with GitHub account 503
+    When I update my profile with techs "Go", latitude "-23.5505" and longitude "-46.6333"
+    Then the response status should be 404
+    And the developer "alice" should still be legacy
+    And the developer "alice" should be displaced
+    When the operator runs "assign <alice> --github-id 501 --force --apply"
+    Then the command should be refused with "GitHub account 501 already has a profile"
+
   @edge @regression @P2
-  Scenario: A recovery record whose login was taken meanwhile is not restored
+  Scenario: A recovery record whose login was taken meanwhile is restored displaced, without touching the new holder
     Given the legacy developer "alice" was stored before sign-in with avatar "https://avatars.githubusercontent.com/u/501?v=4"
     And a developer "alice2" owned by GitHub account 501 with avatar "https://avatars.githubusercontent.com/u/501?v=4" already exists
     When the operator runs "merge <alice> --into <alice2> --apply"
     And the operator saves the recovery record to a file
     And a developer "Alice" owned by GitHub account 502 with avatar "https://example.com/a.png" already exists
     And the operator runs "restore <file> --apply"
-    Then the command should be refused with "another developer now uses this record's _id or login"
+    Then the command should succeed
+    And the developer "Alice" should be exactly as before the command
+    And the developer "alice" should be displaced
+
+  @edge @regression @P1
+  Scenario Outline: restore refuses a record that is not a developer as merge prints it (<case>)
+    Given a recovery record file for a legacy developer whose <field> is '<value>'
+    When the operator runs "restore <file> --apply"
+    Then the command should be refused with "<refusal>"
     And nothing should have been written to the database
+
+    Examples:
+      | case                  | field                   | value                                             | refusal                                         |
+      | techs not an array    | techs                   | "Go"                                              | techs must be an array of strings               |
+      | a non-string tech     | techs                   | ["Go", {"$numberInt": "1"}]                       | techs must be an array of strings               |
+      | an unknown field      | is_admin                | true                                              | unknown field(s) is_admin                       |
+      | a login read later    | github_username_seen_at | {"$date": {"$numberLong": "32503680000000"}}      | github_username_seen_at is in the future        |
+      | a seen_at string      | github_username_seen_at | "2020-01-01"                                      | github_username_seen_at must be a date          |
+      | no login              | github_username         | null                                              | github_username must be a non-empty string      |
+      | a numeric name        | name                    | {"$numberInt": "5"}                               | name must be a string or null                   |
+      | a stale flag string   | github_username_stale   | "yes"                                             | github_username_stale must be a boolean         |
+      | not a Point           | location                | {"type": "Polygon", "coordinates": [1, 2]}         | location must be a GeoJSON Point                |
+      | coordinates too far   | location                | {"type": "Point", "coordinates": [{"$numberDouble": "200"}, {"$numberDouble": "0"}]} | location coordinates are out of range |
+      | a github_id           | github_id               | {"$numberInt": "777"}                             | the record has a github_id                      |
+
+  @integration @regression @P2
+  Scenario: restore checks its file before connecting to the database
+    When the operator runs the command line "restore /nonexistent/devradar-record.json --apply" with MONGO_URI "mongodb://127.0.0.1:1/devradar?serverSelectionTimeoutMS=60000"
+    Then the command should exit with code 2
+    And the output should contain "Cannot read the recovery file"
+    And the output should not contain "MongoDB:"
+    And the output should not contain "Failed"
+
+  @regression @P3
+  Scenario: The listing shows techs that are not an array as what they are
+    Given the legacy developer "odd" was stored before sign-in with techs stored as the string "Node.js"
+    When the operator lists the legacy developers as JSON
+    Then the listing entry for "odd" should show:
+      | techs | (not an array: string) |
+    When the operator runs "list"
+    Then the output should contain "techs              (not an array: string)"
 
   # AC-18: the conditional delete only removes the dev as it was read.
   @edge @regression @P1
