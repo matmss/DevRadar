@@ -36,10 +36,10 @@ Defines how functional, regression, integration, and exploratory testing are run
 - Exit criteria: all `@smoke` + relevant `@edge` scenarios pass; no P1 defect open against the feature.
 
 ## 4. Regression testing
-- Full `@regression`-tagged suite across backend, web, mobile runs via the unified runner (`npm run test:all`) nightly on `master` and on-demand before a release tag.
+- Full `@regression`-tagged suite across backend, web, mobile runs via the unified runner (`npm run test:all`) nightly on `main` and on-demand before a release tag.
 - Any confirmed production bug gets a corresponding scenario added with `@regression` before the fix is considered done (prevents re-occurrence).
 - A regression run is a release gate: a release cannot ship with a failing P1 `@regression` scenario.
-- In CI, `.github/workflows/release.yml` resolves the tag to one commit and passes it to `regression.yml` (its `ref` input), then builds and releases that same commit, so a manual re-release tests the tag, not the branch it was dispatched from. A dispatch of `regression.yml` can test any branch, tag or SHA the same way. Tags cut before the lockfiles were committed (9ba5138) stop at the first job with that explanation, since every install is `npm ci`.
+- In CI, `.github/workflows/release.yml` resolves the tag to one commit and passes it to `regression.yml` (its `ref` input), then builds and releases that same commit, so a manual re-release tests the tag, not the branch it was dispatched from. A dispatch of `regression.yml` can test any branch or tag name, or a full 40-character commit SHA, the same way (a short SHA fails at checkout). The release workflow only releases exact `v<major>.<minor>.<patch>` tags. On a manual dispatch, release.yml comes from the dispatching branch, so a tag cut before the lockfiles were committed (9ba5138) stops at the first job with that explanation, since every install is `npm ci`. Pushing a new tag on such a commit instead runs that commit's own, older release.yml, which has neither this check nor the tag-pinned gate.
 
 ## 5. Integration testing
 - Backend integration profile: real (test) MongoDB + real Express app + real Socket.io server, exercised via Supertest + a Socket.io client in the same process (see `backend-tests/features/realtime.feature`).
@@ -55,7 +55,7 @@ Defines how functional, regression, integration, and exploratory testing are run
 | Gate | Entry criteria | Exit criteria |
 |---|---|---|
 | PR merge | Unit + functional BDD suite green for touched layer(s); CI (`.github/workflows/pr.yml`) runs the unit tests of all three layers and the backend + web BDD suites (mobile Detox/Maestro stay manual, BUG-009) | No new P1/P2 defects; coverage on touched files not reduced |
-| Nightly build | Latest `master` | Regression + integration suites green; failures triaged same day |
+| Nightly build | Latest `main` | Regression + integration suites green; failures triaged same day |
 | Release | Nightly green for 2 consecutive runs | Exploratory pass complete; open P1 bug count = 0; P2 bugs have owners/dates |
 
 ## 8. Environments
