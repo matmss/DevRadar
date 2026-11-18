@@ -33,9 +33,9 @@ jobs:
     name: Backend (unit + functional + integration)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -46,7 +46,7 @@ jobs:
       # mongodb-memory-server downloads a real mongod binary on first use;
       # cache it so PRs don't re-pay that download every run.
       - name: Cache mongodb-memory-server binaries
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/mongodb-binaries
           key: ${{ runner.os }}-mongodb-binaries-v10
@@ -69,7 +69,7 @@ jobs:
 
       - name: Upload backend test report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: backend-report
           path: qa/reports/backend.json
@@ -80,9 +80,9 @@ jobs:
     name: Web unit (Jest, react-scripts)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -104,9 +104,9 @@ jobs:
     name: Mobile unit (Jest, jest-expo)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -136,9 +136,9 @@ jobs:
     name: Web (functional, real backend + real Mongo)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -148,7 +148,7 @@ jobs:
             qa/package-lock.json
 
       - name: Cache mongodb-memory-server binaries
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/mongodb-binaries
           key: ${{ runner.os }}-mongodb-binaries-v10
@@ -161,7 +161,7 @@ jobs:
           node -e "const v = require('./qa/package-lock.json').packages['node_modules/playwright-core']?.version; if (!v) throw new Error('playwright-core is not in qa/package-lock.json'); console.log('version=' + v)" >> "$GITHUB_OUTPUT"
 
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}
@@ -197,7 +197,7 @@ jobs:
 
       - name: Upload web test report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: web-report
           path: |
