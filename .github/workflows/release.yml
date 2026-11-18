@@ -5,6 +5,10 @@ name: Release
 # publishes a GitHub Release with the build attached. There's no deployment
 # target defined for this project (see CLAUDE.md) — this stops at "cut a
 # GitHub release", it doesn't ship anywhere.
+#
+# The tag is resolved to one commit first, and the gate, the build and the release all use
+# that commit: on a manual (re-)release, the gate used to test the branch the run was
+# dispatched from, while the build used the tag.
 
 on:
   push:
@@ -17,29 +21,81 @@ on:
         required: true
         type: string
 
+# Read-only by default; only "Publish GitHub Release" gets contents: write (QA-CI-1, see the
+# note in pr.yml). The regression gate inherits this, and regression.yml asks for no more.
+permissions:
+  contents: read
+
 env:
   NODE_VERSION: lts/*
 
 jobs:
+  resolve:
+    name: Resolve release tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      # Fully qualified, so a branch with the same name can't shadow the tag. Fails if the tag
+      # doesn't exist. Checkout trims spaces around `ref`, so "v1.2.3 " gets this far; the next
+      # step rejects it.
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          persist-credentials: false
+
+      # Only an exact v<major>.<minor>.<patch> is released: the tag becomes the zip name and the
+      # release, so "v1.2.3 " must not get through (QA-CI-4). The push filter `v*.*.*` also
+      # matches tags like v1.2.3-rc.1, which stop here too.
+      # The gate and the build install with `npm ci`, which needs these lockfiles. Tags cut before
+      # they were committed (9ba5138, #75) have none, so stop here with the reason rather than
+      # let the gate fail on `npm ci` and look like a test failure.
+      - name: Check the tag name and that it has the lockfiles CI installs from
+        id: resolve
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error title=Not a release tag::\"$TAG\" is not a release tag. Expected exactly v<major>.<minor>.<patch>, e.g. v1.2.0: no spaces, prefix or suffix."
+            exit 1
+          fi
+          missing=""
+          for f in dev/backend/package-lock.json dev/web/package-lock.json qa/package-lock.json; do
+            [ -f "$f" ] || missing="$missing $f"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error title=Tag predates the committed lockfiles::$TAG has no$missing. The regression gate and the web build install with npm ci, which needs them; lockfiles were first committed in 9ba5138 (#75), so this workflow can't (re-)release a tag cut before that. Tag a later commit instead."
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
   regression-gate:
     name: Regression gate
+    needs: resolve
     uses: ./.github/workflows/regression.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
 
   build-web:
     name: Build web client
-    needs: regression-gate
+    needs: [resolve, regression-gate]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      # No npm cache for a release build: there's no `cache` input, and setup-node v5+ would
+      # otherwise turn caching on by itself if a root package.json ever declared npm as its
+      # `packageManager` (setup-node recommends this for privileged workflows).
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
 
-      # npm ci needs dev/web/package-lock.json in the checked-out tag; a tag cut before the
-      # lockfiles were committed can't be re-released by this workflow (none existed then).
       - name: Install web app dependencies
         working-directory: dev/web
         run: npm ci
@@ -50,28 +106,34 @@ jobs:
 
       - name: Package build
         working-directory: dev/web
-        run: zip -r ../../devradar-web-${{ inputs.tag || github.ref_name }}.zip build
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: zip -r "../../devradar-web-$TAG.zip" build
 
-      - uses: actions/upload-artifact@v4
+      # Zipped again as the artifact (archive: true, the default), which download-artifact
+      # unpacks, leaving devradar-web-<tag>.zip in the release job's workspace.
+      - uses: actions/upload-artifact@v7
         with:
           name: devradar-web-build
           path: devradar-web-*.zip
+          if-no-files-found: error
           retention-days: 90
 
   github-release:
     name: Publish GitHub Release
-    needs: build-web
+    needs: [resolve, build-web]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: devradar-web-build
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
+          tag_name: ${{ needs.resolve.outputs.tag }}
           generate_release_notes: true
           files: devradar-web-*.zip
+          fail_on_unmatched_files: true

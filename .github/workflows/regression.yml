@@ -10,12 +10,36 @@ name: Regression
 # (Detox/Maestro) stays out of every automated run (BUG-009 in
 # qa/docs/05-bug-tracker.md); run `cd qa && npm run test:mobile` manually
 # against a simulator/emulator instead.
+#
+# `ref` picks what to test. Empty (the nightly, and a dispatch without it) means the
+# triggering ref, as before. release.yml passes the commit of the tag it releases: a reusable
+# workflow's checkout otherwise tests the *caller's* ref, which for a manual re-release is
+# the branch it was dispatched from, not the tag that gets built. actions/checkout takes a
+# branch or tag name, or a *full* 40-character SHA; it reads anything else, short SHAs
+# included, as a ref name and fails to fetch it.
 
 on:
   schedule:
     - cron: '0 3 * * *' # 03:00 UTC nightly
-  workflow_dispatch: {}
-  workflow_call: {}
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch, tag or full 40-character commit SHA to test, no short SHAs (empty: the ref this run is dispatched on)'
+        required: false
+        default: ''
+        type: string
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Branch, tag or full 40-character commit SHA to test, no short SHAs (empty: the caller''s ref)'
+        required: false
+        default: ''
+        type: string
+
+# Read-only token, not kept in .git/config; see the note in pr.yml (QA-CI-1). When release.yml
+# calls this workflow it can't get more than the caller's job has, which is the same.
+permissions:
+  contents: read
 
 env:
   # Installs are `npm ci` from the committed lockfiles; see the note in pr.yml.
@@ -26,9 +50,12 @@ jobs:
     name: Backend regression
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -36,11 +63,20 @@ jobs:
             dev/backend/package-lock.json
             qa/package-lock.json
 
+      # MONGOMS_DOWNLOAD_DIR makes the cached directory the one mongodb-memory-server uses;
+      # see the note in pr.yml.
+      - name: Read locked mongodb-memory-server version
+        id: mongoms
+        run: |
+          echo "MONGOMS_DOWNLOAD_DIR=$HOME/.cache/mongodb-binaries" >> "$GITHUB_ENV"
+          echo "os=$(. /etc/os-release && echo "$ID-$VERSION_ID")" >> "$GITHUB_OUTPUT"
+          node -e "const v = require('./qa/package-lock.json').packages['node_modules/mongodb-memory-server-core']?.version; if (!v) throw new Error('mongodb-memory-server-core is not in qa/package-lock.json'); console.log('version=' + v)" >> "$GITHUB_OUTPUT"
+
       - name: Cache mongodb-memory-server binaries
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/mongodb-binaries
-          key: ${{ runner.os }}-mongodb-binaries-v10
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.mongoms.outputs.os }}-mongodb-binaries-${{ steps.mongoms.outputs.version }}
 
       - name: Install backend app dependencies
         working-directory: dev/backend
@@ -58,9 +94,12 @@ jobs:
     name: Web regression
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -69,11 +108,20 @@ jobs:
             dev/web/package-lock.json
             qa/package-lock.json
 
+      # MONGOMS_DOWNLOAD_DIR makes the cached directory the one mongodb-memory-server uses;
+      # see the note in pr.yml.
+      - name: Read locked mongodb-memory-server version
+        id: mongoms
+        run: |
+          echo "MONGOMS_DOWNLOAD_DIR=$HOME/.cache/mongodb-binaries" >> "$GITHUB_ENV"
+          echo "os=$(. /etc/os-release && echo "$ID-$VERSION_ID")" >> "$GITHUB_OUTPUT"
+          node -e "const v = require('./qa/package-lock.json').packages['node_modules/mongodb-memory-server-core']?.version; if (!v) throw new Error('mongodb-memory-server-core is not in qa/package-lock.json'); console.log('version=' + v)" >> "$GITHUB_OUTPUT"
+
       - name: Cache mongodb-memory-server binaries
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/mongodb-binaries
-          key: ${{ runner.os }}-mongodb-binaries-v10
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.mongoms.outputs.os }}-mongodb-binaries-${{ steps.mongoms.outputs.version }}
 
       # Keyed on the locked playwright-core version; see the note in pr.yml.
       - name: Read locked Playwright version
@@ -82,7 +130,7 @@ jobs:
           node -e "const v = require('./qa/package-lock.json').packages['node_modules/playwright-core']?.version; if (!v) throw new Error('playwright-core is not in qa/package-lock.json'); console.log('version=' + v)" >> "$GITHUB_OUTPUT"
 
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}
@@ -115,7 +163,7 @@ jobs:
 
       - name: Upload web regression report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: web-regression-report
           path: |

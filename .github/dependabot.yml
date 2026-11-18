@@ -64,13 +64,24 @@ updates:
     allow:
       - dependency-name: "*"
         update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+    # The lockfile's workspace entries (keys "backend-tests", "web-tests", "mobile-tests") are
+    # read as dependencies named after the folder. Dependabot looked them up on the npm registry
+    # (404) and marked the whole job failed. `"private": true` doesn't help, the lockfile
+    # doesn't carry it. An ignore with no versions drops them before any lookup; it also
+    # applies to security updates, but only for these exact names, which are our own workspace
+    # folders, not registry packages.
+    ignore:
+      - dependency-name: "backend-tests"
+      - dependency-name: "web-tests"
+      - dependency-name: "mobile-tests"
     groups:
       qa-minor-patch:
         update-types: [minor, patch]
     open-pull-requests-limit: 2
 
-  # Workflows pin actions by major tag (actions/checkout@v4), so every update here is a
-  # major; they are few, and CI on the PR exercises them.
+  # Workflows pin actions by major tag (actions/checkout@v7), so every update here is a
+  # major. The PR's checks only run pr.yml: check what regression.yml and release.yml pass
+  # (download-artifact, action-gh-release) against the new majors' release notes and action.yml.
   - package-ecosystem: github-actions
     directory: /
     schedule:
