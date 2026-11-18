@@ -39,6 +39,7 @@ Defines how functional, regression, integration, and exploratory testing are run
 - Full `@regression`-tagged suite across backend, web, mobile runs via the unified runner (`npm run test:all`) nightly on `master` and on-demand before a release tag.
 - Any confirmed production bug gets a corresponding scenario added with `@regression` before the fix is considered done (prevents re-occurrence).
 - A regression run is a release gate: a release cannot ship with a failing P1 `@regression` scenario.
+- In CI, `.github/workflows/release.yml` resolves the tag to one commit and passes it to `regression.yml` (its `ref` input), then builds and releases that same commit, so a manual re-release tests the tag, not the branch it was dispatched from. A dispatch of `regression.yml` can test any branch, tag or SHA the same way. Tags cut before the lockfiles were committed (9ba5138) stop at the first job with that explanation, since every install is `npm ci`.
 
 ## 5. Integration testing
 - Backend integration profile: real (test) MongoDB + real Express app + real Socket.io server, exercised via Supertest + a Socket.io client in the same process (see `backend-tests/features/realtime.feature`).

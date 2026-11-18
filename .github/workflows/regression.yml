@@ -10,12 +10,29 @@ name: Regression
 # (Detox/Maestro) stays out of every automated run (BUG-009 in
 # qa/docs/05-bug-tracker.md); run `cd qa && npm run test:mobile` manually
 # against a simulator/emulator instead.
+#
+# `ref` picks what to test. Empty (the nightly, and a dispatch without it) means the
+# triggering ref, as before. release.yml passes the commit of the tag it releases: a reusable
+# workflow's checkout otherwise tests the *caller's* ref, which for a manual re-release is
+# the branch it was dispatched from, not the tag that gets built.
 
 on:
   schedule:
     - cron: '0 3 * * *' # 03:00 UTC nightly
-  workflow_dispatch: {}
-  workflow_call: {}
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch, tag or commit SHA to test (empty: the ref this run is dispatched on)'
+        required: false
+        default: ''
+        type: string
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Branch, tag or commit SHA to test (empty: the caller''s ref)'
+        required: false
+        default: ''
+        type: string
 
 env:
   # Installs are `npm ci` from the committed lockfiles; see the note in pr.yml.
@@ -27,6 +44,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
 
       - uses: actions/setup-node@v7
         with:
@@ -68,6 +87,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
 
       - uses: actions/setup-node@v7
         with:
