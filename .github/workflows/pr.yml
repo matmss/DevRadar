@@ -20,6 +20,13 @@ concurrency:
   group: pr-${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+# The repository's default token is read/write, and every job runs third-party install
+# scripts (`npm ci`), so the token is read-only here and checkout doesn't keep it in
+# .git/config (persist-credentials: false). Cache and artifact steps use the runner's own
+# ACTIONS_RUNTIME_TOKEN, not this one, so they need no extra scope (QA-CI-1).
+permissions:
+  contents: read
+
 env:
   # Every install root (dev/backend, dev/web, dev/mobile, and qa/ for the three
   # qa/*-tests workspaces) has a committed package-lock.json, so every install
@@ -34,6 +41,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v7
         with:
@@ -95,6 +104,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v7
         with:
@@ -119,6 +130,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v7
         with:
@@ -151,6 +164,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v7
         with:

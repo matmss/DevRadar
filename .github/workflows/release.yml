@@ -21,6 +21,11 @@ on:
         required: true
         type: string
 
+# Read-only by default; only "Publish GitHub Release" gets contents: write (QA-CI-1, see the
+# note in pr.yml). The regression gate inherits this, and regression.yml asks for no more.
+permissions:
+  contents: read
+
 env:
   NODE_VERSION: lts/*
 
@@ -33,19 +38,28 @@ jobs:
       sha: ${{ steps.resolve.outputs.sha }}
     steps:
       # Fully qualified, so a branch with the same name can't shadow the tag. Fails if the tag
-      # doesn't exist.
+      # doesn't exist. Checkout trims spaces around `ref`, so "v1.2.3 " gets this far; the next
+      # step rejects it.
       - uses: actions/checkout@v7
         with:
           ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          persist-credentials: false
 
+      # Only an exact v<major>.<minor>.<patch> is released: the tag becomes the zip name and the
+      # release, so "v1.2.3 " must not get through (QA-CI-4). The push filter `v*.*.*` also
+      # matches tags like v1.2.3-rc.1, which stop here too.
       # The gate and the build install with `npm ci`, which needs these lockfiles. Tags cut before
       # they were committed (9ba5138, #75) have none, so stop here with the reason rather than
       # let the gate fail on `npm ci` and look like a test failure.
-      - name: Check the tag has the lockfiles CI installs from
+      - name: Check the tag name and that it has the lockfiles CI installs from
         id: resolve
         env:
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error title=Not a release tag::\"$TAG\" is not a release tag. Expected exactly v<major>.<minor>.<patch>, e.g. v1.2.0: no spaces, prefix or suffix."
+            exit 1
+          fi
           missing=""
           for f in dev/backend/package-lock.json dev/web/package-lock.json qa/package-lock.json; do
             [ -f "$f" ] || missing="$missing $f"
@@ -72,6 +86,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
 
       # No npm cache for a release build: there's no `cache` input, and setup-node v5+ would
       # otherwise turn caching on by itself if a root package.json ever declared npm as its

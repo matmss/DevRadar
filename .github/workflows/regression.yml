@@ -14,7 +14,9 @@ name: Regression
 # `ref` picks what to test. Empty (the nightly, and a dispatch without it) means the
 # triggering ref, as before. release.yml passes the commit of the tag it releases: a reusable
 # workflow's checkout otherwise tests the *caller's* ref, which for a manual re-release is
-# the branch it was dispatched from, not the tag that gets built.
+# the branch it was dispatched from, not the tag that gets built. actions/checkout takes a
+# branch or tag name, or a *full* 40-character SHA; it reads anything else, short SHAs
+# included, as a ref name and fails to fetch it.
 
 on:
   schedule:
@@ -22,17 +24,22 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: 'Branch, tag or commit SHA to test (empty: the ref this run is dispatched on)'
+        description: 'Branch, tag or full 40-character commit SHA to test, no short SHAs (empty: the ref this run is dispatched on)'
         required: false
         default: ''
         type: string
   workflow_call:
     inputs:
       ref:
-        description: 'Branch, tag or commit SHA to test (empty: the caller''s ref)'
+        description: 'Branch, tag or full 40-character commit SHA to test, no short SHAs (empty: the caller''s ref)'
         required: false
         default: ''
         type: string
+
+# Read-only token, not kept in .git/config; see the note in pr.yml (QA-CI-1). When release.yml
+# calls this workflow it can't get more than the caller's job has, which is the same.
+permissions:
+  contents: read
 
 env:
   # Installs are `npm ci` from the committed lockfiles; see the note in pr.yml.
@@ -46,6 +53,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - uses: actions/setup-node@v7
         with:
@@ -89,6 +97,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - uses: actions/setup-node@v7
         with:
