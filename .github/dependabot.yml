@@ -79,8 +79,9 @@ updates:
         update-types: [minor, patch]
     open-pull-requests-limit: 2
 
-  # Workflows pin actions by major tag (actions/checkout@v4), so every update here is a
-  # major; they are few, and CI on the PR exercises them.
+  # Workflows pin actions by major tag (actions/checkout@v7), so every update here is a
+  # major. The PR's checks only run pr.yml: check what regression.yml and release.yml pass
+  # (download-artifact, action-gh-release) against the new majors' release notes and action.yml.
   - package-ecosystem: github-actions
     directory: /
     schedule:
