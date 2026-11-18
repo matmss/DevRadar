@@ -256,6 +256,67 @@ Feature: Profiles belong to a GitHub account, and legacy profiles are claimed by
 The socket handshake refuses the same old tokens (`realtime-auth.feature`, kinds `id-less`,
 `login-less`, `non-canonical-id`).
 
+## Feature: Operator tool for legacy and displaced profiles (Backend) — covers FR-7.4, US-8
+
+Automated in `qa/backend-tests/features/legacy-merge.feature` (spec
+`dev/docs/04-legacy-merge-spec.md`, AC-1 to AC-25); the avatar id table (AC-6) and the parts that
+need no database in `unit/githubAvatarId.test.js` and `unit/legacyDevsCli.test.js`. The scenarios
+run the tool's commands in-process against the suite's MongoDB, and through the real script (a
+separate process, `MONGO_URI` in its environment) for AC-25.
+
+```gherkin
+Feature: Operator tool for legacy and displaced profiles: list, assign, merge (spec 04, option A)
+  # list (AC-1 to AC-4, AC-6b)
+  Scenario: The listing shows every legacy developer with the owner hint, and writes nothing
+  Scenario: The human-readable listing shows the same facts and suggests the merge
+  Scenario: Without legacy developers the listing says so
+  Scenario: A developer with a github_id is never listed, and its avatar is never used as evidence
+  # assign (AC-7 to AC-15)
+  Scenario: Assign is a dry run unless --apply
+  Scenario Outline: Assign with --apply sets the github_id and keeps everything else (legacy, displaced)
+  Scenario: The owner gets their displaced profile back at their next sign-in (AC-9)
+  Scenario: Assigning to an account that already has a profile is refused and points to merge (AC-10)
+  Scenario: A developer that already has a github_id cannot be assigned (AC-11)
+  Scenario Outline: The avatar id guards assign unless --force (AC-12)
+  Scenario Outline: --from-avatar refuses without avatar evidence (AC-13)
+  Scenario Outline: Assign loses a race to the API: changed since read, nothing written
+    # the dev is claimed, displaced or deleted between the tool's read and its write
+  Scenario: The owner registers between the tool's check and its write: the github_id index refuses it (AC-14)
+  Scenario: Two operators assigning the same developer at once: exactly one wins
+  Scenario: Without the github_id unique index assign is refused
+  Scenario Outline: Invalid ids are refused before anything is read or written (AC-15)
+  # merge (AC-16 to AC-20)
+  Scenario: Merge is a dry run unless --apply
+  Scenario: Merge deletes the displaced developer, keeps the owner's profile byte for byte, and prints the deleted document (AC-17)
+  Scenario: A merged developer is restored from its recovery record as a displaced developer
+  Scenario: A restored legacy developer that still showed a login comes back displaced and cannot be claimed by that login
+  Scenario: A recovery record whose login was taken meanwhile is restored displaced, without touching the new holder
+  Scenario Outline: restore refuses a record that is not a developer as merge prints it
+    # techs not an array of strings, unknown field, future or non-date seen_at, no login, wrong types, not a Point, github_id
+  Scenario: restore checks its file before connecting to the database
+  Scenario: The listing shows techs that are not an array as what they are
+  Scenario Outline: Merge loses a race to the API: nothing is deleted
+  Scenario Outline: Merge refuses a wrong pair (AC-19)
+  Scenario Outline: The avatar id guards merge unless --force (AC-20)
+  # duplicates (AC-21), live events (AC-22), security (AC-24, AC-25)
+  Scenario: Two legacy developers with the same avatar id: flagged, --from-avatar refuses, assign one then merge the other
+  Scenario: The tool sends no live event; the help says clients see changes on their next search
+  Scenario: No request or handshake, whatever it carries, attributes, merges or deletes a legacy developer (AC-24)
+  Scenario: The command line reads MONGO_URI from the environment and names the database before writing (AC-25, AC-27)
+  Scenario: The command line takes no connection string as an option
+  Scenario: The command line never prints the credentials in MONGO_URI, even when it cannot sign in
+  # QA review (legacy-merge-review.feature, QA-LM-1..3 and guards)
+  Scenario: QA-LM-1 The human-readable listing never prints raw control or bidi characters, whatever the stored _id
+  Scenario: QA-LM-2 The avatar host counts are right for any host name
+  Scenario Outline: QA-LM-3 Merge refuses a target that no GitHub account can own (github_id 0, -1, 1.5, false, "501"), even with --force
+  Scenario: QA-LM guard: restore never inserts a developer that has a github_id
+  Scenario: QA-LM guard: restore is refused without the unique login index
+  Scenario: QA-LM guard: the owner deletes their profile during a merge: the legacy record is still printed, with a warning
+  Scenario: QA-LM guard: assigning to an account that has a profile is refused already on a dry run (AC-10)
+  Scenario: QA-LM guard: the command line never builds an index, so a missing github_id index still refuses assign
+  Scenario: QA-LM guard: stored control and bidi characters are escaped in every command's output, and the recovery record restores them (displaced, spec restore decision)
+```
+
 ## Feature: Reads and live updates require sign-in (Backend) — covers FR-2.1, FR-3.1, FR-4.1, US-5, Q6
 
 ```gherkin

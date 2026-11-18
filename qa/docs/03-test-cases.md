@@ -246,6 +246,18 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
   - Clients: a stored pre-slice-6 token shows the web signed-out view (no message) and the mobile sign-in screen ("Sua sessão não é mais válida, entre novamente"); signing in again works. Lists and markers match by `_id`, then `github_id`, so two accounts showing the same login are never merged. A displaced dev shows its name and "Perfil do GitHub indisponível", with no GitHub link on the web, a callout that does not open the Profile screen on mobile, and a Profile screen that never opens a WebView for a placeholder.
 - **Automated:** `qa/backend-tests/features/legacy-profiles.feature`, `auth-slice6-review.feature` and `auth-slice6-recheck.feature` (QA), `realtime-auth.feature` (old tokens at the handshake), `registration.feature`/`profile.feature` (legacy letter case); `unit/{sessionToken,githubId,requireAuth,socketHandshake,keyedQueue}.test.js`; `qa/web-tests/features/auth-slice6.feature`; `dev/web/src/services/devList.test.js`, `dev/web/src/components/DevItem/DevItem.test.js`; `dev/tests/mobile/{SessionContext,services/devList,pages/Main,pages/Profile}.test.js`.
 
+## TC-035 — Operator tool for legacy and displaced profiles (spec 04, option A)
+- **Requirement:** FR-7.4, US-8
+- **Type:** Functional / Security / Concurrency | **P1**
+- **Preconditions:** Legacy profiles seeded as the pre-auth backend stored them (no `github_id`, avatar from GitHub's `/users/<login>`); displaced ones as `displace()` leaves them. The tool runs in-process against the suite's MongoDB, or as `node scripts/legacy-devs.js` with `MONGO_URI` in its environment.
+- **Steps / expected result:**
+  - `list` (`--json`): every legacy dev with login, status (legacy/displaced), name, coordinates, techs, avatar_url, avatar id (number, `unparseable` or `none`), `owner_has_profile` with that profile's `_id`, `duplicate_avatar_id` with the others' `_id`s; summary by status, avatar id result and avatar host. Devs with a `github_id` are never listed and their avatar is never evidence. Nothing written, exit 0; "No legacy developers" when there are none.
+  - `assign <_id> --github-id N` / `--from-avatar`: dry run without `--apply`; with it only `github_id` is set (everything else byte for byte, also a `_stale_` login); the owner's next sign-in shows their current login, stale flag cleared, same `_id`/techs/location, one dev for the account. Refused (exit 1, nothing written): account already has a profile (message names the `merge` command), target already owned, avatar id mismatch or no avatar evidence without `--force` (`--force` proceeds and says FORCED), `--from-avatar` without evidence or with a duplicate avatar id, missing `github_id_unique` index. Invalid id or `_id`: exit 2.
+  - `merge <legacy _id> --into <profile _id>`: dry run without `--apply`; with it the legacy dev is deleted, the profile is byte for byte unchanged, the full deleted document is printed as canonical Extended JSON, and the dev leaves `GET /devs` and `GET /search`. `restore <file> --apply` puts it back as a displaced dev (login `_stale_<_id>`, stale flag, a name that was only the login cleared, original login printed), never claimable by login; refused if the `_id` exists, the record has a `github_id`, does not match the Dev schema or has a future `github_username_seen_at` (file checked before connecting). Refused: a target whose `github_id` is not a positive integer, even with `--force` (QA-LM-3). Refused: profile without `github_id`, legacy dev with one, same dev, unknown `_id`, avatar id mismatch or none without `--force`.
+  - Races: the API claims, displaces or deletes the dev between the tool's read and its write: "changed since read", exit 1, the tool writes nothing. The account registers in between: the unique index refuses, reported as "already has a profile". Two concurrent assigns: exactly one wins.
+  - No Socket.io event (a connected watcher gets none); the help says clients see changes on their next search, reload or reconnect. No request, query, header, body or handshake field (`github_id`, `_id`, `avatar_url`, `github_username`, `profile`) changes a legacy dev; no route for the feature exists. The script names the database before any change, takes no connection string as an option, and never prints the credentials or query options of `MONGO_URI` (also when authentication fails, exit 3).
+- **Automated:** `qa/backend-tests/features/legacy-merge.feature`; `unit/{githubAvatarId,legacyDevsCli}.test.js`; QA review `legacy-merge-review.feature` (QA-LM-1 raw `_id` in the text listing, QA-LM-2 avatar host counts for `constructor`/`__proto__`, QA-LM-3 merge into a profile whose `github_id` no account can own; plus guards for restore's legacy and index checks, the merge warning when the profile is deleted meanwhile, the AC-10 dry run, the command line building no index, and escaping in every command's output).
+
 ## TC-017 (Mobile) — Map centers on current location
 - **Requirement:** FR-6.1
 - **Type:** Functional | **P2**
@@ -296,12 +308,12 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 | US-6 (auth) | TC-015, TC-016, TC-023, TC-024, TC-025, TC-026, TC-029, TC-033 |
 | US-5 (auth) | TC-027, TC-028 |
 | US-7 (auth) | TC-019, TC-030, TC-034 |
-| US-8, Q10 (auth) | TC-002, TC-031, TC-032, TC-034 |
+| US-8, Q10 (auth) | TC-002, TC-031, TC-032, TC-034, TC-035 |
 | FR-2 | TC-007, TC-027 |
 | FR-3 | TC-008, TC-009, TC-010, TC-027 |
 | FR-4 | TC-004, TC-005, TC-006, TC-019, TC-028, TC-031, TC-032 |
 | FR-5 | TC-014, TC-015, TC-016, TC-029, TC-033 |
 | FR-6 | TC-017, TC-018, TC-019, TC-020, TC-021, TC-030 |
-| FR-7 | TC-012, TC-034 |
+| FR-7 | TC-012, TC-034, TC-035 |
 | NFR-1/2 | TC-010 |
 | NFR-7 | TC-022 |

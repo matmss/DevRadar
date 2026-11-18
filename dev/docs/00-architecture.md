@@ -267,10 +267,49 @@ existed) is found (Q5, US-8).
     A's) converge in any order, without loops. Until an owner signs in or saves, their dev may
     show a stale login (if nobody newer has claimed it yet) or the placeholder after a
     displacement; clients then show the dev's name with no GitHub link.
-  - **Displaced legacy devs** stay listed and are never deleted, but can no longer be claimed by
-    login (their login is the placeholder). No automatic rule can safely give them to an account:
-    the login they showed belonged to someone else at the time of the displacement. Merging one
-    into its real owner's profile is a manual operation.
+  - **Displaced legacy devs** stay listed and are never deleted by the API, but can no longer be
+    claimed by login (their login is the placeholder). No automatic rule can safely give them to an
+    account: the login they showed belonged to someone else at the time of the displacement. An
+    operator gives one back, or retires it, with **`dev/backend/scripts/legacy-devs.js`**
+    (`dev/docs/04-legacy-merge-spec.md`, option A), a command-line tool, never an HTTP route:
+    - `list [--json]`: every legacy dev (displaced or not) with the GitHub id parsed from its
+      `avatar_url` (`utils/githubAvatarId.js`: the pre-auth backend stored GitHub's
+      `/users/<login>` avatar, `https://avatars.githubusercontent.com/u/<id>`, so the id is the
+      account that held the login at registration; a hint, not proof, and only for devs without a
+      `github_id`), whether that account already has a profile, duplicate ids, and counts.
+      Read-only.
+    - `assign <_id> --github-id <id> [--force] [--apply]` or `assign <_id> --from-avatar [--apply]`
+      (`--force` only goes with `--github-id`): the owner has no profile. Sets `github_id` only; `_id` and data are kept, and the owner's next sign-in
+      restores their current login (`refreshLoginAtSignIn`). Refused if the account already has a
+      profile (use merge), or if the avatar id differs or is missing, unless `--force`.
+    - `merge <legacy _id> --into <profile _id> [--force] [--apply]`: the owner already has a
+      profile. **The owner's profile wins, unchanged**; the legacy dev is deleted after its full
+      document is printed (canonical Extended JSON). Only into a profile whose `github_id` is a
+      valid GitHub id (a positive integer), even with `--force`.
+    - `restore <file> [--apply]` inserts a printed record back, **always as a displaced dev**
+      (login `_stale_<_id>`, `github_username_stale: true`, a name that was only the login
+      cleared; the original login is printed), so no account can claim it by login and the file
+      cannot create a claimable legacy dev; give it to its owner with `assign`. The record must
+      match the Dev schema (types, `techs` an array of strings, a GeoJSON Point), have no
+      `github_id` and no future `github_username_seen_at`; the file is checked before connecting.
+    - Dry run unless `--apply`. Connects with `MONGO_URI` from the environment or
+      `dev/backend/.env` (never an option), prints only its hosts and database name, builds no
+      index and calls no GitHub API.
+    - **Concurrency:** it runs outside the API process, so it takes no `keyedQueue` key. Every
+      write is one conditional single-document `findOneAndUpdate`/`findOneAndDelete` whose filter
+      is the state it decided on (`_id`, `github_id: null`, the login it read), like a claim or a
+      displacement; if the API claimed, displaced or deleted the dev meanwhile it matches nothing
+      and the tool reports "changed since read". A registration of the target account meanwhile
+      is refused by `github_id_unique` (the tool refuses to assign when that index is missing).
+    - **No live event:** the tool cannot reach the API's sockets, so no `dev-updated`/`dev-deleted`
+      is pushed. Connected clients keep the old entry until their next search, reload or
+      reconnect.
+    - **Runbook:** (1) confirm the owner: their GitHub id (`https://api.github.com/users/<login>`
+      shows it) or current login, from the owner themselves; (2) `node scripts/legacy-devs.js list`
+      from `dev/backend`; (3) run `assign` or `merge` without `--apply` and read the plan; (4)
+      re-run with `--apply`; (5) keep the printed output, in particular the recovery record line
+      of a merge (save it to a file for `restore`). Exit codes: 0 done or dry run, 1 refused or
+      changed since read (nothing written), 2 invalid command line, 3 unexpected error.
   - **Writes refresh the own dev's login** (including a change of letter case) only when the
     session's read is newer than the stored state, and keep the stored login if another dev still
     holds it with a newer state.
