@@ -300,6 +300,16 @@ Feature: Operator tool for legacy and displaced profiles: list, assign, merge (s
   Scenario: The command line reads MONGO_URI from the environment and names the database before writing (AC-25, AC-27)
   Scenario: The command line takes no connection string as an option
   Scenario: The command line never prints the credentials in MONGO_URI, even when it cannot sign in
+  # QA review (legacy-merge-review.feature, QA-LM-1..3 and guards)
+  Scenario: QA-LM-1 The human-readable listing never prints raw control or bidi characters, whatever the stored _id
+  Scenario: QA-LM-2 The avatar host counts are right for any host name
+  Scenario Outline: QA-LM-3 Merge refuses a target that no GitHub account can own (github_id 0, -1, 1.5, false, "501"), even with --force
+  Scenario: QA-LM guard: restore never inserts a developer that has a github_id
+  Scenario: QA-LM guard: restore is refused without the unique login index
+  Scenario: QA-LM guard: the owner deletes their profile during a merge: the legacy record is still printed, with a warning
+  Scenario: QA-LM guard: assigning to an account that has a profile is refused already on a dry run (AC-10)
+  Scenario: QA-LM guard: the command line never builds an index, so a missing github_id index still refuses assign
+  Scenario: QA-LM guard: stored control and bidi characters are escaped in every command's output, and the recovery record restores them exactly
 ```
 
 ## Feature: Reads and live updates require sign-in (Backend) — covers FR-2.1, FR-3.1, FR-4.1, US-5, Q6
