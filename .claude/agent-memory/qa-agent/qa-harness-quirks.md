@@ -87,3 +87,12 @@ Added during the CI unit-test gap review (2026-11-12):
 - Local npm 11.19 asks you to approve install scripts and skips postinstalls (detox, core-js) by default (`npm warn install-scripts`). Tests still pass, but CI's npm may behave differently.
 - Branch protection on `main` (since 2026-11-12): the four pr.yml checks are required, PRs required (0 approvals), no force pushes, admin bypass allowed. Renaming a pr.yml job `name:` blocks every merge until protection is updated.
 - Probe pattern for "does a failure fail the command": plant `test('probe', () => expect(1).toBe(2))` in a scratch tree and check the exit code. Jest also exits 1 for a test file with zero tests.
+
+Added during the legacy-merge operator CLI review (2026-11-18):
+
+- Since the lockfile change, `jest`/`cucumber-js` binaries are hoisted to `qa/node_modules/.bin`; `qa/backend-tests/node_modules` holds only a stray package. Scratch trees must symlink all three node_modules (dev/backend, qa, qa/backend-tests) and call `../node_modules/.bin/...` from qa/backend-tests.
+- One feature only, in the real worktree, with npm scripts: `npm test -- --config <nine ../ to />private/tmp/.../cuke.js` (a scratch config with `paths: ['features/x.feature']`); an absolute --config path fails.
+- Bash refuses shell loops over a variable command (`for a in ...; node $S $a`) and `node -e` scripts that edit worktree files ("too complex to verify"). Put probe loops in a scratchpad .sh file run with `bash <file>`; edit worktree files with the Edit tool.
+- Mutation runner that takes SRC/FEATURES/MODES env vars (scratchpad lm-mut/run.sh + mutate.js): run the delivery's suite first, then rerun survivors against QA's new feature to prove each guard kills its mutant.
+- Operator scripts: the real CLI can be exercised against a long-lived mongodb-memory-server on a fixed port (scratchpad lm-qa/mongo.js) from a `git archive` scratch copy holding its own `.env`, which avoids writing under dev/.
+- MongoDB driver errors echo URI option values (readPreference, compressors, OIDC ENVIRONMENT) but no credentials in any shape tried; a redaction test needs a secret the driver actually prints.
