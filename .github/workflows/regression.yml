@@ -36,11 +36,20 @@ jobs:
             dev/backend/package-lock.json
             qa/package-lock.json
 
+      # MONGOMS_DOWNLOAD_DIR makes the cached directory the one mongodb-memory-server uses;
+      # see the note in pr.yml.
+      - name: Read locked mongodb-memory-server version
+        id: mongoms
+        run: |
+          echo "MONGOMS_DOWNLOAD_DIR=$HOME/.cache/mongodb-binaries" >> "$GITHUB_ENV"
+          echo "os=$(. /etc/os-release && echo "$ID-$VERSION_ID")" >> "$GITHUB_OUTPUT"
+          node -e "const v = require('./qa/package-lock.json').packages['node_modules/mongodb-memory-server-core']?.version; if (!v) throw new Error('mongodb-memory-server-core is not in qa/package-lock.json'); console.log('version=' + v)" >> "$GITHUB_OUTPUT"
+
       - name: Cache mongodb-memory-server binaries
         uses: actions/cache@v6
         with:
           path: ~/.cache/mongodb-binaries
-          key: ${{ runner.os }}-mongodb-binaries-v10
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.mongoms.outputs.os }}-mongodb-binaries-${{ steps.mongoms.outputs.version }}
 
       - name: Install backend app dependencies
         working-directory: dev/backend
@@ -69,11 +78,20 @@ jobs:
             dev/web/package-lock.json
             qa/package-lock.json
 
+      # MONGOMS_DOWNLOAD_DIR makes the cached directory the one mongodb-memory-server uses;
+      # see the note in pr.yml.
+      - name: Read locked mongodb-memory-server version
+        id: mongoms
+        run: |
+          echo "MONGOMS_DOWNLOAD_DIR=$HOME/.cache/mongodb-binaries" >> "$GITHUB_ENV"
+          echo "os=$(. /etc/os-release && echo "$ID-$VERSION_ID")" >> "$GITHUB_OUTPUT"
+          node -e "const v = require('./qa/package-lock.json').packages['node_modules/mongodb-memory-server-core']?.version; if (!v) throw new Error('mongodb-memory-server-core is not in qa/package-lock.json'); console.log('version=' + v)" >> "$GITHUB_OUTPUT"
+
       - name: Cache mongodb-memory-server binaries
         uses: actions/cache@v6
         with:
           path: ~/.cache/mongodb-binaries
-          key: ${{ runner.os }}-mongodb-binaries-v10
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.mongoms.outputs.os }}-mongodb-binaries-${{ steps.mongoms.outputs.version }}
 
       # Keyed on the locked playwright-core version; see the note in pr.yml.
       - name: Read locked Playwright version

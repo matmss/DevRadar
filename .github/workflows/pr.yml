@@ -43,13 +43,27 @@ jobs:
             dev/backend/package-lock.json
             qa/package-lock.json
 
-      # mongodb-memory-server downloads a real mongod binary on first use;
-      # cache it so PRs don't re-pay that download every run.
+      # mongodb-memory-server needs a real mongod binary. Its postinstall (allowed in
+      # qa/package.json) downloads one during `npm ci`, and by default puts it in
+      # qa/node_modules/.cache, which the next `npm ci` deletes: ~/.cache/mongodb-binaries was
+      # never created, so this cache was never saved ("Path Validation Error" in the post step)
+      # and every run downloaded mongod again. MONGOMS_DOWNLOAD_DIR sends both the postinstall
+      # and the tests to the cached directory; on a hit the postinstall finds the binary and
+      # downloads nothing. The key is the locked mongodb-memory-server-core version (it fixes
+      # the mongod version it downloads) plus the runner's OS release (mongod builds are per
+      # distro release), so a bump or a new runner image gets a fresh entry. Fails if missing.
+      - name: Read locked mongodb-memory-server version
+        id: mongoms
+        run: |
+          echo "MONGOMS_DOWNLOAD_DIR=$HOME/.cache/mongodb-binaries" >> "$GITHUB_ENV"
+          echo "os=$(. /etc/os-release && echo "$ID-$VERSION_ID")" >> "$GITHUB_OUTPUT"
+          node -e "const v = require('./qa/package-lock.json').packages['node_modules/mongodb-memory-server-core']?.version; if (!v) throw new Error('mongodb-memory-server-core is not in qa/package-lock.json'); console.log('version=' + v)" >> "$GITHUB_OUTPUT"
+
       - name: Cache mongodb-memory-server binaries
         uses: actions/cache@v6
         with:
           path: ~/.cache/mongodb-binaries
-          key: ${{ runner.os }}-mongodb-binaries-v10
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.mongoms.outputs.os }}-mongodb-binaries-${{ steps.mongoms.outputs.version }}
 
       - name: Install backend app dependencies
         working-directory: dev/backend
@@ -147,11 +161,20 @@ jobs:
             dev/web/package-lock.json
             qa/package-lock.json
 
+      # Same as the backend job: MONGOMS_DOWNLOAD_DIR makes the cached directory the one
+      # mongodb-memory-server uses.
+      - name: Read locked mongodb-memory-server version
+        id: mongoms
+        run: |
+          echo "MONGOMS_DOWNLOAD_DIR=$HOME/.cache/mongodb-binaries" >> "$GITHUB_ENV"
+          echo "os=$(. /etc/os-release && echo "$ID-$VERSION_ID")" >> "$GITHUB_OUTPUT"
+          node -e "const v = require('./qa/package-lock.json').packages['node_modules/mongodb-memory-server-core']?.version; if (!v) throw new Error('mongodb-memory-server-core is not in qa/package-lock.json'); console.log('version=' + v)" >> "$GITHUB_OUTPUT"
+
       - name: Cache mongodb-memory-server binaries
         uses: actions/cache@v6
         with:
           path: ~/.cache/mongodb-binaries
-          key: ${{ runner.os }}-mongodb-binaries-v10
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.mongoms.outputs.os }}-mongodb-binaries-${{ steps.mongoms.outputs.version }}
 
       # Key the browser cache on the locked playwright-core version: each version pins its own
       # browser builds, and unrelated qa dependency bumps leave the cache valid. Fails if missing.
