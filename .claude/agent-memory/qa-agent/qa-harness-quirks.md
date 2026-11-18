@@ -45,6 +45,15 @@ Added during the Dependabot dependency review (2026-11-12):
 - npm version-keyed overrides (`"engine.io@~6.6.0": "~6.6.10"`) lift a stale lock's 6.6.9 and leave other minors (socket.io 4.7.5 -> engine.io 6.5.5) alone; proven with `--package-lock-only` and a hand-edited lock (scratchpad qa-eio/stale.sh).
 - The qa root's CI-path install (scratch tree from `git archive HEAD dev/backend dev/web qa`) runs `npm run test:web` fine; its Playwright may be newer than the per-suite lock's, so check `playwright-core/browsers.json` against `~/Library/Caches/ms-playwright`. `test:ci` writes the web JSON report to stdout, not reports/.
 
+Added during the CI-hygiene review, PR #78 (2026-11-18):
+
+- CI evidence: `gh run view <id> --log` only works once the whole run is done; for a finished job of a running run use `gh api --allow-escape-sequences repos/<o>/<r>/actions/jobs/<job>/logs`. Node 20 deprecation and "Path Validation Error" show up as check-run annotations (`gh api repos/<o>/<r>/check-runs/<job>/annotations`), not reliably in the log text.
+- Bash refuses any command whose text contains "git checkout" (even inside a grep pattern) or a `.github/...` glob: put grep patterns in a scratch file (`grep -F -f pat.txt`) and run tools with no path args from the repo root.
+- `gh run rerun <id>` (no flags) reruns all jobs as attempt 2; `--attempt 2` on `gh run view` reads it. Caches saved by a PR run are scoped to refs/pull/N/merge, dispatches on the branch get their own scope.
+- Repo facts: default workflow token is read/write; ubuntu-latest is Ubuntu 26.04 since 2026-10; regression.yml workflow_dispatch from a non-default branch works (inputs come from the branch's file). actions/checkout trims `ref`, a short SHA fails after ~27 s of retries.
+- mongodb-memory-server postinstall (local mode) downloads into node_modules/.cache unless MONGOMS_DOWNLOAD_DIR is set; emulate CI with an empty HOME (`HOME=<scratch> npm ci --foreground-scripts`), since the real ~/.cache/mongodb-binaries on this Mac already holds a binary and is probed second. Delete the ~170 MB probe binaries after.
+- Workflow guards live in qa/backend-tests/unit/workflowHygiene.test.js (QA-CI-1..4, local branch qa/pr78-ci-hygiene-review, if merged). It uses `yaml` hoisted from @cucumber/cucumber.
+
 **Why:** each cost a wasted run or produced a false pass.
 **How to apply:** use this when writing backend probes or log-assertion steps; see [[auth-review-findings]] if it is ever written.
 
