@@ -424,3 +424,14 @@ reference. `CLAUDE.md` gets the command.
      `list` shows real avatar data)*
    - (b) Yes, as the next item: refuse a login-match claim when the avatar id clearly belongs to a
      different account (Option B1).
+
+## 8. Decisions (user, 2026-11-18)
+
+1. **Scale:** few or no real legacy data. Build **Option A only** (operator CLI); no automatic adoption (B2).
+2. **Merge data:** the owner's **current profile wins** unchanged; the legacy dev is deleted after its full JSON is printed (AC for `merge` as written).
+3. **Q5 risk:** **close it as the next item**, via B1 (refuse a login-match claim when the legacy dev's avatar id clearly belongs to another account; devs without a usable avatar id keep today's rule). Out of scope for this item.
+
+Verified by the main session (closes §2 "What I could NOT verify"): every historical `POST /devs`
+before sign-in (`87f83db`, `7b3527f`, `a758b49`, `2e911c9`, `6b84bb4`) took `avatar_url` only from
+the server-side `GET https://api.github.com/users/<login>` response; no version read it from the
+request body.
