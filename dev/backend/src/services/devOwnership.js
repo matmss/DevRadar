@@ -9,13 +9,19 @@
 //   2. legacy    otherwise, a dev WITHOUT a github_id (field missing or null) whose login matches
 //                the user's case-insensitively: created before sign-in existed. The owner of that
 //                login claims it on their first write: one conditional update sets github_id only
-//                if it is still absent and the login unchanged, so of two accounts claiming at
-//                once exactly one wins (`claimed`). Reads do not claim (`legacy`, read-only).
-//   3. conflict  otherwise, a dev with ANOTHER github_id but this login. It is never theirs: no
-//                read, update or delete. On POST /devs, if this session's GitHub read is newer
-//                than that dev's login state, that dev is displaced (below) and the user
-//                registers; otherwise 409 github_username_conflict (logins are unique across all
-//                profiles, and the other dev's login was confirmed by a newer read).
+//                if it is still absent, the login unchanged and the stored avatar_url still gives
+//                the guard's answer (avatarAsRead), so of two accounts claiming at once exactly
+//                one wins (`claimed`). Reads do not claim (`legacy`, read-only). Unless it is
+//                GUARDED against the user: its stored avatar_url is a string carrying another
+//                account's GitHub id (utils/githubAvatarId.js; pre-sign-in
+//                registrations stored the avatar of the account holding the login then, so the
+//                login has changed hands since). A guarded dev is rule 3 (spec 05, B1).
+//   3. conflict  otherwise, a dev with ANOTHER github_id but this login, or a guarded legacy dev.
+//                It is never theirs: no read, update or delete. On POST /devs, if this session's
+//                GitHub read is newer than that dev's login state, that dev is displaced (below)
+//                and the user registers; otherwise 409 github_username_conflict (logins are
+//                unique across all profiles, and the other dev's login was confirmed by a newer
+//                read).
 //   4. none      otherwise.
 //
 // Logins (display data) follow GitHub, ordered by when GitHub was read. The newest read wins:
@@ -27,9 +33,11 @@
 //     `github_username_stale: true` (and a name that was only the old login is cleared), and
 //     nothing else about it changes (it is never deleted). Then the account's dev takes the
 //     login. A displaced dev gets its owner's current login back at the owner's next sign-in or
-//     newer write. A legacy dev is displaced only by an account that already owns a dev
-//     (otherwise it is that account's to claim, rule 2). A dev with a NEWER state is never
-//     touched: the older session keeps its stored login (PUT) or gets 409 (POST).
+//     newer write. A legacy dev is displaced only by an account that already owns a dev or that
+//     it is guarded against (otherwise it is that account's to claim, rule 2), also at sign-in.
+//     Each refused claim and each guarded displacement logs one warning (ids and login only).
+//     A dev with a NEWER state is never touched: the older session keeps its stored login (PUT)
+//     or gets 409 (POST).
 // Nothing is migrated at deploy time: legacy devs are only touched by their owner's write or a
 // displacement.
 //
@@ -42,6 +50,7 @@
 // their claim and their displacement are conditional updates that exclude each other.
 const Dev = require('../models/Dev');
 const { GITHUB_USERNAME_COLLATION } = require('../utils/githubUsername');
+const { AVATAR_ID_STATUS, legacyAvatarEvidence } = require('../utils/githubAvatarId');
 const { createKeyedQueue } = require('../utils/keyedQueue');
 const { EVENT, announceStored } = require('./devEvents');
 
@@ -136,12 +145,104 @@ function findDevByAccount(user) {
   return Dev.findOne({ github_id: user.github_id });
 }
 
+// The stored document each dev found by login was hydrated from (findDevByLogin). Mongoose casts
+// fields when it reads a dev: a hand-edited non-string avatar_url can come out as a URL string
+// (a BSON Binary's toString(), an embedded document's _id), and a non-ObjectId _id as undefined.
+// The claim guard, its filters and its log use what is really stored (QA-CG-1, QA-CG-3).
+const storedDocs = new WeakMap();
+
 /**
  * @param {string} login
- * @returns {Promise<object | null>} the dev showing `login`, case-insensitively
+ * @returns {Promise<object | null>} the dev showing `login`, case-insensitively (one read of the
+ *   stored document, hydrated; the stored document is kept for storedAvatar/storedId)
  */
-function findDevByLogin(login) {
-  return Dev.findOne({ github_username: login }).collation(GITHUB_USERNAME_COLLATION);
+async function findDevByLogin(login) {
+  const stored = await Dev.collection.findOne({ github_username: login }, { collation: GITHUB_USERNAME_COLLATION });
+  if (!stored) return null;
+  const dev = Dev.hydrate(stored);
+  storedDocs.set(dev, stored);
+  return dev;
+}
+
+/**
+ * @param {object} dev
+ * @returns {object} the document `dev` was read from (the dev itself if it was not read by login)
+ */
+function storedDoc(dev) {
+  return storedDocs.get(dev) || dev;
+}
+
+/**
+ * The avatar evidence of a dev as stored: only a stored string can be a GitHub avatar URL (the
+ * operator CLI reads stored documents the same way). Legacy as the rest of this module decides
+ * it (isLegacy on the dev as read).
+ * @param {object} dev
+ * @returns {ReturnType<typeof legacyAvatarEvidence>}
+ */
+function storedAvatarEvidence(dev) {
+  return legacyAvatarEvidence({ github_id: dev.github_id, avatar_url: storedDoc(dev).avatar_url });
+}
+
+/**
+ * The claim guard (rule 2, spec 05 B1), for a dev already known to show the user's login.
+ * Only a legacy dev's avatar is evidence (legacyAvatarEvidence); without a parseable id, or with
+ * the user's own, nothing changes. The guard only refuses: it never makes a dev claimable.
+ * @param {object} dev
+ * @param {AccountIdentity} user
+ * @returns {number | null} the GitHub id in the legacy dev's avatar if it is another account's
+ *   (the dev is guarded against the user), else null
+ */
+function guardingAvatarId(dev, user) {
+  const evidence = storedAvatarEvidence(dev);
+  if (evidence.status !== AVATAR_ID_STATUS.PARSED || evidence.id === user.github_id) return null;
+  return evidence.id;
+}
+
+// avatar_url holds no string (missing, null, any other BSON type; an array even if it holds
+// strings, which $type alone would match): never evidence.
+const NOT_A_STRING_AVATAR = [{ avatar_url: { $not: { $type: 'string' } } }, { avatar_url: { $type: 'array' } }];
+
+/**
+ * A filter part: the dev's stored avatar_url still gives the evidence the guard decided on, so a
+ * change between the read and the conditional write makes the write miss (and the caller look
+ * again). A stored string must be exactly the same string; when the guard found no evidence, any
+ * stored value that is not a string (no evidence either) also matches, and so does no value at
+ * all. A non-string is never compared by value: Mongoose would cast the filter value, not the
+ * stored one. (In `$and`, so it can be spread next to another `$or`, e.g. olderThan's.)
+ * @param {object} dev - as read (findDevByLogin)
+ * @returns {object}
+ */
+function avatarAsRead(dev) {
+  const stored = storedDoc(dev).avatar_url;
+  if (typeof stored === 'string' && storedAvatarEvidence(dev).status === AVATAR_ID_STATUS.PARSED) {
+    return { avatar_url: stored };
+  }
+  const alternatives = typeof stored === 'string' ? [{ avatar_url: stored }, ...NOT_A_STRING_AVATAR] : NOT_A_STRING_AVATAR;
+  return { $and: [{ $or: alternatives }] };
+}
+
+/**
+ * @param {unknown} value
+ * @returns {string} `value` for a log line: printable ASCII only (hand-edited data can hold a
+ *   string _id with control characters), at most 64 characters
+ */
+function printable(value) {
+  return String(value).replace(/[^ -~]/g, '?').slice(0, 64);
+}
+
+/**
+ * One warning per refused claim or guarded displacement: the dev's _id, the login, the
+ * claiming account and the avatar's account. Never the avatar URL, a token, a name or a body.
+ * @param {string} what
+ * @param {object} dev
+ * @param {AccountIdentity} user
+ * @param {number} avatarId
+ */
+function logGuarded(what, dev, user, avatarId) {
+  console.warn(
+    `Legacy developer ${what}: its avatar names another GitHub account `
+    + `(dev ${printable(storedDoc(dev)._id)}, login ${user.github_username}, account ${user.github_id}, avatar id ${avatarId})`
+  );
 }
 
 /**
@@ -158,14 +259,27 @@ async function resolveOwnDev(user, { claim = false } = {}) {
     const sameLogin = await findDevByLogin(user.github_username);
     if (!sameLogin) return { status: OWNERSHIP.NONE, dev: null };
     if (!isLegacy(sameLogin)) return { status: OWNERSHIP.CONFLICT, dev: null };
+    const avatarId = guardingAvatarId(sameLogin, user);
+    if (avatarId !== null) {
+      // Registered by another GitHub account (its avatar): treated as that account's (rule 3).
+      // A read does not log (GET /devs/me runs on every page load).
+      if (claim) logGuarded('claim refused', sameLogin, user, avatarId);
+      return { status: OWNERSHIP.CONFLICT, dev: null };
+    }
     if (!claim) return { status: OWNERSHIP.LEGACY, dev: sameLogin };
 
     let claimed = null;
     try {
-      // Still legacy and still showing this login (a displacing sign-in may have moved it).
-      // Takes the login as GitHub spells it now, and records when that was read (QA-AUTH6-2).
+      // Still legacy, still showing this login (a displacing sign-in may have moved it) and still
+      // with the avatar the guard read (B1). Takes the login as GitHub spells it now, and records
+      // when that was read (QA-AUTH6-2).
       claimed = await Dev.findOneAndUpdate(
-        { _id: sameLogin._id, github_id: null, github_username: sameLogin.github_username },
+        {
+          _id: sameLogin._id,
+          github_id: null,
+          github_username: sameLogin.github_username,
+          ...avatarAsRead(sameLogin),
+        },
         { $set: { github_id: user.github_id, ...loginFields(user) }, $unset: { github_username_stale: 1 } },
         { returnDocument: 'after' }
       );
@@ -174,7 +288,8 @@ async function resolveOwnDev(user, { claim = false } = {}) {
       if (!isDuplicateKey(err)) throw err;
     }
     if (claimed) return { status: OWNERSHIP.CLAIMED, dev: claimed };
-    // Claimed by another account, displaced, deleted, or ours by now: look again.
+    // Claimed by another account, displaced, deleted, its avatar changed, or ours by now: look
+    // again.
   }
   throw new Error('Could not resolve the developer profile owner: too many concurrent changes');
 }
@@ -273,6 +388,13 @@ function inAccountOrder(user, task) {
 
 // Returned by an inLoginOrder task to start over (the login's holder changed under it).
 const RETRY = Symbol('retry');
+// Returned by an inLoginOrder task that displaced the login's holder and must start over to take
+// the freed login. Progress, not a lost race: it does not use up one of the MAX_ATTEMPTS
+// (QA-CG-2), but the rounds are capped by MAX_ROUNDS all the same.
+const DISPLACED = Symbol('displaced');
+// Every round either loses a race (RETRY, at most MAX_ATTEMPTS) or displaces a dev off the login
+// for good (DISPLACED): each needs another concurrent write. A hard cap, so nothing loops forever.
+const MAX_ROUNDS = 3 * MAX_ATTEMPTS;
 
 /**
  * @param {object | null} a
@@ -288,15 +410,18 @@ function sameHolder(a, b) {
  * Runs `task(holder)` for a write that may take the account's login: holding the account's key
  * and, if another account's dev shows the login (`holder`), that account's key too, taken in
  * sorted order (keyedQueue.runAll). Under the keys the holder is looked up again; if it changed,
- * or the task returns RETRY, everything starts over (at most MAX_ATTEMPTS times).
+ * or the task returns RETRY, everything starts over (at most MAX_ATTEMPTS times); a task that
+ * returns DISPLACED starts over without using up an attempt (at most MAX_ROUNDS rounds in all).
  * @template T
  * @param {AccountIdentity} user
- * @param {(holder: object | null) => Promise<T | typeof RETRY>} task - `holder`: the dev showing
- *   the user's login now (any owner, possibly the user's own, or legacy), or null
+ * @param {(holder: object | null) => Promise<T | typeof RETRY | typeof DISPLACED>} task -
+ *   `holder`: the dev showing the user's login now (any owner, possibly the user's own, or
+ *   legacy), or null
  * @returns {Promise<T>}
  */
 async function inLoginOrder(user, task) {
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+  let attempts = 0;
+  for (let round = 0; round < MAX_ROUNDS && attempts < MAX_ATTEMPTS; round += 1) {
     const expected = await findDevByLogin(user.github_username);
     const keys = [accountKey(user.github_id)];
     if (expected && !isLegacy(expected) && expected.github_id !== user.github_id) {
@@ -307,7 +432,8 @@ async function inLoginOrder(user, task) {
       if (!sameHolder(holder, expected)) return RETRY;
       return task(holder);
     });
-    if (outcome !== RETRY) return outcome;
+    if (outcome === RETRY) attempts += 1;
+    else if (outcome !== DISPLACED) return outcome;
   }
   throw new Error('Could not take the developer login: too many concurrent changes');
 }
@@ -319,14 +445,16 @@ async function inLoginOrder(user, task) {
  * name). Nothing else changes. Announced as dev-updated.
  * @param {object} holder - the dev showing the login
  * @param {Date} readAt - when GitHub said the login belongs to someone else
+ * @param {object} [also] - more filter conditions (a guarded dev: its avatar as read)
  * @returns {Promise<boolean>} true if displaced
  */
-async function displace(holder, readAt) {
+async function displace(holder, readAt, also = {}) {
   const filter = {
     _id: holder._id,
     github_id: isLegacy(holder) ? null : holder.github_id,
     github_username: holder.github_username,
     ...olderThan(readAt),
+    ...also,
   };
   const set = {
     github_username: staleLogin(holder),
@@ -342,7 +470,8 @@ async function displace(holder, readAt) {
 
 /**
  * Inside inLoginOrder: displaces `holder` if it is another account's dev (or a legacy dev, when
- * the user already owns one) whose login state is older than the user's GitHub read.
+ * the user already owns one or it is guarded against the user) whose login state is older than
+ * the user's GitHub read.
  * @param {AccountIdentity & { login_read_at: number }} user
  * @param {object | null} holder - the dev showing the user's login (locked by inLoginOrder)
  * @param {object | null} own - the user's own dev, if any
@@ -353,19 +482,26 @@ async function displace(holder, readAt) {
 async function displaceStaleHolder(user, holder, own) {
   if (!holder || holder.github_id === user.github_id) return 'none';
   if (own && String(own._id) === String(holder._id)) return 'none';
-  // A legacy dev with this login is this account's to claim, unless it already owns a dev.
-  if (isLegacy(holder) && !own) return 'none';
+  // A legacy dev with this login is this account's to claim, unless it already owns a dev or
+  // the dev's avatar names another account (B1).
+  const avatarId = isLegacy(holder) && !own ? guardingAvatarId(holder, user) : null;
+  if (isLegacy(holder) && !own && avatarId === null) return 'none';
   const readAt = loginReadAt(user);
   const seenAt = holder.github_username_seen_at;
   if (seenAt && seenAt >= readAt) return 'newer';
-  return await displace(holder, readAt) ? 'displaced' : 'changed';
+  // A guarded dev is displaced only with the avatar the guard read.
+  const displaced = await displace(holder, readAt, avatarId === null ? {} : avatarAsRead(holder));
+  if (!displaced) return 'changed';
+  if (avatarId !== null) logGuarded('displaced', holder, user, avatarId);
+  return 'displaced';
 }
 
 /**
  * At sign-in, with GitHub's fresh answer (login `github_username` belongs to `github_id`, read at
  * `login_read_at`): displace any other dev that still shows this login with an older state, then
  * refresh the account's own dev to it. Legacy devs are not claimed here (only on their owner's
- * first write). Best effort: a failure is logged and never fails the sign-in.
+ * first write), and only displaced if the account owns a dev or they are guarded against it.
+ * Best effort: a failure is logged and never fails the sign-in.
  * @param {AccountIdentity & { login_read_at: number }} user
  * @returns {Promise<void>}
  */
@@ -393,6 +529,7 @@ module.exports = {
   DUPLICATE_KEY,
   STALE_LOGIN_PREFIX,
   RETRY,
+  DISPLACED,
   isDuplicateKey,
   resolveOwnDev,
   loginFields,

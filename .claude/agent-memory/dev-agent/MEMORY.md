@@ -7,4 +7,5 @@
 - [PR full vs nightly @regression](project_ci_subset_order.md) - nightly runs only @regression, neighbours differ; run both; check web.json order first
 - [Test loopback + timing](project_backend_suite_timing.md) - foreign answers = "::" vs 127.0.0.1 (BUG-013); forceExit; --tags; mobile Main.test.js times out under load
 - [npm overrides](project_npm_overrides_peer_scope.md) - root-only (qa/package.json, never members); scoped ones hit peers; key by version; stream-json 3 is ESM
+- [Mutation backups](feedback_mutation_backups.md) - undo mutations by Edit or fresh backup; an older copy restore drops later edits
 - [One backend feature](project_cucumber_single_feature.md) - CLI paths merge with cucumber.js; use npm test -- --config <relative scratch config>

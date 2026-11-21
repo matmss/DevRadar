@@ -5,6 +5,7 @@ const { EVENT, announce, announceStored } = require('../services/devEvents');
 const {
   OWNERSHIP,
   RETRY,
+  DISPLACED,
   isDuplicateKey,
   resolveOwnDev,
   loginFields,
@@ -131,10 +132,13 @@ module.exports = {
       const ownership = await resolveOwnDev(user, { claim: true });
 
       if (ownership.status === OWNERSHIP.CONFLICT) {
-        // Another account's dev shows this login. The newest GitHub read wins (QA-AUTH6-4): if
-        // this session's read is newer, that dev is displaced and this account registers.
+        // Another account's dev shows this login (or a legacy dev whose avatar names another
+        // account, B1). The newest GitHub read wins (QA-AUTH6-4): if this session's read is
+        // newer, that dev is displaced and this account registers (DISPLACED: the next round takes
+        // the freed login).
         const displacement = await displaceStaleHolder(user, holder, null);
-        return displacement === 'newer' ? { conflict: true } : RETRY;
+        if (displacement === 'newer') return { conflict: true };
+        return displacement === 'displaced' ? DISPLACED : RETRY;
       }
 
       if (ownership.status !== OWNERSHIP.NONE) {

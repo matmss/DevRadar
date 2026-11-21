@@ -3,19 +3,21 @@
 // in-process against its ephemeral MongoDB.
 //
 // A legacy dev has no github_id (missing or null): it was created before sign-in existed. Its
-// owner claims it by login on their first write (services/devOwnership.js), unless the login was
-// given to an account that already has a profile, which DISPLACES it (`_stale_<_id>` login,
-// github_username_stale: true). A displaced dev can no longer be claimed by anyone. These commands
-// let an operator, after confirming with the owner, give a legacy dev to its owner's GitHub
-// account (`assign`, when the owner has no profile) or retire it in favor of the owner's current
-// profile (`merge`), with the GitHub id in the dev's avatar_url as a hint (utils/githubAvatarId.js).
+// owner claims it by login on their first write (services/devOwnership.js), unless its avatar
+// names another GitHub account (the claim guard, dev/docs/05-claim-guard-spec.md) or the login was
+// given to an account that already has a profile or that the dev is guarded against, which
+// DISPLACES it (`_stale_<_id>` login, github_username_stale: true). A displaced dev can no longer
+// be claimed by anyone. These commands let an operator, after confirming with the owner, give a
+// legacy dev to its owner's GitHub account (`assign`, when the owner has no profile) or retire it
+// in favor of the owner's current profile (`merge`), with the GitHub id in the dev's avatar_url as
+// a hint (utils/githubAvatarId.js).
 //
 // Safety rules (spec "Live events and queues", AC-14, AC-18, AC-22 to AC-25):
 //  - Dry run unless --apply. Every refusal happens before any write.
 //  - Runs outside the API process, so it cannot take the API's per-account queue keys
 //    (keyedQueue). It never needs them: every write is ONE conditional single-document write
 //    whose filter is the state the decision was made on (same _id, still no github_id, same
-//    login), the same filters a claim and a displacement use. If the API claimed, displaced or
+//    login), as a claim and a displacement check it. If the API claimed, displaced or
 //    deleted the dev in between, the write matches nothing and the tool reports "changed since
 //    read". A registration of the target account in between is refused by the github_id_unique
 //    index (duplicate key), reported like "already has a profile".
@@ -28,6 +30,7 @@ const mongoose = require('mongoose');
 const Dev = require('../../src/models/Dev');
 const { githubIdFromSubject, isValidGithubId } = require('../../src/utils/githubId');
 const { AVATAR_ID_STATUS, legacyAvatarEvidence } = require('../../src/utils/githubAvatarId');
+const { isValidGithubUsername } = require('../../src/utils/githubUsername');
 
 const { EJSON } = mongoose.mongo.BSON;
 
@@ -56,8 +59,10 @@ Commands:
   list [--json]
       Every legacy developer (no github_id): login, status (legacy | displaced), name,
       coordinates, techs, avatar_url, the GitHub id derived from the avatar (or "unparseable" /
-      "none"), whether that account already has a profile, and duplicate avatar ids. Then counts
-      by status, avatar id result and avatar host. Read-only.
+      "none"), who can claim it by login (claimable_by: that GitHub id, "login" for whoever
+      holds the login, "none" when its login is no GitHub login, e.g. displaced), whether that
+      account already has a profile, and duplicate avatar ids. Then counts by status, avatar id
+      result and avatar host. Read-only.
   assign <dev _id> --github-id <id> [--force] [--apply]
   assign <dev _id> --from-avatar [--apply]
       Gives a legacy or displaced developer to a GitHub account that has no profile: sets its
@@ -294,6 +299,12 @@ async function buildListing() {
       ? { latitude: doc.location.coordinates[1], longitude: doc.location.coordinates[0] }
       : null;
     const status = doc.github_username_stale === true ? 'displaced' : 'legacy';
+    // Who the API lets claim it by login (spec 05): the avatar's account only (the claim guard),
+    // anyone holding the login without evidence. The claim matches the login, not the stale flag,
+    // so nobody can claim it only when its login is no GitHub login (a displaced dev's
+    // `_stale_<_id>`, QA-CG-4).
+    let claimableBy = parsed ? evidence.id : 'login';
+    if (!isValidGithubUsername(doc.github_username)) claimableBy = 'none';
 
     summary.by_status[status] += 1;
     summary.by_avatar_id[evidence.status] += 1;
@@ -312,6 +323,7 @@ async function buildListing() {
       avatar_url: doc.avatar_url ?? null,
       avatar_id: parsed ? evidence.id : evidence.status,
       avatar_host: evidence.host,
+      claimable_by: claimableBy,
       owner_has_profile: Boolean(owner),
       owner_profile: owner ? { _id: String(owner._id), github_username: owner.github_username ?? null } : null,
       duplicate_avatar_id: duplicates.length > 0,
@@ -365,6 +377,7 @@ async function list({ json = false }, out) {
     out.log(`  techs              ${techs}`);
     out.log(`  avatar_url         ${show(dev.avatar_url)}`);
     out.log(`  avatar id          ${dev.avatar_id}`);
+    out.log(`  claimable_by       ${dev.claimable_by}`);
     out.log(`  owner_has_profile  ${ownerLine}`);
     out.log(`  duplicate_avatar_id ${dev.duplicate_avatar_id ? `yes: ${dev.duplicate_of.map(show).join(', ')}` : 'no'}`);
     out.log('');

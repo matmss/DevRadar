@@ -258,6 +258,20 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
   - No Socket.io event (a connected watcher gets none); the help says clients see changes on their next search, reload or reconnect. No request, query, header, body or handshake field (`github_id`, `_id`, `avatar_url`, `github_username`, `profile`) changes a legacy dev; no route for the feature exists. The script names the database before any change, takes no connection string as an option, and never prints the credentials or query options of `MONGO_URI` (also when authentication fails, exit 3).
 - **Automated:** `qa/backend-tests/features/legacy-merge.feature`; `unit/{githubAvatarId,legacyDevsCli}.test.js`; QA review `legacy-merge-review.feature` (QA-LM-1 raw `_id` in the text listing, QA-LM-2 avatar host counts for `constructor`/`__proto__`, QA-LM-3 merge into a profile whose `github_id` no account can own; plus guards for restore's legacy and index checks, the merge warning when the profile is deleted meanwhile, the AC-10 dry run, the command line building no index, and escaping in every command's output).
 
+## TC-036 — Claim guard: a legacy profile whose avatar names another account (spec 05, B1)
+- **Requirement:** FR-7.3, FR-7.4, US-8, Q5
+- **Type:** Functional / Security / Concurrency | **P1**
+- **Preconditions:** Legacy profile "alice" (no `github_id`, missing or null) stored as the pre-auth backend did, with `avatar_url` `https://avatars.githubusercontent.com/u/<M>?v=4`; account 222 holds "alice" with a session read newer than the profile's login state.
+- **Steps / expected result:**
+  - M = 111 (guarded): `POST /devs` 200 with a new `_id`, `github_id` 222, login "alice"; the legacy profile is displaced (`_stale_<_id>`, stale flag, a name that was only the login cleared, everything else unchanged, never deleted), one `dev-updated` for it and one `new-dev`. `PUT`/`DELETE`/`GET /devs/me`: 404 `dev_not_found`, nothing written, no `dev-deleted`; the answer never shows the profile's `_id` or avatar. One warn line per refused claim or guarded displacement with the `_id`, login, 222 and 111; no token, avatar URL, name, bio, coordinates or body in any log line; `GET` logs nothing.
+  - M = 222, an unparseable avatar (Gravatar, `/in/<id>`, extra query parameters, leading zero, above 2^53), empty, null, missing, or a hand-edited non-string: claimed exactly as before (same `_id`, data kept). Login in any letter case for both.
+  - Sign-in as "alice" by 222: displaces a guarded profile (`dev-updated`), creates and claims nothing; with M = 222 or no evidence nothing is written. An account that owns a profile displaces the legacy holder whatever its avatar. An owned profile's avatar is never evidence. A guarded profile with a login state at least as recent: `POST` 409 `github_username_conflict`, `PUT`/`DELETE` 404, nothing written.
+  - Races: the owner 111 claims while 222 registers (no 5xx, 222 gets "alice", the profile ends displaced and never 222's); 111's claim just before 222's displacement (displaced as 111's); 222's displacement just before 111's claim (404); a double `POST` (one displacement, one `new-dev`, same dev); the avatar changes to 111 between the guard's read and the claim (the claim misses, the retry refuses it: `PUT` 404, `POST` displaces and registers).
+  - CLI `list`: `claimable_by` is the avatar id, `login` without evidence, `none` when the login is no GitHub login (displaced); it agrees with what the API does, also for a hand-edited Binary or `{ _id: <url> }` avatar and a stale flag on a real login (QA-CG-1, QA-CG-4); nothing written.
+  - QA review (`claim-guard-review.feature`): a hand-edited non-string avatar is never a 500 (QA-CG-1); a stale session of another account that displaces and registers in between does not exhaust the newest holder's registration, also for an owned holder (QA-CG-2); the log names a hand-edited string `_id` (QA-CG-3).
+  - Web: signed in as "alice" (222), the form is empty with "Salvar"; registering lists both profiles, the old one without a GitHub link ("Perfil do GitHub indisponível").
+- **Automated:** `qa/backend-tests/features/claim-guard.feature`, `qa/web-tests/features/claim-guard.feature`; the updated races in `legacy-merge.feature`; parser table in `unit/githubAvatarId.test.js`.
+
 ## TC-017 (Mobile) — Map centers on current location
 - **Requirement:** FR-6.1
 - **Type:** Functional | **P2**
@@ -308,12 +322,12 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 | US-6 (auth) | TC-015, TC-016, TC-023, TC-024, TC-025, TC-026, TC-029, TC-033 |
 | US-5 (auth) | TC-027, TC-028 |
 | US-7 (auth) | TC-019, TC-030, TC-034 |
-| US-8, Q10 (auth) | TC-002, TC-031, TC-032, TC-034, TC-035 |
+| US-8, Q10 (auth) | TC-002, TC-031, TC-032, TC-034, TC-035, TC-036 |
 | FR-2 | TC-007, TC-027 |
 | FR-3 | TC-008, TC-009, TC-010, TC-027 |
 | FR-4 | TC-004, TC-005, TC-006, TC-019, TC-028, TC-031, TC-032 |
 | FR-5 | TC-014, TC-015, TC-016, TC-029, TC-033 |
 | FR-6 | TC-017, TC-018, TC-019, TC-020, TC-021, TC-030 |
-| FR-7 | TC-012, TC-034, TC-035 |
+| FR-7 | TC-012, TC-034, TC-035, TC-036 |
 | NFR-1/2 | TC-010 |
 | NFR-7 | TC-022 |

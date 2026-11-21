@@ -317,6 +317,50 @@ Feature: Operator tool for legacy and displaced profiles: list, assign, merge (s
   Scenario: QA-LM guard: stored control and bidi characters are escaped in every command's output, and the recovery record restores them (displaced, spec restore decision)
 ```
 
+## Feature: Claim guard for legacy profiles (Backend + Web) — covers FR-7.3, FR-7.4, US-8, Q5
+
+Automated in `qa/backend-tests/features/claim-guard.feature` (spec `dev/docs/05-claim-guard-spec.md`,
+AC-1 to AC-17) and `qa/web-tests/features/claim-guard.feature` (AC-18). The four races of
+`legacy-merge.feature` where account 502 claims or deletes "alice" now seed an avatar without
+evidence and use `--force` (AC-17).
+
+```gherkin
+Feature: A stranger holding a renamed owner's old login cannot claim the legacy profile (spec 05, B1)
+  # AC-1 to AC-4 (@smoke @P1): avatar id 111, account 222 holds the login
+  Scenario: POST /devs displaces the guarded developer and registers a fresh profile (AC-1)
+  Scenario: PUT /devs/me is 404 and leaves the guarded developer untouched (AC-2)
+  Scenario: DELETE /devs/me is 404 and deletes nothing (AC-3)
+  Scenario: GET /devs/me does not show the guarded developer, and logs nothing (AC-4)
+  # AC-5 to AC-7: no evidence against the claimer keeps today's rule
+  Scenario: The avatar names the claimer: read-only on GET, claimed on the first PUT (AC-5)
+  Scenario: The avatar names the claimer: POST returns the claimed developer (AC-5)
+  Scenario: The avatar names the claimer: DELETE deletes the legacy developer (AC-5)
+  Scenario Outline: The login matches in any letter case, for the guard as for the claim (AC-6)
+  Scenario: A guarded developer in another letter case is a fresh registration with the claimer's spelling (AC-6)
+  Scenario Outline: Without evidence against the claimer the legacy developer is claimed as before (AC-7)
+  Scenario Outline: A hand-edited non-string avatar_url carries no evidence and the claim still works (@edge)
+  # AC-8 to AC-11
+  Scenario Outline: A guarded developer with github_id missing or null is treated identically (AC-8)
+  Scenario Outline: An owned developer's avatar is never evidence: today's conflict rules (AC-8)
+  Scenario: Signing in displaces a guarded developer and claims nothing; then GET is 404 and POST registers fresh (AC-9)
+  Scenario Outline: Signing in leaves a legacy developer the account may claim untouched (AC-9)
+  Scenario Outline: An account that owns a developer displaces the legacy holder of its login whatever its avatar (AC-10)
+  Scenario: A guarded developer with a newer login state: POST is 409, PUT and DELETE 404, nothing written (AC-11, @edge)
+  # AC-12 to AC-14 (@edge): races
+  Scenario: The real owner claims while the stranger registers: no server error, the newest read wins (AC-12)
+  Scenario: The real owner's claim lands just before the stranger's displacement: it is displaced as the owner's dev (AC-12)
+  Scenario: The stranger's displacement lands just before the real owner's claim: the claim misses, 404 (AC-12)
+  Scenario: A double-clicked registration displaces the guarded developer once and registers once (AC-13)
+  Scenario: The avatar changes to another account's between the guard's read and the claim: the claim misses and is refused (AC-14)
+  Scenario: The avatar changes between the guard's read and the claim of a registration: displaced, fresh profile (AC-14)
+  # AC-15, AC-16
+  Scenario: A body naming the guarded developer's avatar, id and login does not make it mine (AC-15)
+  Scenario: list shows claimable_by for guarded, unguarded and displaced developers, and writes nothing (AC-16)
+
+Feature: A legacy profile registered by another GitHub account is not mine (web, AC-18)
+  Scenario: Signed in as a login whose legacy profile has another account's avatar: empty form, a fresh profile, both listed (AC-18)
+```
+
 ## Feature: Reads and live updates require sign-in (Backend) — covers FR-2.1, FR-3.1, FR-4.1, US-5, Q6
 
 ```gherkin

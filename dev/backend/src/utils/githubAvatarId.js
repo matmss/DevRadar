@@ -14,8 +14,8 @@
 // Parsing is strict on purpose: exactly https, one of GitHub's avatar hosts, no credentials, no
 // port, the path /u/<id> and at most the `v`/`s` query parameters GitHub adds. Anything else
 // (Gravatar, /in/<app id> for GitHub Apps, other hosts, look-alike hosts, seed data) carries no
-// evidence. Used by the operator CLI (scripts/legacy-devs.js) and meant to be reused as is by a
-// server-side claim guard (spec option B1).
+// evidence. Used by the operator CLI (scripts/legacy-devs.js) and by the server-side claim guard
+// (services/devOwnership.js, dev/docs/05-claim-guard-spec.md, B1).
 const { isValidGithubId } = require('./githubId');
 
 // GitHub's avatar hosts: the current one and the older sharded ones (avatars0..avatars3).

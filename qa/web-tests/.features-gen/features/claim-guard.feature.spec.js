@@ -1,0 +1,37 @@
+// Generated from: features/claim-guard.feature
+import { test } from "playwright-bdd";
+
+test.describe('A legacy profile registered by another GitHub account is not mine (spec 05, B1)', () => {
+
+  test('Signed in as a login whose legacy profile has another account\'s avatar: empty form, a fresh profile, both listed (AC-18)', { tag: ['@smoke', '@regression', '@P1'] }, async ({ Given, When, Then, And, context, page }) => { 
+    await Given('the backend has no registered developers'); 
+    await And('the browser grants geolocation permission at latitude "-23.5505" and longitude "-46.6333"', null, { context }); 
+    await And('the backend has a legacy developer "alice" named "Renamed Owner" with the avatar of GitHub account 111, techs "Go" at latitude "-23.5505" and longitude "-46.6333"'); 
+    await And('I am signed in with GitHub as "alice"', null, { context, page }); 
+    await Then('the form should be in registration mode', null, { page }); 
+    await And('the techs field should be empty', null, { page }); 
+    await And('the developer list should show 1 entries', null, { page }); 
+    await And('the entry named "Renamed Owner" should have no GitHub link and say "Perfil do GitHub indisponível"', null, { page }); 
+    await When('I fill in techs "ReactJS" and submit', null, { page }); 
+    await Then('the developer list should show 2 entries', null, { page }); 
+    await And('exactly one entry should link to "https://github.com/alice"', null, { page }); 
+    await And('the entry named "Renamed Owner" should have no GitHub link and say "Perfil do GitHub indisponível"', null, { page }); 
+    await And('the backend\'s developer "alice" should belong to the GitHub account of "alice"'); 
+  });
+
+});
+
+// == technical section ==
+
+test.beforeEach('BeforeEach Hooks', ({ $runScenarioHooks, context }) => $runScenarioHooks('before', { context }));
+test.afterEach('AfterEach Hooks', ({ $runScenarioHooks, context }) => $runScenarioHooks('after', { context }));
+
+test.use({
+  $test: [({}, use) => use(test), { scope: 'test', box: true }],
+  $uri: [({}, use) => use('features/claim-guard.feature'), { scope: 'test', box: true }],
+  $bddFileData: [({}, use) => use(bddFileData), { scope: "test", box: true }],
+});
+
+const bddFileData = [ // bdd-data-start
+  {"pwTestLine":6,"pickleLine":13,"tags":["@smoke","@regression","@P1"],"steps":[{"pwStepLine":7,"gherkinStepLine":14,"keywordType":"Context","textWithKeyword":"Given the backend has no registered developers","stepMatchArguments":[]},{"pwStepLine":8,"gherkinStepLine":15,"keywordType":"Context","textWithKeyword":"And the browser grants geolocation permission at latitude \"-23.5505\" and longitude \"-46.6333\"","stepMatchArguments":[{"group":{"start":54,"value":"\"-23.5505\"","children":[{"start":55,"value":"-23.5505","children":[{}]},{"children":[{}]}]},"parameterTypeName":"string"},{"group":{"start":79,"value":"\"-46.6333\"","children":[{"start":80,"value":"-46.6333","children":[{}]},{"children":[{}]}]},"parameterTypeName":"string"}]},{"pwStepLine":9,"gherkinStepLine":16,"keywordType":"Context","textWithKeyword":"And the backend has a legacy developer \"alice\" named \"Renamed Owner\" with the avatar of GitHub account 111, techs \"Go\" at latitude \"-23.5505\" and longitude \"-46.6333\"","stepMatchArguments":[{"group":{"start":35,"value":"\"alice\"","children":[{"start":36,"value":"alice","children":[{}]},{"children":[{}]}]},"parameterTypeName":"string"},{"group":{"start":49,"value":"\"Renamed Owner\"","children":[{"start":50,"value":"Renamed Owner","children":[{}]},{"children":[{}]}]},"parameterTypeName":"string"},{"group":{"start":99,"value":"111"},"parameterTypeName":"int"},{"group":{"start":110,"value":"\"Go\"","children":[{"start":111,"value":"Go","children":[{}]},{"children":[{}]}]},"parameterTypeName":"string"},{"group":{"start":127,"value":"\"-23.5505\"","children":[{"start":128,"value":"-23.5505","children":[{}]},{"children":[{}]}]},"parameterTypeName":"string"},{"group":{"start":152,"value":"\"-46.6333\"","children":[{"start":153,"value":"-46.6333","children":[{}]},{"children":[{}]}]},"parameterTypeName":"string"}]},{"pwStepLine":10,"gherkinStepLine":17,"keywordType":"Context","textWithKeyword":"And I am signed in with GitHub as \"alice\"","stepMatchArguments":[{"group":{"start":30,"value":"\"alice\"","children":[{"start":31,"value":"alice","children":[{}]},{"children":[{}]}]},"parameterTypeName":"string"}]},{"pwStepLine":11,"gherkinStepLine":18,"keywordType":"Outcome","textWithKeyword":"Then the form should be in registration mode","stepMatchArguments":[]},{"pwStepLine":12,"gherkinStepLine":19,"keywordType":"Outcome","textWithKeyword":"And the techs field should be empty","stepMatchArguments":[]},{"pwStepLine":13,"gherkinStepLine":20,"keywordType":"Outcome","textWithKeyword":"And the developer list should show 1 entries","stepMatchArguments":[{"group":{"start":31,"value":"1"},"parameterTypeName":"int"}]},{"pwStepLine":14,"gherkinStepLine":21,"keywordType":"Outcome","textWithKeyword":"And the entry named \"Renamed Owner\" should have no GitHub link and say \"Perfil do GitHub indisponível\"","stepMatchArguments":[{"group":{"start":16,"value":"\"Renamed Owner\"","children":[{"start":17,"value":"Renamed Owner","children":[{}]},{"children":[{}]}]},"parameterTypeName":"string"},{"group":{"start":67,"value":"\"Perfil do GitHub indisponível\"","children":[{"start":68,"value":"Perfil do GitHub indisponível","children":[{}]},{"children":[{}]}]},"parameterTypeName":"string"}]},{"pwStepLine":15,"gherkinStepLine":22,"keywordType":"Action","textWithKeyword":"When I fill in techs \"ReactJS\" and submit","stepMatchArguments":[{"group":{"start":16,"value":"\"ReactJS\"","children":[{"start":17,"value":"ReactJS","children":[{}]},{"children":[{}]}]},"parameterTypeName":"string"}]},{"pwStepLine":16,"gherkinStepLine":23,"keywordType":"Outcome","textWithKeyword":"Then the developer list should show 2 entries","stepMatchArguments":[{"group":{"start":31,"value":"2"},"parameterTypeName":"int"}]},{"pwStepLine":17,"gherkinStepLine":24,"keywordType":"Outcome","textWithKeyword":"And exactly one entry should link to \"https://github.com/alice\"","stepMatchArguments":[{"group":{"start":33,"value":"\"https://github.com/alice\"","children":[{"start":34,"value":"https://github.com/alice","children":[{}]},{"children":[{}]}]},"parameterTypeName":"string"}]},{"pwStepLine":18,"gherkinStepLine":25,"keywordType":"Outcome","textWithKeyword":"And the entry named \"Renamed Owner\" should have no GitHub link and say \"Perfil do GitHub indisponível\"","stepMatchArguments":[{"group":{"start":16,"value":"\"Renamed Owner\"","children":[{"start":17,"value":"Renamed Owner","children":[{}]},{"children":[{}]}]},"parameterTypeName":"string"},{"group":{"start":67,"value":"\"Perfil do GitHub indisponível\"","children":[{"start":68,"value":"Perfil do GitHub indisponível","children":[{}]},{"children":[{}]}]},"parameterTypeName":"string"}]},{"pwStepLine":19,"gherkinStepLine":26,"keywordType":"Outcome","textWithKeyword":"And the backend's developer \"alice\" should belong to the GitHub account of \"alice\"","stepMatchArguments":[{"group":{"start":24,"value":"\"alice\"","children":[{"start":25,"value":"alice","children":[{}]},{"children":[{}]}]},"parameterTypeName":"string"},{"group":{"start":71,"value":"\"alice\"","children":[{"start":72,"value":"alice","children":[{}]},{"children":[{}]}]},"parameterTypeName":"string"}]}]},
+]; // bdd-data-end

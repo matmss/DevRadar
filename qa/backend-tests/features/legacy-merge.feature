@@ -204,22 +204,25 @@ Feature: Operator tool for legacy and displaced profiles: list, assign, merge (s
     Then the command should be rejected as invalid with "--force only applies with --github-id"
     And nothing should have been written to the database
 
-  # AC-14: the API changes the dev between the tool's read and its conditional write.
+  # AC-14: the API changes the dev between the tool's read and its conditional write. Account 502
+  # can only claim (update, delete) a legacy dev whose avatar carries no other account's id (claim
+  # guard, dev/docs/05-claim-guard-spec.md), so those rows seed an avatar without evidence, which
+  # needs --force here.
   @edge @regression @P1
   Scenario Outline: Assign loses a race to the API: changed since read, nothing written (<change>)
-    Given the legacy developer "alice" was stored before sign-in with avatar "https://avatars.githubusercontent.com/u/501?v=4"
+    Given the legacy developer "alice" was stored before sign-in with avatar "<avatar>"
     And <setup>
     And GitHub account 502 as "alice" <change> just before the operator's write
-    When the operator runs "assign <alice> --github-id 501 --apply"
+    When the operator runs "assign <alice> --github-id 501 <options>"
     Then the race should have happened
     And the command should be refused with "changed since it was read (<reason>)"
     And exactly 0 developers should belong to GitHub account 501
 
     Examples:
-      | change                | setup                                                                                         | reason                                  |
-      | updates their profile | the developer database is not otherwise touched                                               | it now belongs to GitHub account 502    |
-      | signs in              | a developer "zed" owned by GitHub account 502 with avatar "https://example.com/z.png" already exists | its login changed to _stale_<alice> |
-      | deletes their profile | the developer database is not otherwise touched                                               | it was deleted                          |
+      | change                | avatar                                          | options         | setup                                                                                         | reason                                  |
+      | updates their profile | https://example.com/avatar.png                  | --force --apply | the developer database is not otherwise touched                                               | it now belongs to GitHub account 502    |
+      | signs in              | https://avatars.githubusercontent.com/u/501?v=4 | --apply         | a developer "zed" owned by GitHub account 502 with avatar "https://example.com/z.png" already exists | its login changed to _stale_<alice> |
+      | deletes their profile | https://example.com/avatar.png                  | --force --apply | the developer database is not otherwise touched                                               | it was deleted                          |
 
   @edge @regression @P1
   Scenario: The owner registers between the tool's check and its write: the github_id index refuses it (AC-14)
@@ -391,24 +394,25 @@ Feature: Operator tool for legacy and displaced profiles: list, assign, merge (s
     When the operator runs "list"
     Then the output should contain "techs              (not an array: string)"
 
-  # AC-18: the conditional delete only removes the dev as it was read.
+  # AC-18: the conditional delete only removes the dev as it was read. As for assign, account 502
+  # can only claim "alice" without avatar evidence (claim guard), and merging such a dev needs --force.
   @edge @regression @P1
   Scenario Outline: Merge loses a race to the API: nothing is deleted (<change>)
-    Given the legacy developer "alice" was stored before sign-in with avatar "https://avatars.githubusercontent.com/u/501?v=4"
+    Given the legacy developer "alice" was stored before sign-in with avatar "<avatar>"
     And a developer "alice2" owned by GitHub account 501 with avatar "https://avatars.githubusercontent.com/u/501?v=4" already exists
     And <setup>
     And GitHub account 502 as "alice" <change> just before the operator's write
-    When the operator runs "merge <alice> --into <alice2> --apply"
+    When the operator runs "merge <alice> --into <alice2> <options>"
     Then the race should have happened
     And the command should be refused with "changed since it was read (<reason>)"
     And the developer "alice2" should be exactly as before the command
     And <outcome>
 
     Examples:
-      | change                | setup                                                                                              | reason                                | outcome                                              |
-      | updates their profile | the developer database is not otherwise touched                                                    | it now belongs to GitHub account 502  | the developer "alice" should belong to GitHub account 502 |
-      | signs in              | a developer "zed" owned by GitHub account 502 with avatar "https://example.com/z.png" already exists | its login changed to _stale_<alice> | the developer "alice" should be displaced           |
-      | deletes their profile | the developer database is not otherwise touched                                                    | it was deleted                        | the developer "alice" should no longer exist         |
+      | change                | avatar                                          | options         | setup                                                                                              | reason                                | outcome                                              |
+      | updates their profile | https://example.com/avatar.png                  | --force --apply | the developer database is not otherwise touched                                                    | it now belongs to GitHub account 502  | the developer "alice" should belong to GitHub account 502 |
+      | signs in              | https://avatars.githubusercontent.com/u/501?v=4 | --apply         | a developer "zed" owned by GitHub account 502 with avatar "https://example.com/z.png" already exists | its login changed to _stale_<alice> | the developer "alice" should be displaced           |
+      | deletes their profile | https://example.com/avatar.png                  | --force --apply | the developer database is not otherwise touched                                                    | it was deleted                        | the developer "alice" should no longer exist         |
 
   @regression @P1
   Scenario Outline: Merge refuses a wrong pair (AC-19): <case>

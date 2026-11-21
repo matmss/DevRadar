@@ -104,4 +104,11 @@ Added during the legacy-merge operator CLI review (2026-11-18):
 - Bash refuses shell loops over a variable command (`for a in ...; node $S $a`) and `node -e` scripts that edit worktree files ("too complex to verify"). Put probe loops in a scratchpad .sh file run with `bash <file>`; edit worktree files with the Edit tool.
 - Mutation runner that takes SRC/FEATURES/MODES env vars (scratchpad lm-mut/run.sh + mutate.js): run the delivery's suite first, then rerun survivors against QA's new feature to prove each guard kills its mutant.
 - Operator scripts: the real CLI can be exercised against a long-lived mongodb-memory-server on a fixed port (scratchpad lm-qa/mongo.js) from a `git archive` scratch copy holding its own `.env`, which avoids writing under dev/.
+Added during the claim-guard review, spec 05 (2026-11-20):
+
+- Scratchpad dirs from earlier sessions are gone (lm-mut was not there). Rebuilt runner: scratchpad qa-cg/mut/{run.sh,mutate.js,cuke.js} (MODES/FEATURES/TAG env, tree per mode, `none` = baseline), main.sh runs a QA feature against `git archive <rev> dev/backend`. Wrap env-heavy invocations in a .sh file: Bash refuses `VAR=... bash x.sh` combined with heredoc appends.
+- Mongoose read-side casts matter for "raw vs read" bugs: a non-ObjectId `_id` (string, number) reads as `undefined`; a String path casts BSON Binary (toString) and `{ _id: '<str>' }` to that string, Code/arrays/plain objects to undefined. Probe with `Dev.collection.insertOne` + `Dev.findOne` (scratchpad qa-cg/bson-probe.js).
+- Other sessions can push load to 35 (8 cores): mutant runs then print "0 scenarios" (BeforeAll: mongod "failed to start within 10000ms") and baselines get 5 s step timeouts. Always run a `none` baseline in the same batch, re-run "0 scenarios" modes, and attribute kills by failed scenario line, not count. Even `ps` and `cat` of a task file can exceed 2 min then; Read the file instead.
+- Deterministic races: wrap `Dev.findOneAndUpdate` (restore in an After); match the write by its filter/update shape (`$set.github_username_stale` = displace, `$setOnInsert` + `github_id` = registration upsert).
+
 - MongoDB driver errors echo URI option values (readPreference, compressors, OIDC ENVIRONMENT) but no credentials in any shape tried; a redaction test needs a secret the driver actually prints.
