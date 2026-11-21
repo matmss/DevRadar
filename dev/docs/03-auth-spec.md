@@ -13,7 +13,7 @@ owner. This is the source of truth for DEV and QA on this feature; how it is bui
 | Q2 | **Mobile sign-in ships in the same release as gated reads** (otherwise the map breaks). |
 | Q3 | **Session = signed token valid 7 days, no refresh token.** After expiry the user signs in again. |
 | Q4 | **Profile updates are broadcast live** as a new `dev-updated` Socket.io event to nearby, tech-matching subscribers (same `isNearby` + techs rule as `new-dev`, evaluated against the *new* location/techs). Mobile updates/moves the marker. |
-| Q5 | Legacy (pre-auth) profile: the real GitHub owner **takes over the existing record** on sign-in (case-insensitive match). No audit log. |
+| Q5 | Legacy (pre-auth) profile: the real GitHub owner **takes over the existing record** on sign-in (case-insensitive match). No audit log. Matching by login risked handing a renamed owner's profile to the login's next holder: **closed where the profile's avatar carries another account's GitHub id** (claim guard, `05-claim-guard-spec.md`: that holder can't claim, read, change or delete it, and their sign-in or registration displaces it), **still an accepted risk for profiles without a parseable avatar id**. |
 | Q6 | Socket token is **checked on connect only**; an open socket is not force-closed at expiry. |
 | Q7 | Delete is a **hard delete**. |
 | Q8 | The product owner registers the GitHub OAuth App. Scope: **public profile only, no email** (`read:user` not needed; no scope = public data). Development and tests mock GitHub, so they don't wait for it. |
@@ -206,6 +206,14 @@ Scenario: The legacy profile is claimed for my GitHub account (Q10)
   Then it is tied to her GitHub id, keeps its _id and data, and is hers from then on
   And of two accounts claiming it at the same time, exactly one wins (no server error)
 
+Scenario: A stranger holding a renamed owner's old login cannot claim the profile (Q5, spec 05)
+  Given account A (id 111) registered as "alice" before auth, so its avatar says GitHub id 111
+  And A renamed itself to "alice2" on GitHub, and account B (id 222, no profile) now holds "alice"
+  When B signs in as "alice"
+  Then A's profile is displaced (no login shown, no GitHub link, nothing else changed, not deleted)
+  And B cannot read, update or delete it (404), and B's registration creates a fresh profile
+  # Without a parseable avatar id the old rule applies: B's first write claims it (accepted risk).
+
 Scenario: A renamed login does not hand over a profile (Q10)
   Given account A registered as "alice", then renamed itself to "alice2" on GitHub without signing in again
   And account B now holds the login "alice"
@@ -219,8 +227,10 @@ Scenario: A renamed login does not hand over a profile (Q10)
   # If A's two-day-old "alice" session registers or claims "alice" after B signed in, B's own
   # registration still succeeds: B's read is newer, so A's profile is displaced (QA-AUTH6-4).
   # An older session never takes a login confirmed by a newer read: its registration gets 409.
-  # A displaced legacy profile (A never signed in before B took "alice", and B already had a
-  # profile) can no longer be claimed: an operator assigns or merges it with
+  # If A's profile was created before auth and B has no profile, B could claim it by login, unless
+  # its avatar names another account than B's (the scenario above). A displaced legacy profile (A
+  # never signed in before B took "alice", and B already had a profile or was guarded against it)
+  # can no longer be claimed: an operator assigns or merges it with
   # dev/backend/scripts/legacy-devs.js (dev/docs/04-legacy-merge-spec.md).
 
 Scenario: Old sessions

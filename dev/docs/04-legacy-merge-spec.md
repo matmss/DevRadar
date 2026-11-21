@@ -2,7 +2,8 @@
 
 Status: **decided (section 8); option A implemented** as `dev/backend/scripts/legacy-devs.js`
 (runbook in `dev/docs/00-architecture.md`, "Displaced legacy devs"; tests in
-`qa/backend-tests/features/legacy-merge.feature`). B1 is the next item. Beyond section 6 the
+`qa/backend-tests/features/legacy-merge.feature`). B1 is implemented as
+`dev/docs/05-claim-guard-spec.md` (claim guard; `list` gained `claimable_by`). Beyond section 6 the
 tool has `restore <file>`, the recovery path for `merge`. By the main session's decision of
 2026-11-18 (QA review) it always restores the record as a **displaced** dev (login
 `_stale_<_id>`, stale flag, original login printed) after checking it against the Dev schema (no
@@ -402,7 +403,11 @@ And it reads the connection string only from the environment (MONGO_URI), never 
 And it makes no network call (no GitHub API)
 ```
 **AC-26 Q5 unchanged:** claim-by-login, displacement and the 409 rules behave exactly as today;
-this item neither closes nor widens the Q5 risk.
+this item neither closes nor widens the Q5 risk. (Superseded for parseable avatars by B1,
+`05-claim-guard-spec.md`: a login-match claim of a dev whose avatar names another account is
+refused and that dev is displaced instead. Four AC-14/AC-18 race rows in `legacy-merge.feature`
+now seed an avatar without evidence and use `--force`, since account 502 can no longer claim a
+dev whose avatar says 501.)
 
 ### Docs and QA
 

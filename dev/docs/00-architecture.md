@@ -215,15 +215,23 @@ existed) is found (Q5, US-8).
      hand-edited data: both are treated the same) whose login matches the user's
      case-insensitively (created before sign-in existed). Its owner **claims** it on their first
      write (`POST`, `PUT` or `DELETE`): one conditional update sets `github_id` only if the dev
-     still has none and still shows that login (`{ _id, github_id: null, github_username }`), so
-     of two accounts claiming at once exactly one wins; the loser looks again and finds rule 3 (no
-     500). The claim keeps the record: same `_id`, techs, location, name, bio and avatar (a `PUT`
+     still has none, still shows that login and still has the avatar the guard read
+     (`{ _id, github_id: null, github_username, avatar_url }`), so of two accounts claiming at once
+     exactly one wins; the loser looks again and finds rule 3 (no 500). **Claim guard**
+     (`05-claim-guard-spec.md`, B1): a legacy dev whose `avatar_url` parses
+     (`utils/githubAvatarId.js`) to **another** account's id was registered by that account, so
+     it is **guarded** against the user and falls under rule 3 instead. An avatar with the
+     user's id, no parseable id or none keeps this rule (for those Q5 stays an accepted risk).
+     Hand-edited or seed data with a GitHub-style avatar is guarded too. Each refused claim and
+     each guarded displacement logs one warning: the dev's `_id`, the login, the user's id and
+     the avatar's id (never the URL, a token, a name or a body; `GET /devs/me` logs nothing). The claim keeps the record: same `_id`, techs, location, name, bio and avatar (a `PUT`
      then changes what it always changes); it takes the login as GitHub spells it now and records
      when that was read (`github_username_seen_at`, so no older session can set it back,
      QA-AUTH6-2). **`GET /devs/me` does not claim:** it returns the legacy dev as it is and
      writes nothing. A read stays a read (the web app calls it on every load), and the claim
      happens on the first write anyway.
-  3. **Conflict:** otherwise, a dev with **another** `github_id` but the same login. It is
+  3. **Conflict:** otherwise, a dev with **another** `github_id` but the same login, or a guarded
+     legacy dev (rule 2). It is
      **never** theirs: `GET`/`PUT`/`DELETE /devs/me` answer 404 `dev_not_found` (exactly as if
      there were no dev, revealing nothing). On `POST /devs`, if this session's GitHub read is
      strictly newer than that dev's login state, that dev is displaced (below) and the user
@@ -254,8 +262,9 @@ existed) is found (Q5, US-8).
     (`dev-updated` if it changed; a name that was only the old login, or a cleared one, follows:
     the sign-in profile's name, else the new login). A displaced dev gets its owner's current
     login back at the owner's next sign-in (or a write with a newer session). A legacy dev is
-    displaced only by an account that already owns a dev; otherwise it is that account's to claim
-    (rule 2). A dev whose state is **at least as recent** is never touched: the older session
+    displaced only by an account that already owns a dev **or that it is guarded against** (also
+    at sign-in); otherwise it is that account's to claim (rule 2). A guarded displacement also
+    requires the avatar it read. A dev whose state is **at least as recent** is never touched: the older session
     keeps its own stored login on `PUT` and gets 409 on `POST`. Displacement needs no GitHub call
     about anyone else.
   - **What this guarantees:** the **newest GitHub read always wins**, whatever the order of
@@ -276,8 +285,9 @@ existed) is found (Q5, US-8).
       `avatar_url` (`utils/githubAvatarId.js`: the pre-auth backend stored GitHub's
       `/users/<login>` avatar, `https://avatars.githubusercontent.com/u/<id>`, so the id is the
       account that held the login at registration; a hint, not proof, and only for devs without a
-      `github_id`), whether that account already has a profile, duplicate ids, and counts.
-      Read-only.
+      `github_id`), who can claim it by login (`claimable_by`: that id, the claim guard; `login`
+      without an id; `none` once displaced), whether that account already has a profile,
+      duplicate ids, and counts. Read-only.
     - `assign <_id> --github-id <id> [--force] [--apply]` or `assign <_id> --from-avatar [--apply]`
       (`--force` only goes with `--github-id`): the owner has no profile. Sets `github_id` only; `_id` and data are kept, and the owner's next sign-in
       restores their current login (`refreshLoginAtSignIn`). Refused if the account already has a
