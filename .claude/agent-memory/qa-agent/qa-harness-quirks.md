@@ -108,6 +108,7 @@ Added during the claim-guard review, spec 05 (2026-11-20):
 
 - Scratchpad dirs from earlier sessions are gone (lm-mut was not there). Rebuilt runner: scratchpad qa-cg/mut/{run.sh,mutate.js,cuke.js} (MODES/FEATURES/TAG env, tree per mode, `none` = baseline), main.sh runs a QA feature against `git archive <rev> dev/backend`. Wrap env-heavy invocations in a .sh file: Bash refuses `VAR=... bash x.sh` combined with heredoc appends.
 - Mongoose read-side casts matter for "raw vs read" bugs: a non-ObjectId `_id` (string, number) reads as `undefined`; a String path casts BSON Binary (toString) and `{ _id: '<str>' }` to that string, Code/arrays/plain objects to undefined. Probe with `Dev.collection.insertOne` + `Dev.findOne` (scratchpad qa-cg/bson-probe.js).
+- Other sessions can push load to 35 (8 cores): mutant runs then print "0 scenarios" (BeforeAll: mongod "failed to start within 10000ms") and baselines get 5 s step timeouts. Always run a `none` baseline in the same batch, re-run "0 scenarios" modes, and attribute kills by failed scenario line, not count. Even `ps` and `cat` of a task file can exceed 2 min then; Read the file instead.
 - Deterministic races: wrap `Dev.findOneAndUpdate` (restore in an After); match the write by its filter/update shape (`$set.github_username_stale` = displace, `$setOnInsert` + `github_id` = registration upsert).
 
 - MongoDB driver errors echo URI option values (readPreference, compressors, OIDC ENVIRONMENT) but no credentials in any shape tried; a redaction test needs a secret the driver actually prints.
