@@ -178,17 +178,32 @@ function isLegacyDisplacement(filter, update) {
   return Boolean(filter && filter.github_id === null && isDisplacement(update));
 }
 
+/**
+ * Changes the legacy dev's stored avatar_url right before the next legacy displacement write.
+ * @param {object} world @param {string} alias @param {unknown} avatarUrl
+ */
+function changeAvatarBeforeDisplacement(world, alias, avatarUrl) {
+  const legacyId = rawIdOf(world, alias);
+  Dev.findOneAndUpdate = (filter, update, ...rest) => {
+    if (!isLegacyDisplacement(filter, update)) return realFindOneAndUpdate.call(Dev, filter, update, ...rest);
+    Dev.findOneAndUpdate = realFindOneAndUpdate;
+    world.raceRan = true;
+    return Dev.collection.updateOne({ _id: legacyId }, { $set: { avatar_url: avatarUrl } })
+      .then(() => realFindOneAndUpdate.call(Dev, filter, update, ...rest));
+  };
+}
+
 Given(
   'the avatar of the legacy developer {string} changes to avatar id {int} just before its displacement',
   function (alias, id) {
-    const legacyId = rawIdOf(this, alias);
-    Dev.findOneAndUpdate = function raced(filter, update, ...rest) {
-      if (!isLegacyDisplacement(filter, update)) return realFindOneAndUpdate.call(Dev, filter, update, ...rest);
-      Dev.findOneAndUpdate = realFindOneAndUpdate;
-      this.raceRan = true;
-      return Dev.collection.updateOne({ _id: legacyId }, { $set: { avatar_url: avatarOf(id) } })
-        .then(() => realFindOneAndUpdate.call(Dev, filter, update, ...rest));
-    }.bind(this); // `this` inside is the world
+    changeAvatarBeforeDisplacement(this, alias, avatarOf(id));
+  }
+);
+
+Given(
+  /^the avatar of the legacy developer "([^"]+)" changes to a hand-edited (BSON Binary|embedded _id) avatar_url naming avatar id (\d+) just before its displacement$/,
+  function (alias, kind, id) {
+    changeAvatarBeforeDisplacement(this, alias, HAND_EDITED_AVATARS[kind](avatarOf(Number(id))));
   }
 );
 
@@ -206,5 +221,77 @@ Then(
     expect(entry, `the listing should include "${alias}"`).to.not.equal(undefined);
     expect(entry.avatar_id).to.equal(id);
     expect(entry.claimable_by).to.equal(id);
+  }
+);
+
+/** @param {number} githubId @param {string} login @param {Date} seenAt @returns {object} an owned dev */
+function ownedDev(githubId, login, seenAt) {
+  return {
+    github_id: githubId,
+    github_username: login,
+    github_username_seen_at: seenAt,
+    name: login,
+    techs: ['Go'],
+    location: SEED_LOCATION,
+    __v: 0,
+  };
+}
+
+// After every successful displacement, the next older holder (accounts 1001, 1002, ...) takes the
+// freed login. Stops after 30, so a run without a cap ends too (and fails on the count).
+Given(
+  'the developer {string} owned by GitHub account {int} with an older login state is replaced by another older holder after every displacement',
+  async function (login, firstId) {
+    const seenAt = new Date(Date.now() - HOUR_MS);
+    await Dev.collection.insertOne(ownedDev(firstId, login, seenAt));
+    let next = firstId + 1;
+    Dev.findOneAndUpdate = function raced(filter, update, ...rest) {
+      const write = realFindOneAndUpdate.call(Dev, filter, update, ...rest);
+      if (!isDisplacement(update) || next > firstId + 30) return write;
+      return Promise.resolve(write).then(async (displaced) => {
+        if (displaced) {
+          await Dev.collection.insertOne(ownedDev(next, login, seenAt));
+          next += 1;
+        }
+        return displaced;
+      });
+    };
+  }
+);
+
+Then('at most {int} developers should have been displaced', async function (count) {
+  const displaced = await Dev.collection.countDocuments({ github_username_stale: true });
+  expect(displaced).to.be.at.least(1);
+  expect(displaced).to.be.at.most(count);
+});
+
+// A 100-character string _id: a newline, an ESC colour code, a NUL and U+2028 in its first 20
+// characters (built from code points, never escapes in this file), then "x" padding.
+Given(
+  'the legacy developer {string} was stored before sign-in with a {int}-character string _id holding control characters and avatar id {int}',
+  async function (login, length, id) {
+    const special = [0x0a, 0x1b, 0x00, 0x2028].map((code) => String.fromCodePoint(code));
+    const head = `id${special[0]}a${special[1]}[31mred${special[2]}b${special[3]}c`;
+    const _id = head + 'x'.repeat(length - head.length);
+    expect(_id).to.have.lengthOf(length);
+    this.oddId = _id;
+    await seedLegacy(this, login, { _id, avatar_url: avatarOf(id) });
+  }
+);
+
+Then(
+  'the guard warning should name the first 64 characters of that _id with each non-printable character as {string}',
+  function (replacement) {
+    const expected = [...this.oddId].map((ch) => {
+      const code = ch.codePointAt(0);
+      return code >= 0x20 && code <= 0x7e ? ch : replacement;
+    }).join('').slice(0, 64);
+    const warnings = this.logLines.filter(({ level, text }) => level === 'warn' && text.startsWith('Legacy developer '));
+    expect(warnings, JSON.stringify(warnings)).to.have.lengthOf(1);
+    expect(warnings[0].text).to.include(`(dev ${expected}, login alice,`);
+    [...warnings[0].text].forEach((ch) => {
+      const code = ch.codePointAt(0);
+      expect(code >= 0x20 && code <= 0x7e, `character U+${code.toString(16)} in the log line`).to.equal(true);
+    });
   }
 );

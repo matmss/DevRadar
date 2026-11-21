@@ -85,11 +85,12 @@ Feature: QA review of the avatar-id claim guard (spec 05, B1)
   # --- Mutation guards: these pass on the delivery and fail on a mutant the delivery's scenarios
   # --- let through (see the QA review). -------------------------------------------------------
 
-  # Kills: the guarded displacement without "its avatar as read" in its filter.
+  # Kills: the guarded displacement without "its avatar as read" in its filter, or with a filter
+  # that also matches a non-string (which is no evidence, so the dev is mine to claim).
   @edge @regression @P2
-  Scenario: The avatar changes to mine just before the guarded displacement: the displacement misses and I claim the developer
+  Scenario Outline: The avatar changes to <change> just before the guarded displacement: the displacement misses and I claim the developer
     Given the legacy developer "alice" was stored before sign-in with avatar id 111
-    And the avatar of the legacy developer "alice" changes to avatar id 222 just before its displacement
+    And the avatar of the legacy developer "alice" changes to <change> just before its displacement
     And I am signed in as "alice" with GitHub account 222
     When I submit a registration with techs "Go", latitude "-23.5505" and longitude "-46.6333"
     Then the race should have happened
@@ -97,6 +98,11 @@ Feature: QA review of the avatar-id claim guard (spec 05, B1)
     And the response should be the developer "alice"
     And the developer "alice" should belong to GitHub account 222
     And the developer "alice" should show login "alice"
+
+    Examples:
+      | change                                                  |
+      | avatar id 222                                           |
+      | a hand-edited BSON Binary avatar_url naming avatar id 111 |
 
   # Kills: a guard warning (or the avatar filter) on the AC-10 path, where the account owns a dev.
   @regression @P2
@@ -136,3 +142,28 @@ Feature: QA review of the avatar-id claim guard (spec 05, B1)
     Given the legacy developer "anna" was stored before sign-in with avatar id 111
     When the operator lists the legacy developers as JSON
     Then the listing entry for "anna" should have claimable_by equal to its avatar_id, the number 111
+
+  # Kills: printable() without its character filter or its 64-character cap (live since the log
+  # names the stored _id, QA-CG-3 fix).
+  @edge @regression @P2
+  Scenario: A hand-edited string _id with control characters is logged as at most 64 printable ASCII characters
+    Given the legacy developer "alice" was stored before sign-in with a 100-character string _id holding control characters and avatar id 111
+    And I am signed in as "alice" with GitHub account 222
+    And the server's log lines are being recorded
+    When I update my profile with techs "Go", latitude "-23.5505" and longitude "-46.6333"
+    Then the response status should be 404
+    And the guard warning should name the first 64 characters of that _id with each non-printable character as "?"
+
+  # Kills: no cap on the DISPLACED rounds (QA-CG-2 fix), or a cap above nine. Reachable with API
+  # access only, by accounts whose sessions read "alice" before mine (they held it on GitHub
+  # earlier, tokens live 7 days): each deletes its profile and registers again while my
+  # registration has just freed the login. Every round of mine then displaces one of them.
+  @edge @regression @P2
+  Scenario: An endless stream of older holders: the registration gives up after at most nine displacements with a JSON 500
+    Given the developer "alice" owned by GitHub account 1000 with an older login state is replaced by another older holder after every displacement
+    And I am signed in as "alice" with GitHub account 222
+    When I submit a registration with techs "Go", latitude "-23.5505" and longitude "-46.6333"
+    Then the response status should be 500
+    And the response should be a JSON error with code "internal_error"
+    And at most 9 developers should have been displaced
+    And exactly 0 developers should belong to GitHub account 222
