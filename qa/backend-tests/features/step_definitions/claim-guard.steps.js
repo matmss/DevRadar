@@ -290,6 +290,44 @@ Given('another account displaces the legacy developer {string} just before my cl
   });
 });
 
+// QA-CG-2, owned holder: another account (a session read an hour ago, older than mine) displaces
+// the holder's dev just before my displacement of it, then registers the freed login just before
+// my registration: my POST loses two races and then displaces that account's dev.
+Given(
+  'GitHub account {int} as {string}, with an older read, displaces the developer of GitHub account {int} and then registers, interleaved with my registration',
+  function (otherId, login, holderId) {
+    const readAt = new Date(Date.now() - DAY_MS / 24);
+    let step = 0;
+    Dev.findOneAndUpdate = (filter, update, ...rest) => {
+      const real = () => realFindOneAndUpdate.call(Dev, filter, update, ...rest);
+      if (step === 0 && update && update.$set && update.$set.github_username_stale === true) {
+        step = 1;
+        return Dev.collection.findOne({ github_id: holderId })
+          .then((holder) => Dev.collection.updateOne(
+            { _id: holder._id },
+            { $set: { github_username: `_stale_${holder._id}`, github_username_stale: true, github_username_seen_at: readAt } }
+          ))
+          .then(real);
+      }
+      if (step === 1 && filter && update && update.$setOnInsert) {
+        step = 2;
+        this.raceRan = true;
+        Dev.findOneAndUpdate = realFindOneAndUpdate;
+        return Dev.collection.insertOne({
+          github_id: otherId,
+          github_username: login,
+          github_username_seen_at: readAt,
+          name: login,
+          techs: ['Go'],
+          location: SEED_LOCATION,
+          __v: 0,
+        }).then(real);
+      }
+      return real();
+    };
+  }
+);
+
 // --- Outcomes -----------------------------------------------------------------------------------
 
 Then(

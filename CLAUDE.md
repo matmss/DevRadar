@@ -34,7 +34,7 @@ No lint/build/test scripts are defined in `dev/backend/package.json` — its tes
 under `qa/backend-tests/`. `scripts/legacy-devs.js` (spec `dev/docs/04-legacy-merge-spec.md`) is
 dry-run unless `--apply`, reads `MONGO_URI` from the environment or `.env` only, sends no socket
 events (clients see changes on their next search/reconnect); `list` shows `claimable_by` (the
-avatar's id, `login` or `none`); runbook in `dev/docs/00-architecture.md`.
+avatar's id, `login`, or `none` when the login is no GitHub login); runbook in `dev/docs/00-architecture.md`.
 
 ### Web (`dev/web/`)
 ```bash
@@ -105,10 +105,11 @@ Routes (`dev/backend/src/routes.js`):
 
 - **Profile ownership** (`services/devOwnership.js`): a dev with my `github_id` is mine; a legacy
   dev (no or null `github_id`) whose login matches mine case-insensitively is claimed on my first
-  POST/PUT/DELETE (atomic conditional update matching login and `avatar_url` as read, keeps
-  `_id`/data; `GET /devs/me` reads without claiming); a dev owned by another id is never readable
-  or writable by me. **Claim guard** (spec `dev/docs/05-claim-guard-spec.md`): a legacy dev whose
-  avatar parses (`utils/githubAvatarId.js`) to another account's id is treated like that
+  POST/PUT/DELETE (atomic conditional update matching the login and the stored avatar: the same
+  string, or with no evidence also any non-string; keeps `_id`/data; `GET /devs/me` reads without
+  claiming); a dev owned by another id is never readable or writable by me. **Claim guard** (spec
+  `dev/docs/05-claim-guard-spec.md`): a legacy dev whose **stored** avatar is a string that parses
+  (`utils/githubAvatarId.js`) to another account's id is treated like that
   account's dev: 404 on GET/PUT/DELETE, displaced by my sign-in or POST (which registers me
   fresh); one warn log line with ids and login only. Logins stay **unique**
   (case-insensitive index) and the **newest GitHub read wins**: a sign-in, POST or PUT whose

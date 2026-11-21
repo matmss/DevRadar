@@ -30,6 +30,7 @@ const mongoose = require('mongoose');
 const Dev = require('../../src/models/Dev');
 const { githubIdFromSubject, isValidGithubId } = require('../../src/utils/githubId');
 const { AVATAR_ID_STATUS, legacyAvatarEvidence } = require('../../src/utils/githubAvatarId');
+const { isValidGithubUsername } = require('../../src/utils/githubUsername');
 
 const { EJSON } = mongoose.mongo.BSON;
 
@@ -59,8 +60,9 @@ Commands:
       Every legacy developer (no github_id): login, status (legacy | displaced), name,
       coordinates, techs, avatar_url, the GitHub id derived from the avatar (or "unparseable" /
       "none"), who can claim it by login (claimable_by: that GitHub id, "login" for whoever
-      holds the login, "none" when displaced), whether that account already has a profile, and
-      duplicate avatar ids. Then counts by status, avatar id result and avatar host. Read-only.
+      holds the login, "none" when its login is no GitHub login, e.g. displaced), whether that
+      account already has a profile, and duplicate avatar ids. Then counts by status, avatar id
+      result and avatar host. Read-only.
   assign <dev _id> --github-id <id> [--force] [--apply]
   assign <dev _id> --from-avatar [--apply]
       Gives a legacy or displaced developer to a GitHub account that has no profile: sets its
@@ -298,9 +300,11 @@ async function buildListing() {
       : null;
     const status = doc.github_username_stale === true ? 'displaced' : 'legacy';
     // Who the API lets claim it by login (spec 05): the avatar's account only (the claim guard),
-    // anyone holding the login without evidence, nobody once displaced.
+    // anyone holding the login without evidence. The claim matches the login, not the stale flag,
+    // so nobody can claim it only when its login is no GitHub login (a displaced dev's
+    // `_stale_<_id>`, QA-CG-4).
     let claimableBy = parsed ? evidence.id : 'login';
-    if (status === 'displaced') claimableBy = 'none';
+    if (!isValidGithubUsername(doc.github_username)) claimableBy = 'none';
 
     summary.by_status[status] += 1;
     summary.by_avatar_id[evidence.status] += 1;

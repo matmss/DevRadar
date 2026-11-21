@@ -215,16 +215,21 @@ existed) is found (Q5, US-8).
      hand-edited data: both are treated the same) whose login matches the user's
      case-insensitively (created before sign-in existed). Its owner **claims** it on their first
      write (`POST`, `PUT` or `DELETE`): one conditional update sets `github_id` only if the dev
-     still has none, still shows that login and still has the avatar the guard read
-     (`{ _id, github_id: null, github_username, avatar_url }`), so of two accounts claiming at once
-     exactly one wins; the loser looks again and finds rule 3 (no 500). **Claim guard**
-     (`05-claim-guard-spec.md`, B1): a legacy dev whose `avatar_url` parses
-     (`utils/githubAvatarId.js`) to **another** account's id was registered by that account, so
-     it is **guarded** against the user and falls under rule 3 instead. An avatar with the
+     still has none, still shows that login and its stored avatar still gives the guard's answer
+     (`{ _id, github_id: null, github_username }` plus: the same stored string when the avatar had
+     evidence; the same stored string, or any non-string value or none, when it had none), so of
+     two accounts claiming at once exactly one wins; the loser looks again and finds rule 3 (no
+     500). **Claim guard** (`05-claim-guard-spec.md`, B1): a legacy dev whose **stored**
+     `avatar_url` is a string that parses (`utils/githubAvatarId.js`) to **another** account's id
+     was registered by that account, so it is **guarded** against the user and falls under rule 3
+     instead. The guard reads the stored document (`findDevByLogin` reads it with the driver and
+     hydrates it): Mongoose would cast a hand-edited non-string (a BSON Binary, `{ _id: <url> }`)
+     to a URL string, and a non-string is never evidence, as for the operator CLI (QA-CG-1). A
+     guarded displacement requires the same stored avatar string. An avatar with the
      user's id, no parseable id or none keeps this rule (for those Q5 stays an accepted risk).
      Hand-edited or seed data with a GitHub-style avatar is guarded too. Each refused claim and
-     each guarded displacement logs one warning: the dev's `_id`, the login, the user's id and
-     the avatar's id (never the URL, a token, a name or a body; `GET /devs/me` logs nothing). The claim keeps the record: same `_id`, techs, location, name, bio and avatar (a `PUT`
+     each guarded displacement logs one warning: the dev's stored `_id` (printable ASCII, at
+     most 64 characters), the login, the user's id and the avatar's id (never the URL, a token, a name or a body; `GET /devs/me` logs nothing). The claim keeps the record: same `_id`, techs, location, name, bio and avatar (a `PUT`
      then changes what it always changes); it takes the login as GitHub spells it now and records
      when that was read (`github_username_seen_at`, so no older session can set it back,
      QA-AUTH6-2). **`GET /devs/me` does not claim:** it returns the legacy dev as it is and
@@ -285,8 +290,10 @@ existed) is found (Q5, US-8).
       `avatar_url` (`utils/githubAvatarId.js`: the pre-auth backend stored GitHub's
       `/users/<login>` avatar, `https://avatars.githubusercontent.com/u/<id>`, so the id is the
       account that held the login at registration; a hint, not proof, and only for devs without a
-      `github_id`), who can claim it by login (`claimable_by`: that id, the claim guard; `login`
-      without an id; `none` once displaced), whether that account already has a profile,
+      `github_id`), who can claim it by login, exactly as the API decides (`claimable_by`: that
+      id, the claim guard; `login` without an id; `none` when its login is no GitHub login, e.g.
+      `_stale_<_id>`: the claim matches the login, not the stale flag, QA-CG-4), whether that
+      account already has a profile,
       duplicate ids, and counts. Read-only.
     - `assign <_id> --github-id <id> [--force] [--apply]` or `assign <_id> --from-avatar [--apply]`
       (`--force` only goes with `--github-id`): the owner has no profile. Sets `github_id` only; `_id` and data are kept, and the owner's next sign-in
@@ -726,6 +733,13 @@ and the mobile map moves or removes the marker.
   owner signs in, or until the login's new holder signs in or registers, which displaces it (then
   it shows its name with no GitHub link until its owner signs in). Nobody depends on someone else
   signing in to register: their own sign-in or registration frees their login.
+- **A guarded legacy dev with a newer login state logs on every registration.** `POST /devs`
+  has no rate limit, so with such a dev (hand-edited data only: a legacy dev has no
+  `github_username_seen_at` unless someone wrote one) each `POST` by the login's holder answers
+  409 and logs one "claim refused" warning, without bound.
+- **Retries are bounded.** A write that takes a login starts over at most three times for a lost
+  race (`MAX_ATTEMPTS`); a round that displaced the holder starts over without using one up
+  (QA-CG-2), and all rounds are capped at nine (`MAX_ROUNDS`), after which it answers 500.
 - **Login ordering trusts the server clock.** Reads are compared by the backend's `Date.now()`
   at the callback. A clock that steps back between two sign-ins of different accounts could make
   the later read look older; a step back within one sign-in is clamped (QA-AUTH6-5).

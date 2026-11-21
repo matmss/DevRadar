@@ -329,6 +329,21 @@ Feature: A stranger holding a renamed owner's old login cannot claim the legacy 
     And the developer "alice" should still be legacy
     And the developer "alice" should be displaced
 
+  # QA-CG-2 for an owned holder (QA's legacy variant is in claim-guard-review.feature): a
+  # successful displacement does not use up one of the registration's attempts.
+  @edge @regression @P2
+  Scenario: Another account takes the login from an owned holder between my displacement and my registration: I still register (QA-CG-2)
+    Given a developer "alice" owned by GitHub account 444 with avatar id 444 and an older login state
+    And GitHub account 333 as "alice", with an older read, displaces the developer of GitHub account 444 and then registers, interleaved with my registration
+    And I am signed in as "alice" with GitHub account 222
+    When I submit a registration with techs "Go", latitude "-23.5505" and longitude "-46.6333"
+    Then the race should have happened
+    And the response status should be 200
+    And exactly 1 developer should belong to GitHub account 222
+    And the developer showing github_username "alice" should belong to GitHub account 222
+    And the developer of GitHub account 333 should be displaced
+    And the developer of GitHub account 444 should be displaced
+
   @edge @regression @P1
   Scenario: A double-clicked registration displaces the guarded developer once and registers once (AC-13)
     Given the legacy developer "alice" was stored before sign-in with avatar id 111
