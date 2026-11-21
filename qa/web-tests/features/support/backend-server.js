@@ -133,14 +133,15 @@ function testRoutes() {
   // One specific developer, as a legacy (pre-sign-in) record would look: e.g. the signed-in
   // user's own profile for the update/delete scenarios (auth slice 5), in any letter case. With
   // `github_id`, a developer owned by that GitHub account instead (auth slice 6); `name` defaults
-  // to the login.
+  // to the login. `avatar_url` defaults to one that carries no GitHub id (u/0), so the claim
+  // guard (dev/docs/05-claim-guard-spec.md) only applies when a scenario passes a real one.
   router.post('/seed-dev', async (req, res) => {
-    const { github_username, github_id, name, techs, latitude, longitude } = req.body;
+    const { github_username, github_id, name, avatar_url, techs, latitude, longitude } = req.body;
     await Dev.create({
       ...(github_id === undefined ? {} : { github_id }),
       github_username,
       name: name || github_username,
-      avatar_url: 'https://avatars.githubusercontent.com/u/0?v=4',
+      avatar_url: avatar_url || 'https://avatars.githubusercontent.com/u/0?v=4',
       bio: 'Seeded for an @integration scenario',
       techs: String(techs).split(',').map((tech) => tech.trim()),
       location: { type: 'Point', coordinates: [Number(longitude), Number(latitude)] },
