@@ -695,6 +695,23 @@ Feature: Search and view developers on the map
   Scenario: Returning to the app re-checks only while a permission message is shown
     # Not when the map is shown or location is unavailable (services off), not after leaving the
     # screen, never as a prompt, and never two checks at once.
+
+  # QA-LS-1 (qa/mobile-tests/unit/locationSettings.test.js and Main.test.js)
+  @edge
+  Scenario: While the position is read the screen is busy, not blank and not "bloqueada"
+    Given the "bloqueada" message is shown
+    When I allow location in the device settings and return to the app
+    Then I see "Obtendo sua localização…" with a spinner and no buttons until the map is shown
+
+  @edge
+  Scenario: A position that never comes ends as "unavailable" after 15 seconds
+    Given location is allowed but no position arrives
+    When 15 seconds pass
+    Then I see "Não foi possível obter sua localização. Verifique se ela está ativada e tente novamente"
+    And "Tentar novamente" reads the position again
+    # A position that arrives after the 15 s changes nothing.
+
+  Scenario: Screen readers hear each new location message once
 ```
 
 ## Cross-cutting / Integration Scenarios — covers FR-4, NFR-3

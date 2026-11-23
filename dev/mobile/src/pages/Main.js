@@ -1,5 +1,16 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, Linking, StyleSheet, Image, View, Text, TextInput, TouchableOpacity } from 'react-native';
+import {
+  AccessibilityInfo,
+  ActivityIndicator,
+  AppState,
+  Linking,
+  StyleSheet,
+  Image,
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+} from 'react-native';
 import MapView, { Marker, Callout } from 'react-native-maps';
 import {
   requestForegroundPermissionsAsync,
@@ -21,20 +32,47 @@ import { githubLoginOf } from '../services/githubLogin';
 import { getToken } from '../services/session';
 import { MESSAGES, requestFailureMessage } from '../services/authErrors';
 
-// Why there is no map yet. DENIED: the system can still ask ("Tentar novamente" asks).
-// BLOCKED: it will not ask any more, the user has to allow it in the device settings.
-// UNAVAILABLE: no position (services off, no fix, the permission request itself failed).
-const LOCATION_ERROR = {
+// Why there is no map yet. LOCATING: asking for the permission or reading the position (a busy
+// state, no buttons). DENIED: the system can still ask ("Tentar novamente" asks). BLOCKED: it will
+// not ask any more, the user has to allow it in the device settings. UNAVAILABLE: no position
+// (services off, no fix in time, the permission request itself failed).
+const LOCATION_STATUS = {
+  LOCATING: 'locating',
   DENIED: 'denied',
   BLOCKED: 'blocked',
   UNAVAILABLE: 'unavailable',
 };
 
-const LOCATION_ERROR_MESSAGE = {
-  [LOCATION_ERROR.DENIED]: MESSAGES.locationDenied,
-  [LOCATION_ERROR.BLOCKED]: MESSAGES.locationBlocked,
-  [LOCATION_ERROR.UNAVAILABLE]: MESSAGES.locationUnavailable,
+const LOCATION_STATUS_MESSAGE = {
+  [LOCATION_STATUS.LOCATING]: MESSAGES.locating,
+  [LOCATION_STATUS.DENIED]: MESSAGES.locationDenied,
+  [LOCATION_STATUS.BLOCKED]: MESSAGES.locationBlocked,
+  [LOCATION_STATUS.UNAVAILABLE]: MESSAGES.locationUnavailable,
 };
+
+// getCurrentPositionAsync has no timeout of its own (expo-location 57; Android's getCurrentLocation
+// can wait for a fix forever, e.g. a cold GPS indoors): after this long the screen says the
+// location is unavailable and "Tentar novamente" works again.
+export const LOCATION_TIMEOUT_MS = 15000;
+
+/**
+ * The current position, or a rejection after `ms`. A position that arrives later is dropped.
+ * @param {number} ms
+ * @param {{ current: any }} timerRef - holds the timer, so unmounting can clear it
+ */
+function currentPositionWithin(ms, timerRef) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`No position within ${ms} ms`)), ms);
+    timerRef.current = timer;
+    const settle = (done) => (value) => {
+      clearTimeout(timer);
+      done(value);
+    };
+    Promise.resolve()
+      .then(() => getCurrentPositionAsync({ enableHighAccuracy: true }))
+      .then(settle(resolve), settle(reject));
+  });
+}
 
 // Only reachable signed in (routes.js). /search and the socket both send the session token; an
 // auth failure from either ends the session in SessionProvider, which replaces this screen with
@@ -44,28 +82,34 @@ function Main({ navigation }) {
   const [currentRegion, setCurrentRegion] = useState(null);
   const [techs, setTechs] = useState('');
   const [searchError, setSearchError] = useState(null);
-  // One of LOCATION_ERROR, or null.
-  const [locationError, setLocationError] = useState(null);
+  // One of LOCATION_STATUS while there is no map (the first check starts at once), null once the
+  // map is shown.
+  const [locationStatus, setLocationStatus] = useState(LOCATION_STATUS.LOCATING);
   // False once the screen is gone (sign-out, session ended): late async results are dropped.
   const mounted = useRef(true);
-  // True while a location check runs: a second one (a retry tap, a return to the foreground) is
-  // dropped instead of asking twice.
+  // True while a location check runs: a second one (a return to the foreground) is dropped
+  // instead of asking twice. Released when the check ends, also by the position timeout.
   const checkingLocation = useRef(false);
+  const positionTimer = useRef(null);
 
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      clearTimeout(positionTimer.current);
     };
   }, []);
 
   // Location can fail (services off, no fix, permission denied): say so instead of a blank screen
-  // or an unhandled rejection, and let the user try again. `ask: false` only reads the permission
-  // (never a system prompt) and keeps the current message on screen until the answer.
+  // or an unhandled rejection, and let the user try again. `ask: true` (first check, "Tentar
+  // novamente") shows the busy state at once and may show the system prompt. `ask: false` (back
+  // in the app) only reads the permission, never a prompt, and keeps the current message on screen
+  // until the permission reads granted. While the position is read the screen is busy, without
+  // buttons, for at most LOCATION_TIMEOUT_MS.
   const loadInitialPosition = useCallback(async ({ ask = true } = {}) => {
     if (checkingLocation.current) return;
     checkingLocation.current = true;
-    if (ask) setLocationError(null);
+    if (ask) setLocationStatus(LOCATION_STATUS.LOCATING);
     try {
       const permission = ask
         ? await requestForegroundPermissionsAsync()
@@ -74,18 +118,18 @@ function Main({ navigation }) {
       if (!permission.granted) {
         // canAskAgain false: the system shows no prompt any more (iOS after the first denial,
         // Android after "don't ask again" or the second denial), only the settings can allow it.
-        setLocationError(permission.canAskAgain === false ? LOCATION_ERROR.BLOCKED : LOCATION_ERROR.DENIED);
+        setLocationStatus(permission.canAskAgain === false ? LOCATION_STATUS.BLOCKED : LOCATION_STATUS.DENIED);
         return;
       }
 
-      const { coords } = await getCurrentPositionAsync({
-        enableHighAccuracy: true,
-      });
+      // Allowed: never "allow it" any more while the position is read.
+      setLocationStatus(LOCATION_STATUS.LOCATING);
+      const { coords } = await currentPositionWithin(LOCATION_TIMEOUT_MS, positionTimer);
 
       const { latitude, longitude } = coords;
 
       if (mounted.current) {
-        setLocationError(null);
+        setLocationStatus(null);
         setCurrentRegion({
           latitude,
           longitude,
@@ -95,7 +139,7 @@ function Main({ navigation }) {
       }
     } catch (err) {
       console.warn('Could not get the current location:', err.message);
-      if (mounted.current) setLocationError(LOCATION_ERROR.UNAVAILABLE);
+      if (mounted.current) setLocationStatus(LOCATION_STATUS.UNAVAILABLE);
     } finally {
       checkingLocation.current = false;
     }
@@ -105,10 +149,16 @@ function Main({ navigation }) {
     loadInitialPosition();
   }, [loadInitialPosition]);
 
+  // Screen readers: say each new location message. accessibilityRole="alert" alone is not
+  // announced on Android (and the busy state has no alert).
+  useEffect(() => {
+    if (locationStatus) AccessibilityInfo.announceForAccessibility(LOCATION_STATUS_MESSAGE[locationStatus]);
+  }, [locationStatus]);
+
   // While the screen says the permission is missing, coming back to the app (typically from the
   // settings) checks it again. Only a read, never a prompt: the system dialog itself takes the app
   // out of 'active' and back on both platforms, so asking here would ask again and again.
-  const permissionMissing = locationError === LOCATION_ERROR.DENIED || locationError === LOCATION_ERROR.BLOCKED;
+  const permissionMissing = locationStatus === LOCATION_STATUS.DENIED || locationStatus === LOCATION_STATUS.BLOCKED;
   useEffect(() => {
     if (!permissionMissing) return undefined;
     const subscription = AppState.addEventListener('change', (state) => {
@@ -179,11 +229,25 @@ function Main({ navigation }) {
   }
 
   if(!currentRegion) {
-    if (!locationError) return null;
-    const blocked = locationError === LOCATION_ERROR.BLOCKED;
+    if (!locationStatus) return null;
+    if (locationStatus === LOCATION_STATUS.LOCATING) {
+      return (
+        <View
+          testID="location-loading"
+          accessible
+          accessibilityLabel={MESSAGES.locating}
+          accessibilityState={{ busy: true }}
+          style={styles.locationError}
+        >
+          <ActivityIndicator size="large" color="#8E4DFF" />
+          <Text style={styles.locatingText}>{MESSAGES.locating}</Text>
+        </View>
+      );
+    }
+    const blocked = locationStatus === LOCATION_STATUS.BLOCKED;
     return (
       <View testID="location-error" style={styles.locationError}>
-        <Text accessibilityRole="alert" style={styles.locationErrorText}>{LOCATION_ERROR_MESSAGE[locationError]}</Text>
+        <Text accessibilityRole="alert" style={styles.locationErrorText}>{LOCATION_STATUS_MESSAGE[locationStatus]}</Text>
         {blocked ? (
           <TouchableOpacity
             testID="open-settings"
@@ -321,6 +385,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 30,
+  },
+  locatingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
   },
   locationErrorText: {
     fontSize: 16,
