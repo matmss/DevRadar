@@ -106,7 +106,9 @@ Routes (`dev/backend/src/routes.js`):
   `{ github_id, github_username, profile, login_read_at }`. Tokens without these are `token_invalid`.
 
 - **Profile ownership** (`services/devOwnership.js`): a dev with my `github_id` is mine; a legacy
-  dev (stored `github_id` missing, null or no valid id, e.g. a hand-edited `""`) whose login matches mine case-insensitively is claimed on my first
+  dev (stored `github_id` names no account: missing, null, `""`, `"not-a-number"`, 0, ...; one rule,
+  `utils/githubId.js` `storedGithubId`, shared with the CLI: any numeric BSON type or the canonical
+  string `"222"` IS account 222's, and its next write stores the plain number) whose login matches mine case-insensitively is claimed on my first
   POST/PUT/DELETE (atomic conditional update matching the login and the stored avatar: the same
   string, or with no evidence also any non-string; keeps `_id`/data; `GET /devs/me` reads without
   claiming); a dev owned by another id is never readable or writable by me. **Claim guard** (spec
@@ -116,12 +118,12 @@ Routes (`dev/backend/src/routes.js`):
   fresh); one warn log line with ids and login only. Logins stay **unique**
   (case-insensitive index) and the **newest GitHub read wins**: a sign-in, POST or PUT whose
   `login_read_at` is strictly newer than the holder's `github_username_seen_at` *displaces* the
-  holder (login → `_stale_<_id>`, `github_username_stale: true`, nothing else changed, never
+  holder (login → `_stale_<_id>` via `staleLoginFor`, hex-encoded for non-ObjectId `_id`s, `github_username_stale: true`, nothing else changed, never
   deleted, `dev-updated` pushed) and takes the login; an older session gets 409
   `github_username_conflict` (POST) or keeps its stored login (PUT). Clients show "Perfil do GitHub
   indisponível" and no link for stale logins. Displaced legacy devs can't be claimed: an operator assigns or merges them with
   `dev/backend/scripts/legacy-devs.js` (separate process, single-document conditional writes, no
-  queue keys; the avatar id parser `utils/githubAvatarId.js` is only evidence for devs without a `github_id`, for the CLI and the claim guard).
+  queue keys; the avatar id parser `utils/githubAvatarId.js` is only evidence for legacy devs, for the CLI and the claim guard).
   These multi-account writes take both accounts' queue keys in sorted order
   (`keyedQueue.runAll` via `inLoginOrder`); don't add another lock order.
   Retries are bounded (`resolveOwnDev`'s claim loop and `inLoginOrder`: `MAX_ATTEMPTS`/`MAX_ROUNDS`);
@@ -132,6 +134,7 @@ Routes (`dev/backend/src/routes.js`):
   **Conditional writes match stored values** (QA-PB-1): `_id`/`github_id`/login as the driver read
   them (`storedDoc`, `asStored`, `writeStored`), never Mongoose's cast of hand-edited data; a miss on
   an unchanged document the filter can't match is a plain 500 naming the stored `_id`, never 503.
+  `GET /devs` and `GET /search` also answer the stored `_id` (lean + `models/utils/hydrateStored.js`).
 
 - `POST /devs` (`DevController.store`, behind `requireAuth`) — registers **the signed-in user**:
   the username and `name`/`avatar_url`/`bio` come from the token (`req.user`, captured from

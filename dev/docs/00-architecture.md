@@ -108,14 +108,38 @@ Three layers, one shared backend:
   of them (it reads a hand-edited non-ObjectId `_id` as undefined, a `github_id` that is no number
   as undefined or null, and casts or refuses such filter values). A filter on such a value goes to
   the driver (`writeStored`, no casting or validation of the update; normal data still goes through
-  the model). A dev whose stored `github_id` is missing, null or not a valid GitHub id (`""`,
-  `"not-a-number"`, `"222"`, `0`) is legacy: claimable by login (the claim guard first), and the
-  claim stores the account's numeric id. A conditional write that misses on a document that has not
+  the model). A conditional write that misses on a document that has not
   changed since it was read and that its filter does not match (e.g. a hand-edited
   `github_username_seen_at` that is no date, which no "older than" filter matches) is not
   contention: a plain error, 500 `internal_error`, logged with the stored `_id` (`printable`),
-  never 503. Known limits: `GET /devs` and `GET /search` still omit a non-ObjectId `_id` (Mongoose
-  drops it on read); the operator CLI still treats only a missing or null `github_id` as legacy.
+  never 503. Accepted difference (QA-PB-7): a driver-path update does not give `location` the
+  PointSchema subdocument `_id` the model adds; nothing reads it. Every other field is stored with
+  the same BSON types.
+- **Ownership by stored `github_id`, one rule** (QA-PB-3, QA-PB-5; `utils/githubId.js`
+  `storedGithubId`/`isLegacyDoc`, used by `services/devOwnership.js`, `utils/githubAvatarId.js`
+  and the operator CLI): a stored value that carries a valid GitHub id is that account's
+  ownership: a number of any BSON numeric type (Int32, Double, Long, Decimal128, by value) or the
+  canonical decimal string (`"222"`). The account finds it (`findDevByAccount` matches the number,
+  then the string), nobody else can claim it by login (an older holder is displaced as usual), and
+  the owner's next write that changes the dev stores the plain number when the stored form is not
+  a number as the driver reads it (a string, a Decimal128; Int32, Double and safe Longs read as
+  numbers and stay as they are). Values with no id at all are **legacy**: missing, null, `""`,
+  non-canonical or non-numeric strings (`"0222"`, `"not-a-number"`), 0, negatives, non-integers,
+  booleans, documents; claimable by login after the claim guard, and the claim stores the
+  account's number. `list` shows exactly these devs; `assign`/`merge` match their `github_id` as
+  read. `merge` still only accepts a target profile stored as the plain number (what the
+  `github_id_unique` index covers, QA-LM-3). A string-stored profile is not in that partial index,
+  so an account could hold two devs (one numeric, one `"222"`) only through hand edits; the numeric
+  one wins.
+- **Displaced placeholders** (`utils/githubUsername.js` `staleLoginFor`, shared with the CLI's
+  `restore`): `_stale_<24 hex>` for an ObjectId `_id` (unchanged); any other stored `_id` is
+  tagged and hex-encoded, `_stale_s_<hex of the string's UTF-8>` or `_stale_x_<hex of its
+  canonical Extended JSON>`, so `_id`s that differ only in letter case stay distinct under the
+  login index's case-insensitive collation (QA-PB-6) and no control character reaches a login.
+  The login has no length limit in the schema; a long hand-edited `_id` gives a long placeholder.
+- **Lists carry the stored `_id`** (QA-PB-4): `GET /devs` and `GET /search` read lean and hydrate
+  with the stored `_id` (`models/utils/hydrateStored.js`), like `/devs/me` and the live events;
+  normal devs are answered exactly as before, and `$near` keeps its order.
 - **`TRUST_PROXY`** (`config/proxy.js`): off by default, so `req.ip` is the socket address and
   a client cannot choose its rate-limit key by sending `X-Forwarded-For`. Behind a reverse
   proxy, set the hop count (`1`), a comma-separated list of trusted addresses/subnets

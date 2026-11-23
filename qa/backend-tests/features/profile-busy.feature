@@ -123,7 +123,41 @@ Feature: A profile write that gives up after concurrent changes answers 503 prof
       | github_id      |
       | "not-a-number" |
       | ""             |
-      | "222"          |
+      | "0"            |
+
+  # QA-PB-3: a stored github_id that carries a valid id in another form (any numeric BSON type, the
+  # canonical string) is that account's: it reads and writes it, and its write stores the plain
+  # number (Int32, as the model writes it) when the stored form is not a number as read.
+  @edge @regression @P2
+  Scenario Outline: My developer stored with github_id 222 as a BSON <type> is mine, and my update stores <stored as>
+    Given the developer "alice" was stored with the github_id 222 as a BSON <type> and no avatar
+    And I am signed in as "alice" with GitHub account 222
+    When I request my profile
+    Then the response status should be 200
+    And the response should be the developer "alice"
+    When I update my profile with techs "Go", latitude "-23.5505" and longitude "-46.6333"
+    Then the response status should be 200
+    And the response should be the developer "alice"
+    And the github_id of the developer "alice" should be stored as the BSON <stored as> 222
+    When I delete my profile
+    Then the response status should be 204
+
+    Examples:
+      | type       | stored as |
+      | String     | Int32     |
+      | Decimal128 | Int32     |
+      | Int32      | Int32     |
+      | Long       | Long      |
+      | Double     | Double    |
+
+  @edge @regression @P2
+  Scenario: GET /search finds a developer with a hand-edited string _id under that _id (QA-PB-4)
+    Given the legacy developer "alice" was stored before sign-in with the string _id "legacy-alice-1" and no avatar
+    And I am signed in as "carol" with GitHub account 444
+    When I search at latitude "-23.5505", longitude "-46.6333" for techs "Node.js"
+    Then the response status should be 200
+    And the response should contain exactly 1 developer
+    And the search response should list the developer with the _id "legacy-alice-1"
 
   @edge @regression @P2
   Scenario Outline: A holder whose stored login state is no date can never be displaced: <method> <path> is a 500 naming it, not "busy, try again"

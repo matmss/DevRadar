@@ -121,6 +121,27 @@ Then('the log should have one error saying the developer {string} cannot be {wor
   expect(this.logLines.filter(({ text }) => text.includes('profile_busy')), all).to.have.lengthOf(0);
 });
 
+// QA-PB-3: read without promoting BSON values, so the stored type is visible.
+Then(
+  'the github_id of the developer {string} should be stored as the BSON {word} {int}',
+  async function (alias, type, githubId) {
+    const mongoose = require('../../../../dev/backend/node_modules/mongoose');
+    const stored = await Dev.collection.findOne(
+      { _id: new mongoose.mongo.ObjectId(this.devIds[alias]) },
+      { promoteValues: false }
+    );
+    expect(stored, `developer "${alias}" should exist`).to.not.equal(null);
+    expect(stored.github_id._bsontype, JSON.stringify(stored.github_id)).to.equal(type);
+    expect(Number(stored.github_id.toString())).to.equal(githubId);
+    expect(await Dev.collection.countDocuments({ github_id: githubId })).to.equal(1);
+  }
+);
+
+Then('the search response should list the developer with the _id {string}', function (_id) {
+  const ids = this.response.body.devs.map((dev) => dev._id);
+  expect(ids, JSON.stringify(this.response.body)).to.include(_id);
+});
+
 Then('the log should say the login could not be refreshed at sign-in', function () {
   expect(this.logLines, 'a previous step should record the log').to.be.an('array');
   const lines = this.logLines.filter(({ text }) => text.startsWith('Could not refresh the developer login at sign-in:'));

@@ -95,14 +95,33 @@ describe('parseGithubAvatarId: other forms', () => {
 describe('legacyAvatarEvidence (AC-6b)', () => {
   const avatar = 'https://avatars.githubusercontent.com/u/810438?v=4';
 
+  // Legacy is the shared ownership rule (utils/githubId.js storedGithubId, QA-PB-3/QA-PB-5): a
+  // stored github_id that names no account. Since QA-PB-3, 0, -1 and other values that are no id
+  // are legacy (before, anything but missing or null was "not legacy").
   it.each([
     ['no github_id field', {}],
     ['a null github_id', { github_id: null }],
+    ['github_id 0', { github_id: 0 }],
+    ['github_id -1', { github_id: -1 }],
+    ['github_id 1.5', { github_id: 1.5 }],
+    ['github_id ""', { github_id: '' }],
+    ['github_id "not-a-number"', { github_id: 'not-a-number' }],
+    ['github_id "0222" (not canonical)', { github_id: '0222' }],
+    ['github_id false', { github_id: false }],
   ])('parses the avatar of a legacy dev (%s)', (_case, fields) => {
     expect(legacyAvatarEvidence({ ...fields, avatar_url: avatar })).toMatchObject({ status: 'parsed', id: 810438 });
   });
 
-  it.each([810438, 1, 0, -1])('never uses the avatar of a dev with github_id %p', (githubId) => {
+  const { Decimal128, Long, Int32, Double } = require('../../../dev/backend/node_modules/mongoose').mongo.BSON;
+  it.each([
+    ['810438', 810438],
+    ['1', 1],
+    ['the canonical string "222"', '222'],
+    ['a Decimal128 222', Decimal128.fromString('222')],
+    ['a Long 222', Long.fromNumber(222)],
+    ['an Int32 222', new Int32(222)],
+    ['a Double 222', new Double(222)],
+  ])('never uses the avatar of a dev whose github_id names an account: %s', (_case, githubId) => {
     expect(legacyAvatarEvidence({ github_id: githubId, avatar_url: avatar }))
       .toEqual({ status: AVATAR_ID_STATUS.NOT_LEGACY, id: null, host: null });
   });

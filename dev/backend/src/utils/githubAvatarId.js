@@ -16,7 +16,7 @@
 // (Gravatar, /in/<app id> for GitHub Apps, other hosts, look-alike hosts, seed data) carries no
 // evidence. Used by the operator CLI (scripts/legacy-devs.js) and by the server-side claim guard
 // (services/devOwnership.js, dev/docs/05-claim-guard-spec.md, B1).
-const { isValidGithubId } = require('./githubId');
+const { isValidGithubId, isLegacyDoc } = require('./githubId');
 
 // GitHub's avatar hosts: the current one and the older sharded ones (avatars0..avatars3).
 const AVATAR_HOST_PATTERN = '(avatars[0-3]?\\.githubusercontent\\.com)';
@@ -80,14 +80,14 @@ function parseGithubAvatarId(avatarUrl) {
 }
 
 /**
- * The avatar evidence for a dev: parsed only for a legacy dev (github_id missing or null, the
- * same test as services/devOwnership.js). A dev that has a github_id is `not_legacy`, whatever
- * its avatar_url says (AC-6b).
- * @param {{ github_id?: unknown, avatar_url?: unknown }} dev
+ * The avatar evidence for a dev: parsed only for a legacy dev (its stored github_id names no
+ * account, utils/githubId.js isLegacyDoc, the one rule the API and the CLI share). A dev whose
+ * github_id names an account is `not_legacy`, whatever its avatar_url says (AC-6b).
+ * @param {{ github_id?: unknown, avatar_url?: unknown }} dev - as stored
  * @returns {AvatarId | { status: 'not_legacy', id: null, host: null }}
  */
 function legacyAvatarEvidence(dev) {
-  if (dev.github_id !== undefined && dev.github_id !== null) {
+  if (!isLegacyDoc(dev)) {
     return { status: AVATAR_ID_STATUS.NOT_LEGACY, id: null, host: null };
   }
   return parseGithubAvatarId(dev.avatar_url);

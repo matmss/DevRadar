@@ -5,9 +5,11 @@
 // A profile belongs to a GitHub account by its numeric id (`github_id`), never by its login:
 // logins can be renamed and later registered by someone else. For the signed-in user
 // `{ github_id, github_username }` (req.user):
-//   1. own       a dev has github_id === the user's id. It is theirs.
-//   2. legacy    otherwise, a dev WITHOUT a valid github_id (field missing, null, or a hand-edited
-//                value that is no GitHub id, such as "" or "not-a-number") whose login matches
+//   1. own       a dev whose stored github_id names the user's id (utils/githubId.js
+//                storedGithubId: a number of any BSON numeric type, or the canonical string
+//                "222"). It is theirs; their next write stores the plain number.
+//   2. legacy    otherwise, a dev whose stored github_id names NO account (field missing, null,
+//                or a hand-edited "", "not-a-number", 0, ...; the CLI uses the same rule) whose login matches
 //                the user's case-insensitively: created before sign-in existed. The owner of that
 //                login claims it on their first write: one conditional update sets github_id only
 //                if it is still absent, the login unchanged and the stored avatar_url still gives
@@ -64,9 +66,10 @@
 // stored _id), never "busy, try again".
 const mongoose = require('mongoose');
 const Dev = require('../models/Dev');
-const { GITHUB_USERNAME_COLLATION } = require('../utils/githubUsername');
+const { hydrateStored } = require('../models/utils/hydrateStored');
+const { GITHUB_USERNAME_COLLATION, STALE_LOGIN_PREFIX, staleLoginFor } = require('../utils/githubUsername');
 const { AVATAR_ID_STATUS, legacyAvatarEvidence } = require('../utils/githubAvatarId');
-const { isValidGithubId } = require('../utils/githubId');
+const { storedGithubId, storedGithubIdForms } = require('../utils/githubId');
 const { createKeyedQueue } = require('../utils/keyedQueue');
 const { ProfileBusyError } = require('../utils/profileBusyError');
 const { EVENT, announceStored } = require('./devEvents');
@@ -78,10 +81,6 @@ const DUPLICATE_KEY = 11000;
 // write, each time) gives up instead of looping. Each extra attempt needs another concurrent
 // write to the same records, so three is plenty.
 const MAX_ATTEMPTS = 3;
-
-// Displaced logins: "_" can never appear in a GitHub login, so the placeholder can never be a
-// real account's, never matches a login lookup, and is unique (one per _id).
-const STALE_LOGIN_PREFIX = '_stale_';
 
 const OWNERSHIP = Object.freeze({
   OWN: 'own',
@@ -109,20 +108,32 @@ function isDuplicateKey(err) {
 
 /**
  * @param {object} dev
- * @returns {boolean} true for a legacy dev (no account): its STORED github_id is missing, null or
- *   not a valid GitHub id (a hand-edited "" or "not-a-number", which Mongoose reads as null or
- *   undefined)
+ * @returns {number | null} the GitHub account the dev belongs to, by its STORED github_id
+ *   (utils/githubId.js storedGithubId, the rule the operator CLI shares: any numeric BSON type or
+ *   the canonical string "222" is ownership), or null for a legacy dev
  */
-function isLegacy(dev) {
-  return !isValidGithubId(storedDoc(dev).github_id);
+function ownerId(dev) {
+  return storedGithubId(storedDoc(dev).github_id);
 }
 
 /**
  * @param {object} dev
- * @returns {number | null} the GitHub account the dev belongs to, null for a legacy dev
+ * @returns {boolean} true for a legacy dev: its stored github_id names no account (missing, null,
+ *   "", "not-a-number", 0, a negative or fractional number, ...)
  */
-function ownerId(dev) {
-  return isLegacy(dev) ? null : storedDoc(dev).github_id;
+function isLegacy(dev) {
+  return ownerId(dev) === null;
+}
+
+/**
+ * @param {object} dev - a dev the account owns
+ * @param {AccountIdentity} user
+ * @returns {object} `$set` fields that store the owner's github_id as the plain number when the
+ *   stored form is another one ("222", a Decimal128, an unpromoted Long); empty otherwise, so a
+ *   normal write is unchanged
+ */
+function normalizedOwner(dev, user) {
+  return typeof storedDoc(dev).github_id === 'number' ? {} : { github_id: user.github_id };
 }
 
 /**
@@ -134,11 +145,12 @@ function storedId(dev) {
 }
 
 /**
- * @param {{ _id: unknown }} dev
- * @returns {string} the placeholder login of a displaced dev
+ * @param {object} dev
+ * @returns {string} the placeholder login of a displaced dev (utils/githubUsername.js, shared with
+ *   the operator CLI's restore)
  */
 function staleLogin(dev) {
-  return `${STALE_LOGIN_PREFIX}${String(storedId(dev))}`;
+  return staleLoginFor(storedId(dev));
 }
 
 // --- Filters on stored values (QA-PB-1) ----------------------------------------------------------
@@ -185,15 +197,13 @@ function forTheModel(filter) {
 }
 
 /**
- * Hydrates a stored document and keeps it (storedDoc). Mongoose drops an _id it cannot cast
- * (a hand-edited string reads as undefined, a 24-hex string as an ObjectId); the dev gets the
- * stored _id back, so responses, events and placeholders name the real document.
+ * Hydrates a stored document with its stored _id (models/utils/hydrateStored.js) and keeps it
+ * (storedDoc), so responses, events, placeholders and filters name the real document.
  * @param {object} stored
  * @returns {object} the dev
  */
 function remember(stored) {
-  const dev = Dev.hydrate(stored);
-  dev._doc._id = stored._id;
+  const dev = hydrateStored(Dev, stored);
   storedDocs.set(dev, stored);
   return dev;
 }
@@ -298,8 +308,25 @@ function loginFields(user) {
  * @returns {Promise<object | null>} the dev that belongs to the account by id (rule 1), read
  *   from the stored document (remembered)
  */
-function findDevByAccount(user) {
-  return findStored({ github_id: user.github_id });
+async function findDevByAccount(user) {
+  // Every stored form ownerId reads as this account (storedGithubId): any numeric BSON type,
+  // matched by value, first; then the canonical string. The plain number is the normal form.
+  for (const form of storedGithubIdForms(user.github_id)) {
+    const dev = await findStored({ github_id: form });
+    if (dev) return dev;
+  }
+  return null;
+}
+
+/**
+ * @param {object} dev - a dev the account owns
+ * @param {AccountIdentity} user
+ * @returns {object} a filter: this dev (stored _id), still the account's in the github_id form it
+ *   was read with (a plain number for every normal dev, so the filter is as before)
+ */
+function ownedBy(dev, user) {
+  const github_id = ownerId(dev) === user.github_id ? asStored(dev, ['github_id']).github_id : user.github_id;
+  return { ...asStored(dev, ['_id']), github_id };
 }
 
 // The stored document each dev read here was hydrated from (remember). Mongoose casts fields
@@ -336,7 +363,7 @@ function storedDoc(dev) {
  * @returns {ReturnType<typeof legacyAvatarEvidence>}
  */
 function storedAvatarEvidence(dev) {
-  return legacyAvatarEvidence({ github_id: ownerId(dev), avatar_url: storedDoc(dev).avatar_url });
+  return legacyAvatarEvidence({ github_id: storedDoc(dev).github_id, avatar_url: storedDoc(dev).avatar_url });
 }
 
 /**
@@ -477,16 +504,16 @@ function sameLoginText(a, b) {
  */
 async function refreshLogin(dev, user) {
   const readAt = loginReadAt(user);
-  const mine = { ...asStored(dev, ['_id']), github_id: user.github_id };
+  const mine = ownedBy(dev, user);
   const filter = { ...mine, ...olderThan(readAt) };
 
   if (dev.github_username === user.github_username) {
     // Same login: only record the newer confirmation (also when none was recorded, QA-AUTH6-2).
-    const confirmed = await writeStored(filter, { $set: { github_username_seen_at: readAt } });
+    const confirmed = await writeStored(filter, { $set: { github_username_seen_at: readAt, ...normalizedOwner(dev, user) } });
     return { dev: confirmed || await findStored(mine), renamed: false };
   }
 
-  const set = { ...loginFields(user) };
+  const set = { ...loginFields(user), ...normalizedOwner(dev, user) };
   if (!dev.name || sameLoginText(dev.name, dev.github_username)) {
     set.name = (user.profile && user.profile.name) || user.github_username;
   }
@@ -514,8 +541,8 @@ async function updateOwnDev(dev, user, fields) {
   const { dev: current } = await refreshLogin(dev, user);
   if (!current) return null;
   return writeStored(
-    { ...asStored(current, ['_id']), github_id: user.github_id },
-    { $set: fields },
+    ownedBy(current, user),
+    { $set: { ...fields, ...normalizedOwner(current, user) } },
     { runValidators: true }
   );
 }
@@ -527,7 +554,7 @@ async function updateOwnDev(dev, user, fields) {
  * @returns {Promise<object | null>} the deleted dev, or null if it was gone already
  */
 function deleteOwnDev(dev, user) {
-  return deleteStored({ ...asStored(dev, ['_id']), github_id: user.github_id });
+  return deleteStored(ownedBy(dev, user));
 }
 
 const writesByAccount = createKeyedQueue();

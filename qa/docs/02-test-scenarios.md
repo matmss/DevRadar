@@ -377,7 +377,10 @@ Feature: A profile write that gives up after concurrent changes answers 503 prof
   Scenario: Sign-in still succeeds when taking my login loses every race against its holder
   # QA-PB-1 fix: conditional writes match stored values
   Scenario: A legacy developer with a hand-edited string _id is claimed, then read, updated and deleted
-  Scenario Outline: A legacy developer with the hand-edited github_id <github_id> is claimed and gets my id, then deleted  ("not-a-number", "", "222")
+  Scenario Outline: A legacy developer with the hand-edited github_id <github_id> is claimed and gets my id, then deleted  ("not-a-number", "", "0")
+  # QA-PB-3 to QA-PB-6 fixes
+  Scenario Outline: My developer stored with github_id 222 as a BSON <type> is mine, and my update stores <stored as>  (String, Decimal128 -> Int32; Int32, Long, Double kept)
+  Scenario: GET /search finds a developer with a hand-edited string _id under that _id (QA-PB-4)
   Scenario Outline: A holder whose stored login state is no date can never be displaced: <method> <path> is a 500 naming it, not "busy, try again"  (POST /devs, PUT /devs/me)
   Scenario: Sign-in still succeeds when the login's holder can never be displaced
 

@@ -92,6 +92,10 @@ Then(
     // The _id itself differs on purpose (ObjectId vs hand-edited string).
     delete a._id;
     delete b._id;
+    // QA-PB-7, accepted (coordinator decision): the driver path does not give location the
+    // PointSchema subdocument ObjectId the model path adds; nothing reads it.
+    if (a.location) delete a.location._id;
+    if (b.location) delete b.location._id;
     expect(b, `account ${second} (driver path) vs account ${first} (model path)`).to.deep.equal(a);
   }
 );

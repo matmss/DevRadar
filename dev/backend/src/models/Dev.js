@@ -6,8 +6,9 @@ const DevSchema = new mongoose.Schema({
     name: String,
     // GitHub's numeric account id: who the profile belongs to (auth spec Q10). Set on every dev
     // created since sign-in exists, and on a legacy dev (created before, without one) when its
-    // owner first changes it (services/devOwnership.js). Missing (or null, in hand-edited data)
-    // means legacy.
+    // owner first changes it (services/devOwnership.js). A stored value that names no account
+    // (missing, or in hand-edited data null, "", 0, ...) means legacy; any numeric BSON type or the
+    // canonical string of a valid id is that account's (utils/githubId.js storedGithubId).
     github_id: Number,
     // The GitHub login, display data, unique across all devs. Refreshed from the owner's GitHub
     // reads (sign-ins, and writes with a newer session). A dev whose login GitHub has given to
