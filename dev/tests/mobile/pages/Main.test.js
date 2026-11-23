@@ -559,18 +559,84 @@ describe('Main', () => {
       expect(view.byTestId('map-view')).toHaveLength(1);
     });
 
-    it('a position that arrives after the timeout changes nothing', async () => {
+    // QA-LS-2: the timer also runs while the app is not in front (e.g. Android's own "turn on
+    // location" dialog, opened by the read), so a late position is still used if nothing else
+    // happened since the timeout.
+    it('a position that arrives after the timeout, with nothing else started since, shows the map (and announces nothing for it)', async () => {
+      useFakeTimers();
+      const late = deferred();
+      Location.getCurrentPositionAsync.mockReturnValueOnce(late.promise);
+      const view = await mount();
+      await view.advance(LOCATION_TIMEOUT_MS + 5000);
+      expect(view.hasText(MESSAGES.locationUnavailable)).toBe(true);
+      const announcedBefore = AccessibilityInfo.announceForAccessibility.mock.calls.length;
+
+      await act(async () => { late.resolve(POSITION); });
+      await view.flush();
+      expect(view.byTestId('location-error')).toHaveLength(0);
+      expect(view.byTestId('map-view')).toHaveLength(1);
+      expect(view.byTestId('map-view')[0].props.initialRegion).toEqual({
+        latitude: -23.5505, longitude: -46.6333, latitudeDelta: 0.04, longitudeDelta: 0.04,
+      });
+      expect(AccessibilityInfo.announceForAccessibility).toHaveBeenCalledTimes(announcedBefore);
+    });
+
+    it('a timed-out position that arrives while a retry is still reading is ignored: the retry decides', async () => {
+      useFakeTimers();
+      const first = deferred();
+      const second = deferred();
+      Location.getCurrentPositionAsync.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+      const view = await mount();
+      await view.advance(LOCATION_TIMEOUT_MS);
+      await view.press('location-retry-button');
+      await view.flush();
+      expect(Location.getCurrentPositionAsync).toHaveBeenCalledTimes(2);
+
+      await act(async () => { first.resolve(POSITION); });
+      await view.flush();
+      expect(view.byTestId('map-view')).toHaveLength(0);
+      expect(view.byTestId('location-loading')).toHaveLength(1);
+
+      await act(async () => { second.resolve({ coords: { latitude: -22.9068, longitude: -43.1729 } }); });
+      await view.flush();
+      expect(view.byTestId('map-view')[0].props.initialRegion).toMatchObject({ latitude: -22.9068, longitude: -43.1729 });
+    });
+
+    it('a timed-out position that arrives after a retry ended blocked is ignored', async () => {
       useFakeTimers();
       const late = deferred();
       Location.getCurrentPositionAsync.mockReturnValueOnce(late.promise);
       const view = await mount();
       await view.advance(LOCATION_TIMEOUT_MS);
-      expect(view.hasText(MESSAGES.locationUnavailable)).toBe(true);
+      Location.requestForegroundPermissionsAsync.mockResolvedValueOnce(BLOCKED);
+      await view.press('location-retry-button');
+      await view.flush();
+      expect(view.hasText(MESSAGES.locationBlocked)).toBe(true);
 
       await act(async () => { late.resolve(POSITION); });
       await view.flush();
-      expect(view.hasText(MESSAGES.locationUnavailable)).toBe(true);
+      expect(view.hasText(MESSAGES.locationBlocked)).toBe(true);
       expect(view.byTestId('map-view')).toHaveLength(0);
+    });
+
+    // React 19 ignores state updates of an unmounted component silently, so this only shows that a
+    // late position after unmount errs and logs nothing; the mounted guard itself is defensive.
+    it('a timed-out position that arrives after unmount: no error, no extra log', async () => {
+      useFakeTimers();
+      const late = deferred();
+      Location.getCurrentPositionAsync.mockReturnValueOnce(late.promise);
+      const view = await mount();
+      await view.advance(LOCATION_TIMEOUT_MS);
+      await view.unmount();
+      const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        await act(async () => { late.resolve(POSITION); });
+        await act(async () => { await settle(); });
+        expect(consoleError).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledTimes(1); // the timeout only
+      } finally {
+        consoleError.mockRestore();
+      }
     });
 
     it('a position that fails after the timeout changes nothing and is no unhandled rejection', async () => {

@@ -709,7 +709,16 @@ Feature: Search and view developers on the map
     When 15 seconds pass
     Then I see "Não foi possível obter sua localização. Verifique se ela está ativada e tente novamente"
     And "Tentar novamente" reads the position again
-    # A position that arrives after the 15 s changes nothing.
+    # QA-LS-2: the 15 s also run while the app is not in front (Android's "turn on location"
+    # dialog). A position that arrives after them still shows the map, unless "Tentar novamente"
+    # started a newer check since; a read that fails after them changes nothing.
+
+  @edge
+  Scenario: Accepting Android's "turn on location" dialog after more than 15 seconds still shows the map
+    Given location services are off and the app shows the busy state
+    When I take more than 15 seconds to accept the system's "turn on location" dialog
+    Then I may briefly see the "unavailable" message
+    And the map is shown as soon as the position arrives, without tapping "Tentar novamente"
 
   Scenario: Screen readers hear each new location message once
 ```

@@ -12,7 +12,7 @@ export const MESSAGES = {
   tooManyRequests: 'Muitas tentativas em pouco tempo, tente novamente mais tarde',
   searchFailed: 'Não foi possível buscar devs, tente novamente',
   locating: 'Obtendo sua localização…',
-  locationDenied:'Permita o acesso à localização para ver os devs perto de você',
+  locationDenied: 'Permita o acesso à localização para ver os devs perto de você',
   // Denied for good (the system will not ask again): only the device settings can allow it.
   locationBlocked: 'A localização está bloqueada para o DevRadar. Ative-a nas configurações do aparelho para ver os devs perto de você.',
   locationUnavailable: 'Não foi possível obter sua localização. Verifique se ela está ativada e tente novamente',

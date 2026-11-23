@@ -52,25 +52,32 @@ const LOCATION_STATUS_MESSAGE = {
 
 // getCurrentPositionAsync has no timeout of its own (expo-location 57; Android's getCurrentLocation
 // can wait for a fix forever, e.g. a cold GPS indoors): after this long the screen says the
-// location is unavailable and "Tentar novamente" works again.
+// location is unavailable and "Tentar novamente" works again. The timer is wall-clock time, also
+// while the app is not in front (e.g. Android's own "turn on location" dialog, shown by the read
+// itself), so a read that answers after its timeout still shows the map if nothing happened in
+// between (QA-LS-2, see loadInitialPosition).
 export const LOCATION_TIMEOUT_MS = 15000;
 
 /**
- * The current position, or a rejection after `ms`. A position that arrives later is dropped.
+ * The current position, or a rejection after `ms`. On timeout the error carries the read itself
+ * as `lateRead`, which the caller may keep listening to.
  * @param {number} ms
  * @param {{ current: any }} timerRef - holds the timer, so unmounting can clear it
  */
 function currentPositionWithin(ms, timerRef) {
+  const read = Promise.resolve().then(() => getCurrentPositionAsync({ enableHighAccuracy: true }));
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`No position within ${ms} ms`)), ms);
+    const timer = setTimeout(() => {
+      const timeout = new Error(`No position within ${ms} ms`);
+      timeout.lateRead = read;
+      reject(timeout);
+    }, ms);
     timerRef.current = timer;
     const settle = (done) => (value) => {
       clearTimeout(timer);
       done(value);
     };
-    Promise.resolve()
-      .then(() => getCurrentPositionAsync({ enableHighAccuracy: true }))
-      .then(settle(resolve), settle(reject));
+    read.then(settle(resolve), settle(reject));
   });
 }
 
@@ -91,6 +98,10 @@ function Main({ navigation }) {
   // instead of asking twice. Released when the check ends, also by the position timeout.
   const checkingLocation = useRef(false);
   const positionTimer = useRef(null);
+  // Counts the location checks that started. A timed-out read's late answer is used only while
+  // no newer check has started: the status is then still the "unavailable" its timeout set (only
+  // checks change it, and a return to the app does not check while it is "unavailable").
+  const locationCheck = useRef(0);
 
   useEffect(() => {
     mounted.current = true;
@@ -109,6 +120,18 @@ function Main({ navigation }) {
   const loadInitialPosition = useCallback(async ({ ask = true } = {}) => {
     if (checkingLocation.current) return;
     checkingLocation.current = true;
+    locationCheck.current += 1;
+    const check = locationCheck.current;
+    const showPosition = ({ coords }) => {
+      const { latitude, longitude } = coords;
+      setLocationStatus(null);
+      setCurrentRegion({
+        latitude,
+        longitude,
+        latitudeDelta: 0.04,
+        longitudeDelta: 0.04,
+      });
+    };
     if (ask) setLocationStatus(LOCATION_STATUS.LOCATING);
     try {
       const permission = ask
@@ -124,22 +147,22 @@ function Main({ navigation }) {
 
       // Allowed: never "allow it" any more while the position is read.
       setLocationStatus(LOCATION_STATUS.LOCATING);
-      const { coords } = await currentPositionWithin(LOCATION_TIMEOUT_MS, positionTimer);
-
-      const { latitude, longitude } = coords;
-
-      if (mounted.current) {
-        setLocationStatus(null);
-        setCurrentRegion({
-          latitude,
-          longitude,
-          latitudeDelta: 0.04,
-          longitudeDelta: 0.04,
-        });
-      }
+      const position = await currentPositionWithin(LOCATION_TIMEOUT_MS, positionTimer);
+      if (mounted.current) showPosition(position);
     } catch (err) {
       console.warn('Could not get the current location:', err.message);
-      if (mounted.current) setLocationStatus(LOCATION_STATUS.UNAVAILABLE);
+      if (!mounted.current) return;
+      setLocationStatus(LOCATION_STATUS.UNAVAILABLE);
+      // Timed out: the read may still answer (e.g. after the user took longer than the timeout to
+      // accept Android's "turn on location" dialog). Show that position, unless the screen is gone
+      // or a newer check ("Tentar novamente") started; a late failure stays silent.
+      if (err.lateRead) {
+        err.lateRead
+          .then((position) => {
+            if (mounted.current && locationCheck.current === check) showPosition(position);
+          }, () => {})
+          .catch((lateErr) => console.warn('Could not use the late location:', lateErr.message));
+      }
     } finally {
       checkingLocation.current = false;
     }

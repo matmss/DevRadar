@@ -209,7 +209,8 @@ Routes (`dev/backend/src/routes.js`):
   the foreground re-reads the permission with `getForegroundPermissionsAsync` (never a prompt: the
   system dialog itself toggles `AppState`), one check at a time. While locating it shows a busy
   state (`location-loading`, no buttons, never blank), and a position that doesn't come within
-  `LOCATION_TIMEOUT_MS` (15 s; expo-location has no timeout) is "unavailable" with a working retry.
+  `LOCATION_TIMEOUT_MS` (15 s; expo-location has no timeout) is "unavailable" with a working retry;
+  if that read still answers and no newer check started (a per-check counter), it shows the map.
   `dev/mobile/src/pages/Profile.js` is just a `WebView` pointed at the dev's GitHub profile URL
   (only for a valid GitHub login, `services/githubLogin.js`) —
   there's no native profile screen.
