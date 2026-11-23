@@ -66,7 +66,7 @@ const { default: api } = require('../../../dev/mobile/src/services/api');
 const { MESSAGES } = require('../../../dev/mobile/src/services/authErrors');
 const { SessionProvider, useSession } = require('../../../dev/mobile/src/SessionContext');
 const { STATUS } = require('../../../dev/mobile/src/services/sessionState');
-const { default: Main } = require('../../../dev/mobile/src/pages/Main');
+const { default: Main, LOCATION_TIMEOUT_MS } = require('../../../dev/mobile/src/pages/Main');
 
 jest.setTimeout(20000); // the first render loads react-native and the app modules
 
@@ -263,5 +263,51 @@ describe('@regression @P2 location check vs the session', () => {
     expect(fakeSocket.connect).not.toHaveBeenCalled();
     expect(session.state).toEqual({ status: STATUS.SIGNED_OUT, user: null, notice: null });
     expect(root().findAll((node) => node.props.testID === 'map-view')).toHaveLength(0);
+  });
+});
+
+// QA-LS-2 fix (6a16393): a read that answers after its 15 s timeout may still show the map, but
+// only on the screen (and so the session) that started it.
+describe('@regression @P2 late position after a timeout vs the session', () => {
+  afterEach(() => { jest.useRealTimers(); });
+
+  it('"Sair" after the timeout, then a new session: the old late position shows nothing and opens no socket', async () => {
+    jest.useFakeTimers();
+    const tick = async (ms) => { await act(async () => { await jest.advanceTimersByTimeAsync(ms); }); };
+    SecureStore.__store.set(TOKEN_KEY, 'token-1');
+    Location.requestForegroundPermissionsAsync.mockResolvedValue(GRANTED);
+    const late = deferred();
+    const fresh = deferred();
+    Location.getCurrentPositionAsync.mockReturnValueOnce(late.promise).mockReturnValueOnce(fresh.promise);
+    await act(async () => {
+      renderer = TestRenderer.create(<SessionProvider><Screens /></SessionProvider>);
+    });
+    await tick(0);
+    expect(session.state.status).toBe(STATUS.SIGNED_IN);
+    await tick(LOCATION_TIMEOUT_MS);
+    expect(hasText(MESSAGES.locationUnavailable)).toBe(true);
+
+    await act(async () => session.signOut());
+    SecureStore.__store.set(TOKEN_KEY, 'token-2');
+    await act(async () => session.retry());
+    await tick(0);
+    expect(session.state.status).toBe(STATUS.SIGNED_IN);
+    expect(root().findAll((node) => node.props.testID === 'location-loading').length).toBeGreaterThan(0);
+
+    // The first session's read answers now: the new screen is still locating, no map, no socket.
+    await act(async () => { late.resolve(POSITION); });
+    await tick(0);
+    expect(root().findAll((node) => node.props.testID === 'map-view')).toHaveLength(0);
+    expect(root().findAll((node) => node.props.testID === 'location-loading').length).toBeGreaterThan(0);
+    expect(fakeSocket.connect).not.toHaveBeenCalled();
+
+    // The new screen's own read shows its map; the search then uses the new session's token.
+    await act(async () => { fresh.resolve(POSITION); });
+    await tick(0);
+    expect(root().findAll((node) => node.props.testID === 'map-view').length).toBeGreaterThan(0);
+    await press('search-button');
+    await tick(0);
+    expect(fakeSocket.connect).toHaveBeenCalledTimes(1);
+    expect(fakeSocket.auth).toEqual({ token: 'token-2' });
   });
 });
