@@ -112,3 +112,14 @@ Added during the claim-guard review, spec 05 (2026-11-20):
 - Deterministic races: wrap `Dev.findOneAndUpdate` (restore in an After); match the write by its filter/update shape (`$set.github_username_stale` = displace, `$setOnInsert` + `github_id` = registration upsert).
 
 - MongoDB driver errors echo URI option values (readPreference, compressors, OIDC ENVIRONMENT) but no credentials in any shape tried; a redaction test needs a secret the driver actually prints.
+
+Added during the profile_busy 503 review (2026-11-22):
+
+- No `timeout` binary on this Mac; rely on the Bash tool timeout. `npm run test:web` at qa/ is test:ci: its JSON goes to stdout and qa/reports/web.json is a stale tracked file. For counts run `npm test -- --reporter=list` in qa/web-tests.
+- Web fake-answer steps already exist: `the backend answers {word} /devs/me with {int} and body {string}` (auth-slice5-review.steps.js) and `the backend answers POST /devs with ...` / `GET /auth/me` (auth-review.steps.js). bddgen fails on a duplicate definition, so grep before adding one.
+- Mongoose read casts for github_id (Number): "not-a-number" reads undefined, "" reads null, so isLegacy() says legacy while a `github_id: null` filter misses the stored value (scratchpad pb-review/probe.js). Any "retry until the conditional write hits" loop turns such hand-edited data into a permanent give-up.
+- "Does the raw-driver write store what Mongoose would?" Read both docs with `Dev.collection.findOne(filter, { promoteValues: false })` and map leaves to `_bsontype` (Int32/Double/ObjectId) to compare shapes (step in profile-busy-review.steps.js). Mongoose adds an ObjectId `_id` to the `location` PointSchema subdoc; the driver does not.
+- A driver query `{ github_id: 222 }` matches Int32, Long, Double AND Decimal128 222 (numeric comparison), but not "222". JS-side checks like `Number.isSafeInteger` call Decimal128 "not a number", so lookup-by-id and is-legacy logic can disagree on the same document.
+- Mutant one-liner: copy the old.sh/mut.sh pattern (scratchpad pb-review) and put the sed of the source inside the script; Bash refuses inline `git archive | tar` plus sed chains.
+- "Is the list answer byte-identical?" Compare `response.text` with `JSON.stringify(await Dev.find(...))`. Caveat: a stored `location` without `_id` (raw-inserted seeds) gets a fresh random ObjectId from Mongoose on EVERY read, so blank those (step in profile-busy-review.steps.js) or the check is flaky by construction.
+- Cucumber `{string}` cannot carry a value with inner double quotes (`"{"n":222}"` makes the step undefined); encode such values another way.
