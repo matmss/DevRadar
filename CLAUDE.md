@@ -87,6 +87,8 @@ raw `http.Server` (not `app.listen`) so Socket.io (`setupWebsocket(server)`) sha
 `qa/web-tests/.../backend-server.js`) call it, so middleware order can't drift between prod and
 tests. Every error, including unknown routes, is JSON `{ error, code, details }`
 (`middleware/errorHandler.js`, BUG-012); it never returns stacks and never logs request bodies.
+Unknown errors are 500 `internal_error`, whatever `status` they carry; the only typed 5xx is
+`ProfileBusyError` (`utils/profileBusyError.js`) → 503 `profile_busy` + `Retry-After: 1`, one warn line.
 Routes (`dev/backend/src/routes.js`):
 
 - **Auth** (`AuthController`, spec in `dev/docs/03-auth-spec.md`, details in
@@ -122,6 +124,10 @@ Routes (`dev/backend/src/routes.js`):
   queue keys; the avatar id parser `utils/githubAvatarId.js` is only evidence for devs without a `github_id`, for the CLI and the claim guard).
   These multi-account writes take both accounts' queue keys in sorted order
   (`keyedQueue.runAll` via `inLoginOrder`); don't add another lock order.
+  Retries are bounded (`resolveOwnDev`'s claim loop and `inLoginOrder`: `MAX_ATTEMPTS`/`MAX_ROUNDS`);
+  giving up throws `ProfileBusyError` → **503 `profile_busy`**, `Retry-After: 1` (POST /devs,
+  PUT/DELETE /devs/me; GET /devs/me never claims, so never gives up; sign-in catches it and still
+  succeeds). Web and mobile show "Perfil ocupado, tente novamente." and never sign out for it.
 
 - `POST /devs` (`DevController.store`, behind `requireAuth`) — registers **the signed-in user**:
   the username and `name`/`avatar_url`/`bio` come from the token (`req.user`, captured from

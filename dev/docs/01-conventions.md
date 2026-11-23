@@ -91,7 +91,10 @@ three layers now have one.
   `middleware/errorHandler.js` last (BUG-012), which turns anything unhandled
   into a JSON `{ error, code, details }` (500 `internal_error`, no stack).
   Handle expected failures in the controller anyway, with a specific status
-  and `code`. Never log request bodies or `err.body`.
+  and `code`. Never log request bodies or `err.body`. The one typed error the
+  handler maps to another 5xx is `ProfileBusyError` (`utils/profileBusyError.js`,
+  503 `profile_busy` + `Retry-After`), thrown when a profile write runs out of
+  retries; setting `status: 503` on any other error does not make it a 503.
 - External calls (GitHub's OAuth and `GET /user` endpoints in
   `services/githubOAuth.js`, the only GitHub calls left) should handle
   failure and rate-limit (403 + `x-ratelimit-remaining: 0`, 429) cases

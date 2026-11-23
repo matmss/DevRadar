@@ -195,6 +195,25 @@ describe('Main', () => {
       expect(fakeSocket.connect).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ['a 503 profile_busy says "busy, try again"', 503, { error: 'Profile is busy', code: 'profile_busy', details: [] }, MESSAGES.profileBusy],
+      ['a 503 with another code is a failed search', 503, { code: 'not_configured' }, MESSAGES.searchFailed],
+      ['a 500 is a failed search', 500, { code: 'internal_error' }, MESSAGES.searchFailed],
+    ])('%s, and keeps the screen', async (_label, status, data, message) => {
+      api.defaults.adapter = async (config) => {
+        const error = new Error(`Request failed with status code ${status}`);
+        error.config = config;
+        error.response = { status, statusText: String(status), headers: {}, config, data };
+        throw error;
+      };
+      const view = await mount();
+      await view.press('search-button');
+      await view.flush();
+      expect(view.calloutText('search-error')).toEqual([message]);
+      expect(view.byTestId('map-view')).toHaveLength(1);
+      expect(fakeSocket.connect).not.toHaveBeenCalled();
+    });
+
     it('does not search at all without a session', async () => {
       const view = await mount();
       getToken.mockReturnValue(null);

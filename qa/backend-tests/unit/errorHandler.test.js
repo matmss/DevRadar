@@ -1,9 +1,11 @@
 const { errorHandler, describeError } = require('../../../dev/backend/src/middleware/errorHandler');
+const { ProfileBusyError } = require('../../../dev/backend/src/utils/profileBusyError');
 
 function fakeRes({ headersSent = false } = {}) {
-  const res = { statusCode: 200, body: undefined, headersSent };
+  const res = { statusCode: 200, body: undefined, headersSent, headers: {} };
   res.status = (code) => { res.statusCode = code; return res; };
   res.json = (body) => { res.body = body; return res; };
+  res.set = (fields) => { Object.assign(res.headers, fields); return res; };
   return res;
 }
 
@@ -84,6 +86,49 @@ describe('errorHandler', () => {
 
   it.each([undefined, 302, 500, 503, 'oops'])('treats status %p as a server error', (status) => {
     expect(describeError(Object.assign(new Error('x'), { status })).status).toBe(500);
+  });
+
+  describe('profile_busy (a profile write gave up after too many concurrent changes)', () => {
+    const busy = () => new ProfileBusyError('Could not take the developer login: too many concurrent changes');
+
+    it('answers 503 profile_busy with Retry-After: 1', () => {
+      const { res } = run(busy());
+      expect(res.statusCode).toBe(503);
+      expect(res.headers).toEqual({ 'Retry-After': '1' });
+      expect(res.body).toEqual({
+        error: 'Profile is busy',
+        code: 'profile_busy',
+        details: ['Too many concurrent changes to this profile; try again'],
+      });
+    });
+
+    it('logs one warning line with the method, path and code, and no stack or message', () => {
+      run(busy(), fakeRes());
+      expect(error).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledTimes(1);
+      const line = warn.mock.calls[0].join(' ');
+      expect(line).toContain('POST /auth/token');
+      expect(line).toContain('profile_busy');
+      expect(line).not.toContain('too many concurrent changes');
+      expect(line).not.toMatch(/\n|ProfileBusyError/);
+    });
+
+    it('gives every answer its own details array', () => {
+      describeError(busy()).details.push('mutated');
+      expect(describeError(busy()).details).toEqual(['Too many concurrent changes to this profile; try again']);
+    });
+
+    it.each([
+      ['a plain Error with status 503', Object.assign(new Error('x'), { status: 503 })],
+      ['a plain Error with code profile_busy', Object.assign(new Error('x'), { status: 503, code: 'profile_busy' })],
+      ['an Error named ProfileBusyError', Object.assign(new Error('x'), { name: 'ProfileBusyError', status: 503 })],
+    ])('is never given to %s: that stays 500 internal_error, logged as an error, no Retry-After', (_label, err) => {
+      const { res } = run(err);
+      expect(res.statusCode).toBe(500);
+      expect(res.body).toEqual({ error: 'Internal server error', code: 'internal_error', details: [] });
+      expect(res.headers).toEqual({});
+      expect(error).toHaveBeenCalled();
+    });
   });
 
   it('hands over to Express if the response has started', () => {

@@ -8,7 +8,7 @@ Feature: QA review of the avatar-id claim guard (spec 05, B1)
   # QA-CG-1: Mongoose casts a hand-edited BSON Binary or an embedded document with a string _id
   #   to that string when it reads the dev, so the guard reads a guarding avatar URL, but the
   #   displacement filter (avatar exactly as read) never matches the stored non-string: POST /devs
-  #   retries three times and answers 500, every time; the sign-in displacement fails the same way
+  #   retries three times and gives up (then a 500), every time; the sign-in displacement fails the same way
   #   (logged, swallowed). The operator tool (raw documents) calls the same dev unparseable,
   #   "claimable_by login".
   # QA-CG-2: the guard displacement costs a registration one more inLoginOrder attempt than a
@@ -158,12 +158,12 @@ Feature: QA review of the avatar-id claim guard (spec 05, B1)
   # access only, by accounts whose sessions read "alice" before mine (they held it on GitHub
   # earlier, tokens live 7 days): each deletes its profile and registers again while my
   # registration has just freed the login. Every round of mine then displaces one of them.
+  # Giving up is 503 profile_busy (try again), not 500 (features/profile-busy.feature).
   @edge @regression @P2
-  Scenario: An endless stream of older holders: the registration gives up after at most nine displacements with a JSON 500
+  Scenario: An endless stream of older holders: the registration gives up after at most nine displacements with a JSON 503 profile_busy
     Given the developer "alice" owned by GitHub account 1000 with an older login state is replaced by another older holder after every displacement
     And I am signed in as "alice" with GitHub account 222
     When I submit a registration with techs "Go", latitude "-23.5505" and longitude "-46.6333"
-    Then the response status should be 500
-    And the response should be a JSON error with code "internal_error"
+    Then the response should be 503 profile_busy, retry after 1 second
     And at most 9 developers should have been displaced
     And exactly 0 developers should belong to GitHub account 222

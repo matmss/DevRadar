@@ -13,6 +13,7 @@ export const MESSAGES = {
   searchFailed: 'Não foi possível buscar devs, tente novamente',
   locationDenied: 'Permita o acesso à localização para ver os devs perto de você',
   locationUnavailable: 'Não foi possível obter sua localização. Verifique se ela está ativada e tente novamente',
+  profileBusy: 'Perfil ocupado, tente novamente.',
 };
 
 // Codes the backend uses for a rejected session token, on HTTP 401 bodies (middleware/auth.js)
@@ -72,6 +73,28 @@ export function signInFailureMessage(result) {
   if (result.reason === 'github_rate_limited') return MESSAGES.githubRateLimited;
   if (result.reason === 'github_unavailable') return MESSAGES.githubUnavailable;
   return MESSAGES.signInFailed;
+}
+
+/**
+ * The backend gave up on a profile write after too many concurrent changes (503 profile_busy):
+ * not an auth failure (the session stays), and a retry can succeed. The app makes no profile
+ * writes today; any request that gets this answer shows "try again" (requestFailureMessage).
+ * @param {unknown} error - an axios error
+ * @returns {boolean}
+ */
+export function isProfileBusy(error) {
+  const response = error && error.response;
+  return Boolean(response && response.status === 503 && response.data && response.data.code === 'profile_busy');
+}
+
+/**
+ * The message for a failed request that did not end the session.
+ * @param {unknown} error - an axios error
+ * @param {string} fallback - what this request shows for any other failure
+ * @returns {string}
+ */
+export function requestFailureMessage(error, fallback) {
+  return isProfileBusy(error) ? MESSAGES.profileBusy : fallback;
 }
 
 /**

@@ -361,6 +361,22 @@ Feature: A legacy profile registered by another GitHub account is not mine (web,
   Scenario: Signed in as a login whose legacy profile has another account's avatar: empty form, a fresh profile, both listed (AC-18)
 ```
 
+## Feature: A profile write that gives up after concurrent changes is 503 profile_busy (Backend + Web + Mobile) — covers FR-1.3, FR-1.8, FR-1.9, FR-5, FR-6
+
+Automated in `qa/backend-tests/features/profile-busy.feature` (all `@regression @P2`), the updated
+"endless stream of older holders" scenario in `claim-guard-review.feature`,
+`qa/backend-tests/unit/errorHandler.test.js`, `dev/web/src/services/{requestErrors,api}.test.js`
+and `dev/tests/mobile/{services/authErrors,pages/Main}.test.js`. Exhaustion is forced by making
+every conditional claim or displacement write miss.
+
+```gherkin
+Feature: A profile write that gives up after concurrent changes answers 503 profile_busy
+  Scenario Outline: A legacy claim that loses every race answers 503 profile_busy: <method> <path>  (POST /devs, PUT /devs/me, DELETE /devs/me)
+  Scenario: Reading my profile never gives up, even when every claim would miss
+  Scenario Outline: Taking my login loses every race against its holder: <method> <path> answers 503 profile_busy  (POST /devs, PUT /devs/me)
+  Scenario: Sign-in still succeeds when taking my login loses every race against its holder
+```
+
 ## Feature: Reads and live updates require sign-in (Backend) — covers FR-2.1, FR-3.1, FR-4.1, US-5, Q6
 
 ```gherkin

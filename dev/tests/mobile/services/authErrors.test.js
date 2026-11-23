@@ -6,6 +6,8 @@ const {
   socketAuthFailure,
   signInFailureMessage,
   unavailableNotice,
+  isProfileBusy,
+  requestFailureMessage,
 } = require('../../../mobile/src/services/authErrors');
 const { STATUS, initialSessionState, sessionReducer } = require('../../../mobile/src/services/sessionState');
 
@@ -67,6 +69,25 @@ describe('messages', () => {
     expect(signInFailureMessage({ error: 'sign_in_failed', reason: 'github_unavailable' })).toBe(MESSAGES.githubUnavailable);
     expect(signInFailureMessage({ error: 'sign_in_failed', reason: '<script>' })).toBe(MESSAGES.signInFailed);
     expect(signInFailureMessage({ error: 'sign_in_failed' })).toBe(MESSAGES.signInFailed);
+  });
+
+  it('says "busy, try again" for a 503 profile_busy, and never treats it as an auth failure', () => {
+    const busy = { response: { status: 503, data: { error: 'Profile is busy', code: 'profile_busy', details: [] } } };
+    expect(MESSAGES.profileBusy).toBe('Perfil ocupado, tente novamente.');
+    expect(isProfileBusy(busy)).toBe(true);
+    expect(requestFailureMessage(busy, MESSAGES.searchFailed)).toBe(MESSAGES.profileBusy);
+    expect(httpAuthFailure(busy)).toBeNull();
+  });
+
+  it.each([
+    ['a 503 with another code', { response: { status: 503, data: { code: 'not_configured' } } }],
+    ['a 500 with code profile_busy', { response: { status: 500, data: { code: 'profile_busy' } } }],
+    ['a 503 without a body', { response: { status: 503 } }],
+    ['a network error', new Error('Network Error')],
+    ['nothing', undefined],
+  ])('keeps the request\'s own message for %s', (_label, error) => {
+    expect(isProfileBusy(error)).toBe(false);
+    expect(requestFailureMessage(error, MESSAGES.searchFailed)).toBe(MESSAGES.searchFailed);
   });
 
   it('explains an unchecked session without calling it expired', () => {

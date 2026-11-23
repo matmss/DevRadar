@@ -51,4 +51,11 @@ describe('api', () => {
     await expect(api.get('/devs')).rejects.toBeDefined();
     expect(handler).not.toHaveBeenCalled();
   });
+
+  it('never ends the session for a 503 profile_busy', async () => {
+    saveToken('token-1');
+    answerWith(503, { error: 'Profile is busy', code: 'profile_busy', details: [] });
+    await expect(api.put('/devs/me', {})).rejects.toBeDefined();
+    expect(handler).not.toHaveBeenCalled();
+  });
 });

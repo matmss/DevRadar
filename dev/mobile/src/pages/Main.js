@@ -15,7 +15,7 @@ import {
 import { upsertDev, removeDev } from '../services/devList';
 import { githubLoginOf } from '../services/githubLogin';
 import { getToken } from '../services/session';
-import { MESSAGES } from '../services/authErrors';
+import { MESSAGES, requestFailureMessage } from '../services/authErrors';
 
 // Only reachable signed in (routes.js). /search and the socket both send the session token; an
 // auth failure from either ends the session in SessionProvider, which replaces this screen with
@@ -107,7 +107,7 @@ function Main({ navigation }) {
       // A 401 already ended the session (SessionProvider shows the sign-in screen).
       if (mounted.current && !(err.response && err.response.status === 401)) {
         console.warn('Search failed:', err.response ? err.response.status : err.message);
-        setSearchError(MESSAGES.searchFailed);
+        setSearchError(requestFailureMessage(err, MESSAGES.searchFailed));
       }
       return;
     }

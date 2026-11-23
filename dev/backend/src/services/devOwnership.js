@@ -48,10 +48,14 @@
 // tasks can wait for each other, so swaps cannot deadlock. Under the keys it re-checks the
 // holder and starts over (at most three times) if it changed. Legacy devs have no account key;
 // their claim and their displacement are conditional updates that exclude each other.
+// A write that runs out of attempts (resolveOwnDev's claim loop or inLoginOrder) throws
+// ProfileBusyError, which the error handler answers 503 profile_busy (Retry-After: 1): every
+// write here is one conditional update, so nothing was half-done and a retry can succeed.
 const Dev = require('../models/Dev');
 const { GITHUB_USERNAME_COLLATION } = require('../utils/githubUsername');
 const { AVATAR_ID_STATUS, legacyAvatarEvidence } = require('../utils/githubAvatarId');
 const { createKeyedQueue } = require('../utils/keyedQueue');
+const { ProfileBusyError } = require('../utils/profileBusyError');
 const { EVENT, announceStored } = require('./devEvents');
 
 // MongoDB duplicate-key error: a unique index (github_id or github_username) refused a write.
@@ -250,6 +254,8 @@ function logGuarded(what, dev, user, avatarId) {
  * @param {AccountIdentity} user
  * @param {{ claim?: boolean }} [options] - claim a legacy dev (writes; needs `login_read_at`)
  * @returns {Promise<Ownership>}
+ * @throws {ProfileBusyError} only with `claim`: the claim lost MAX_ATTEMPTS races in a row. A
+ *   read (no claim) answers in the first round, so GET /devs/me never throws it.
  */
 async function resolveOwnDev(user, { claim = false } = {}) {
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
@@ -291,7 +297,7 @@ async function resolveOwnDev(user, { claim = false } = {}) {
     // Claimed by another account, displaced, deleted, its avatar changed, or ours by now: look
     // again.
   }
-  throw new Error('Could not resolve the developer profile owner: too many concurrent changes');
+  throw new ProfileBusyError('Could not resolve the developer profile owner: too many concurrent changes');
 }
 
 /**
@@ -418,6 +424,7 @@ function sameHolder(a, b) {
  *   `holder`: the dev showing the user's login now (any owner, possibly the user's own, or
  *   legacy), or null
  * @returns {Promise<T>}
+ * @throws {ProfileBusyError} after MAX_ATTEMPTS lost races or MAX_ROUNDS rounds
  */
 async function inLoginOrder(user, task) {
   let attempts = 0;
@@ -435,7 +442,7 @@ async function inLoginOrder(user, task) {
     if (outcome === RETRY) attempts += 1;
     else if (outcome !== DISPLACED) return outcome;
   }
-  throw new Error('Could not take the developer login: too many concurrent changes');
+  throw new ProfileBusyError('Could not take the developer login: too many concurrent changes');
 }
 
 /**

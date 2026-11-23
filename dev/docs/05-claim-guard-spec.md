@@ -72,11 +72,14 @@ Other decisions:
 - **Concurrency.** The claim stays one conditional update; its filter additionally matches the
   `avatar_url` exactly as read (a missing or null avatar matches missing or null), so the decision
   and the write are atomic: if the avatar changed between read and write, the update misses and the
-  existing "look again" loop re-evaluates (attempt cap unchanged). The guard displacement uses the
+  existing "look again" loop re-evaluates (attempt cap unchanged; a write that reaches the cap
+  answers 503 `profile_busy` with `Retry-After: 1`, no longer 500 `internal_error`, see
+  `00-architecture.md` "App assembly and errors"). The guard displacement uses the
   existing `displace` filter (`_id`, `github_id: null`, login as read, older state), so it also
   loses cleanly to a concurrent claim by the real owner M. `keyedQueue.runAll` / `inLoginOrder`
   order is **unchanged**, no new lock or key (legacy devs still have none).
-- **Errors and messages:** no new code. Clients see 404 `dev_not_found` (no profile) and a normal
+- **Errors and messages:** no new code (503 `profile_busy` at the retry cap came later, for every
+  profile write, not with this item). Clients see 404 `dev_not_found` (no profile) and a normal
   200 on POST; the response never reveals that a guarded dev exists or whose avatar it has.
 - **Clients:** no web or mobile change. Web already treats only 404 `dev_not_found` as "no profile"
   (`dev/web/src/App.js`, empty form, "Salvar"). Mobile does not register or edit. Other users see
