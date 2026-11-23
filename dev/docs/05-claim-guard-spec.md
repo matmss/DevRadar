@@ -90,7 +90,8 @@ Other decisions:
   coordinates or request body. `GET /devs/me` does not log (it is hit on every page load).
 - **Operator CLI (`scripts/legacy-devs.js list`):** gains an additive, read-only field per legacy
   dev saying who can claim it by login: `claimable_by: <id>` (guarded: only account M) or
-  `claimable_by: login` (no evidence) or `claimable_by: none` (displaced). Existing `list` output
+  `claimable_by: login` (no evidence) or `claimable_by: none` (its login is no GitHub login, so
+  nobody can claim it by login: a displaced `_stale_…` dev, or a hand-edited login). Existing `list` output
   and ACs of spec 04 are unchanged; `assign`, `merge`, `restore` are not touched.
 - **Migration / US-8:** none. The guard reads existing fields only. US-8 "No data migration
   required" stays true; no document is rewritten at deploy. Displacement happens only when an
