@@ -375,6 +375,11 @@ Feature: A profile write that gives up after concurrent changes answers 503 prof
   Scenario: Reading my profile never gives up, even when every claim would miss
   Scenario Outline: Taking my login loses every race against its holder: <method> <path> answers 503 profile_busy  (POST /devs, PUT /devs/me)
   Scenario: Sign-in still succeeds when taking my login loses every race against its holder
+  # QA-PB-1 fix: conditional writes match stored values
+  Scenario: A legacy developer with a hand-edited string _id is claimed, then read, updated and deleted
+  Scenario Outline: A legacy developer with the hand-edited github_id <github_id> is claimed and gets my id, then deleted  ("not-a-number", "", "222")
+  Scenario Outline: A holder whose stored login state is no date can never be displaced: <method> <path> is a 500 naming it, not "busy, try again"  (POST /devs, PUT /devs/me)
+  Scenario: Sign-in still succeeds when the login's holder can never be displaced
 
 # QA review: qa/backend-tests/features/profile-busy-review.feature
 Feature: QA review of 503 profile_busy (retry exhaustion)

@@ -94,13 +94,28 @@ Three layers, one shared backend:
   races / `MAX_ROUNDS` rounds) throws a `ProfileBusyError`. The handler answers it **503**
   `{ error: "Profile is busy", code: "profile_busy", details: ["Too many concurrent changes to
   this profile; try again"] }` with **`Retry-After: 1`** and logs one warn line
-  (`Gave up on <method> <path>: profile_busy (503)`, no stack, no message). Nothing was
-  half-written (each write is one conditional update) and a retry can succeed, so a 500 would
-  wrongly say the server is broken. Only this error type is mapped: an error that merely carries
+  (`Gave up on <method> <path>: profile_busy (503)`, no stack, no message). The caller's own
+  profile is unchanged (each write is one conditional update); displacements of older holders
+  done in earlier rounds stay, and were pushed as `dev-updated`. A retry can succeed, so a 500
+  would wrongly say the server is broken. Only this error type is mapped: an error that merely carries
   a 5xx `status` (or `code: 'profile_busy'`) stays 500 `internal_error`. Reachable from
   `POST /devs`, `PUT /devs/me` and `DELETE /devs/me`; `GET /devs/me` never claims, so it answers
   in the first round. Sign-in catches it like any other login-refresh failure (logged, the sign-in
   succeeds). Web and mobile show "Perfil ocupado, tente novamente." and keep the session.
+- **Stored values in ownership writes** (QA-PB-1): every conditional write in
+  `services/devOwnership.js` (claim, displacement, login refresh, update, delete) matches the dev
+  by its **stored** `_id`, `github_id` and login, read with the driver, not by what Mongoose made
+  of them (it reads a hand-edited non-ObjectId `_id` as undefined, a `github_id` that is no number
+  as undefined or null, and casts or refuses such filter values). A filter on such a value goes to
+  the driver (`writeStored`, no casting or validation of the update; normal data still goes through
+  the model). A dev whose stored `github_id` is missing, null or not a valid GitHub id (`""`,
+  `"not-a-number"`, `"222"`, `0`) is legacy: claimable by login (the claim guard first), and the
+  claim stores the account's numeric id. A conditional write that misses on a document that has not
+  changed since it was read and that its filter does not match (e.g. a hand-edited
+  `github_username_seen_at` that is no date, which no "older than" filter matches) is not
+  contention: a plain error, 500 `internal_error`, logged with the stored `_id` (`printable`),
+  never 503. Known limits: `GET /devs` and `GET /search` still omit a non-ObjectId `_id` (Mongoose
+  drops it on read); the operator CLI still treats only a missing or null `github_id` as legacy.
 - **`TRUST_PROXY`** (`config/proxy.js`): off by default, so `req.ip` is the socket address and
   a client cannot choose its rate-limit key by sending `X-Forwarded-For`. Behind a reverse
   proxy, set the hop count (`1`), a comma-separated list of trusted addresses/subnets

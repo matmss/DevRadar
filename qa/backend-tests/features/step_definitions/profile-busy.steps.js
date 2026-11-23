@@ -65,6 +65,62 @@ Then('the log should have one profile_busy warning for {string} and no error', f
   expect(this.logLines.filter(({ level }) => level === 'error'), all).to.have.lengthOf(0);
 });
 
+// --- Hand-edited stored values (QA-PB-1) -----------------------------------------------------
+
+const SEED_LOCATION = { type: 'Point', coordinates: [-46.6333, -23.5505] };
+
+// An owned dev whose login state is no date (hand-edited): olderThan can never match it, so it
+// can never be displaced, however often a write retries.
+Given(
+  'a developer {string} owned by GitHub account {int} with the hand-edited github_username_seen_at {string}',
+  async function (login, githubId, seenAt) {
+    const { insertedId } = await Dev.collection.insertOne({
+      github_id: githubId,
+      github_username: login,
+      github_username_seen_at: seenAt,
+      name: login,
+      techs: ['Go'],
+      location: SEED_LOCATION,
+      __v: 0,
+    });
+    this.devIds = { ...(this.devIds || {}), [login]: String(insertedId) };
+  }
+);
+
+Then('the response should have the _id {string}', function (_id) {
+  expect(this.response.body, JSON.stringify(this.response.body)).to.have.property('_id', _id);
+});
+
+Then(
+  'the developer stored with _id {string} should belong to GitHub account {int} with techs {string}',
+  async function (_id, githubId, techs) {
+    const stored = await Dev.collection.findOne({ _id });
+    expect(stored, `a developer should be stored with _id "${_id}"`).to.not.equal(null);
+    expect(stored.github_id).to.equal(githubId);
+    expect(stored.techs.join(',')).to.equal(techs);
+    expect(await Dev.collection.countDocuments({ github_id: githubId })).to.equal(1);
+  }
+);
+
+Then('no developer should be stored with _id {string}', async function (_id) {
+  expect(await Dev.collection.countDocuments({ _id })).to.equal(0);
+});
+
+Then('the {string} event for {string} should have the _id {string}', function (event, alias, _id) {
+  const events = this.receivedEvents[alias].filter((e) => e.event === event);
+  expect(events, `client "${alias}" should have received "${event}"`).to.have.lengthOf(1);
+  expect(events[0].payload._id).to.equal(_id);
+});
+
+Then('the log should have one error saying the developer {string} cannot be {word}', function (alias, what) {
+  expect(this.logLines, 'a previous step should record the log').to.be.an('array');
+  const all = JSON.stringify(this.logLines);
+  const errors = this.logLines.filter(({ level }) => level === 'error');
+  expect(errors, all).to.have.lengthOf(1);
+  expect(errors[0].text).to.include(`Developer ${this.devIds[alias]} cannot be ${what}:`);
+  expect(this.logLines.filter(({ text }) => text.includes('profile_busy')), all).to.have.lengthOf(0);
+});
+
 Then('the log should say the login could not be refreshed at sign-in', function () {
   expect(this.logLines, 'a previous step should record the log').to.be.an('array');
   const lines = this.logLines.filter(({ text }) => text.startsWith('Could not refresh the developer login at sign-in:'));

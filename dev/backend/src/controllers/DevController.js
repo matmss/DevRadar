@@ -11,6 +11,7 @@ const {
   loginFields,
   refreshLogin,
   updateOwnDev,
+  deleteOwnDev,
   inAccountOrder,
   inLoginOrder,
   displaceStaleHolder,
@@ -230,7 +231,7 @@ module.exports = {
         const { dev: own } = await resolveOwnDev(user, { claim: true });
         if (!own) return null;
 
-        const deleted = await Dev.findOneAndDelete({ _id: own._id, github_id: user.github_id });
+        const deleted = await deleteOwnDev(own, user);
 
         // Subscribers that could show the dev (its last position and techs) remove the marker.
         // Only the ids and the login: nothing else about a deleted profile is sent.

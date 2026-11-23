@@ -1,9 +1,11 @@
 // The one server-side failure a client should simply retry: a profile write (services/devOwnership.js)
 // gave up after losing too many races against concurrent changes to the same records (its retry
-// cap, MAX_ATTEMPTS / MAX_ROUNDS). Nothing is broken and nothing was half-written (every write is
-// one conditional update), so middleware/errorHandler.js answers 503 profile_busy with a
-// Retry-After header instead of 500 internal_error. Only this error type is mapped: an arbitrary
-// error carrying a 5xx `status` stays a 500.
+// cap, MAX_ATTEMPTS / MAX_ROUNDS). Nothing is broken and the caller's own profile is unchanged
+// (each write is one conditional update); displacements of older holders done in earlier rounds
+// stay, and were pushed. A retry can succeed, so middleware/errorHandler.js answers 503
+// profile_busy with a Retry-After header instead of 500 internal_error. Only this error type is
+// mapped: an arbitrary error carrying a 5xx `status` stays a 500. A write that can never match
+// (hand-edited data, devOwnership.js missesForGood) is a plain error, never this one.
 
 const PROFILE_BUSY = Object.freeze({
   status: 503,

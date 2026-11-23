@@ -8,7 +8,7 @@ Feature: QA review of the avatar-id claim guard (spec 05, B1)
   # QA-CG-1: Mongoose casts a hand-edited BSON Binary or an embedded document with a string _id
   #   to that string when it reads the dev, so the guard reads a guarding avatar URL, but the
   #   displacement filter (avatar exactly as read) never matches the stored non-string: POST /devs
-  #   retries three times and gives up (then a 500), every time; the sign-in displacement fails the same way
+  #   retries three times and gives up (503 profile_busy; a 500 when found), every time; the sign-in displacement fails the same way
   #   (logged, swallowed). The operator tool (raw documents) calls the same dev unparseable,
   #   "claimable_by login".
   # QA-CG-2: the guard displacement costs a registration one more inLoginOrder attempt than a

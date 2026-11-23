@@ -106,7 +106,7 @@ Routes (`dev/backend/src/routes.js`):
   `{ github_id, github_username, profile, login_read_at }`. Tokens without these are `token_invalid`.
 
 - **Profile ownership** (`services/devOwnership.js`): a dev with my `github_id` is mine; a legacy
-  dev (no or null `github_id`) whose login matches mine case-insensitively is claimed on my first
+  dev (stored `github_id` missing, null or no valid id, e.g. a hand-edited `""`) whose login matches mine case-insensitively is claimed on my first
   POST/PUT/DELETE (atomic conditional update matching the login and the stored avatar: the same
   string, or with no evidence also any non-string; keeps `_id`/data; `GET /devs/me` reads without
   claiming); a dev owned by another id is never readable or writable by me. **Claim guard** (spec
@@ -128,6 +128,10 @@ Routes (`dev/backend/src/routes.js`):
   giving up throws `ProfileBusyError` → **503 `profile_busy`**, `Retry-After: 1` (POST /devs,
   PUT/DELETE /devs/me; GET /devs/me never claims, so never gives up; sign-in catches it and still
   succeeds). Web and mobile show "Perfil ocupado, tente novamente." and never sign out for it.
+  The caller's own profile is unchanged then; displacements done in earlier rounds stay (pushed).
+  **Conditional writes match stored values** (QA-PB-1): `_id`/`github_id`/login as the driver read
+  them (`storedDoc`, `asStored`, `writeStored`), never Mongoose's cast of hand-edited data; a miss on
+  an unchanged document the filter can't match is a plain 500 naming the stored `_id`, never 503.
 
 - `POST /devs` (`DevController.store`, behind `requireAuth`) — registers **the signed-in user**:
   the username and `name`/`avatar_url`/`bio` come from the token (`req.user`, captured from
