@@ -2,7 +2,8 @@ Feature: QA review of 503 profile_busy (retry exhaustion)
   As the QA engineer reviewing "retry exhaustion 500 -> 503"
   I want the paths the delivery's scenarios do not reach pinned down
   So that "busy, try again" is only said when a retry can succeed, and giving up leaves nothing
-  locked, half-written or announced
+  locked and my own profile unchanged and unannounced (displacements of older holders done in
+  earlier rounds stay, and were pushed)
 
   # Delivery scenarios: features/profile-busy.feature. Exhaustion is forced the same way (every
   # conditional claim or displacement write misses) with the steps of profile-busy.steps.js.
@@ -120,3 +121,97 @@ Feature: QA review of 503 profile_busy (retry exhaustion)
       | the string _id "legacy-alice-1" and avatar id 111         |
       | the hand-edited github_id "not-a-number"                  |
       | the hand-edited github_id ""                              |
+
+  # --- Re-check of the QA-PB-1 fix (f3962e1): stored values, driver writes ----------------------
+
+  # QA-PB-3: isLegacy() now reads the STORED github_id and calls anything that is not a positive
+  # safe JS number legacy. A dev whose github_id names account 222 in a BSON type the driver does
+  # not hand back as a number (a numeric string "222", a Decimal128) used to be read by Mongoose as
+  # 222, i.e. owned: nobody else could claim it. Now it is legacy, so whichever account holds its
+  # login on GitHub claims it by login, unless an avatar guards it. Expected: the stored id is
+  # ownership evidence; account 333 displaces it and registers fresh (rule 3), it never takes it
+  # over. Int32/Long/Double are controls (the driver reads them as the number 222).
+  @edge @regression @P2
+  Scenario Outline: A developer whose github_id names account 222 as a BSON <type> is never taken over by another account with its login (QA-PB-3)
+    Given the developer "alice" was stored with the github_id 222 as a BSON <type> and no avatar
+    And I am signed in as "alice" with GitHub account 333
+    When I submit a registration with techs "Go", latitude "-23.5505" and longitude "-46.6333"
+    Then the developer "alice" should not belong to GitHub account 333
+
+    Examples:
+      | type       |
+      | String     |
+      | Decimal128 |
+      | Int32      |
+      | Long       |
+      | Double     |
+
+  # missesForGood re-reads after a missed write: a document changed and changed back (ABA) is as
+  # read again, but the filter matches it, so that is a retry, never the "cannot be claimed" 500.
+  @edge @regression @P2
+  Scenario: A legacy developer changed and changed back around my claim is still claimed, not a 500
+    Given the legacy developer "alice" was stored before sign-in without an avatar
+    And the legacy developer "alice" is changed and changed back around my next claim
+    And I am signed in as "alice" with GitHub account 222
+    When I update my profile with techs "Go", latitude "-23.5505" and longitude "-46.6333"
+    Then the race should have happened
+    And the response status should be 200
+    And the developer "alice" should belong to GitHub account 222
+
+  # QA-PB-7: the driver path (writeStored for a hand-edited _id) neither casts nor validates the
+  # update. The same request must store the same document shape as the model path; today the
+  # model path gives location (PointSchema) an ObjectId _id and the driver path does not. Types of
+  # every other field (Int32 github_id, Date, Double coordinates, string techs) agree.
+  @edge @regression @P3
+  Scenario: A claim and update of a hand-edited string _id store the same fields and BSON types as for an ObjectId (QA-PB-7)
+    Given the legacy developer "alice" was stored before sign-in without an avatar
+    And the legacy developer "bob" was stored before sign-in with the string _id "legacy-bob-1" and no avatar
+    And I am signed in as "alice" with GitHub account 222
+    And I update my profile with techs "Go, Rust", latitude "-23.5505" and longitude "-46.6333"
+    And I am signed in as "bob" with GitHub account 333
+    And I update my profile with techs "Go, Rust", latitude "-23.5505" and longitude "-46.6333"
+    Then the stored developers of GitHub accounts 222 and 333 should have the same fields with the same BSON types
+    And the stored developers of GitHub accounts 222 and 333 should have the same techs and location
+    When I search at latitude "-23.5505", longitude "-46.6333" for techs "Rust"
+    Then the response should contain 2 developers
+
+  # QA-PB-4: since the fix GET /devs/me, PUT, dev-updated and dev-deleted carry a hand-edited
+  # string _id, but GET /devs (Dev.find) and GET /search still drop it (Mongoose cannot cast it),
+  # so the list a client merges events into has an entry without _id.
+  @edge @regression @P3
+  Scenario: GET /devs lists a developer with a hand-edited string _id under that _id (QA-PB-4)
+    Given the legacy developer "alice" was stored before sign-in with the string _id "legacy-alice-1" and no avatar
+    And I am signed in as "carol" with GitHub account 444
+    When I request the list of all developers
+    Then the response status should be 200
+    And the response should include the developer "alice"
+
+  # QA-PB-5: the operator CLI (scripts/lib/legacyDevs.js isLegacy, `github_id: null` query) still
+  # calls only a missing or null github_id legacy, while the API now also claims "", "not-a-number"
+  # and 0. `list` then hides a dev that the API lets its login's holder claim.
+  @edge @regression @P3
+  Scenario Outline: The operator tool lists a developer with the hand-edited github_id <github_id> that the API treats as legacy (QA-PB-5)
+    Given the legacy developer "alice" was stored before sign-in with the hand-edited github_id <github_id>
+    When the operator lists the legacy developers as JSON
+    And GitHub account 222 as "alice" updates their profile
+    Then the update should agree with the listing's claimable_by for "alice" and GitHub account 222
+
+    Examples:
+      | github_id      |
+      | "not-a-number" |
+      | ""             |
+
+  # QA-PB-6: the placeholder is `_stale_<stored _id>`, and logins are unique case-insensitively.
+  # Two hand-edited string _ids that differ only in letter case get placeholders the index calls
+  # equal, so the second displacement fails with a duplicate key: a 500 on every try.
+  @edge @regression @P3
+  Scenario: Two guarded developers whose string _ids differ only in letter case can both be displaced (QA-PB-6)
+    Given the legacy developer "alice" was stored before sign-in with the string _id "Legacy-1" and avatar id 111
+    And the legacy developer "bob" was stored before sign-in with the string _id "legacy-1" and avatar id 111
+    And I am signed in as "alice" with GitHub account 222
+    When I submit a registration with techs "Go", latitude "-23.5505" and longitude "-46.6333"
+    Then the response status should be 200
+    Given I am signed in as "bob" with GitHub account 333
+    When I submit a registration with techs "Go", latitude "-23.5505" and longitude "-46.6333"
+    Then the response status should be 200
+    And exactly 1 developer should belong to GitHub account 333

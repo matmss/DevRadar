@@ -390,6 +390,12 @@ Feature: QA review of 503 profile_busy (retry exhaustion)
   Scenario: An unexpected server error is still 500 internal_error, without Retry-After
   Scenario: A write that does not give up carries no Retry-After
   Scenario Outline: A legacy developer stored with <hand edit> is never answered "busy, try again" forever (QA-PB-1)
+  Scenario Outline: A developer whose github_id names account 222 as a BSON <type> is never taken over by another account with its login (QA-PB-3)
+  Scenario: A legacy developer changed and changed back around my claim is still claimed, not a 500
+  Scenario: A claim and update of a hand-edited string _id store the same fields and BSON types as for an ObjectId (QA-PB-7)
+  Scenario: GET /devs lists a developer with a hand-edited string _id under that _id (QA-PB-4)
+  Scenario Outline: The operator tool lists a developer with the hand-edited github_id <github_id> that the API treats as legacy (QA-PB-5)
+  Scenario: Two guarded developers whose string _ids differ only in letter case can both be displaced (QA-PB-6)
 
 # QA review: qa/web-tests/features/profile-busy-review.feature
 Feature: QA review of 503 profile_busy, web

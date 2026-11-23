@@ -7,8 +7,104 @@ const { expect } = require('chai');
 const request = require('supertest');
 const Dev = require('../../../../dev/backend/src/models/Dev');
 const { withSession } = require('../support/session');
+// The same mongoose (and BSON) as dev/backend, see hooks.js.
+const mongoose = require('../../../../dev/backend/node_modules/mongoose');
 
 const SEED_LOCATION = { type: 'Point', coordinates: [-46.6333, -23.5505] };
+const { Int32, Long, Double, Decimal128 } = mongoose.mongo.BSON;
+
+// --- Re-check of the QA-PB-1 fix -----------------------------------------------------------------
+
+/** @param {number} id @param {string} type @returns {unknown} `id` as the BSON type `type` */
+function asBsonType(id, type) {
+  if (type === 'String') return String(id);
+  if (type === 'Decimal128') return Decimal128.fromString(String(id));
+  if (type === 'Int32') return new Int32(id);
+  if (type === 'Long') return Long.fromNumber(id);
+  if (type === 'Double') return new Double(id);
+  throw new Error(`Unknown BSON type ${type}`);
+}
+
+// A dev registered by account <id> whose github_id was rewritten in another BSON type (a mongo
+// shell edit, an export/import), with no avatar evidence and no login state (older than any read).
+Given(
+  'the developer {string} was stored with the github_id {int} as a BSON {word} and no avatar',
+  async function (login, id, type) {
+    const { insertedId } = await Dev.collection.insertOne({
+      github_username: login,
+      github_id: asBsonType(id, type),
+      name: login,
+      bio: 'registered, then hand-edited',
+      techs: ['Node.js'],
+      location: SEED_LOCATION,
+      __v: 0,
+    });
+    this.devIds = { ...(this.devIds || {}), [login]: String(insertedId) };
+  }
+);
+
+// ABA race around the claim (missesForGood): another writer changes the legacy dev just before my
+// claim (so it misses) and changes it back before my re-read. The document is then as read and
+// the filter matches it again: a retry, never the "cannot be claimed" 500. Once only; the After
+// of profile-busy.steps.js restores Dev.findOneAndUpdate.
+Given('the legacy developer {string} is changed and changed back around my next claim', function (alias) {
+  const world = this;
+  Dev.findOneAndUpdate = async function abaClaim(filter, update, ...rest) {
+    const isClaim = Boolean(filter && update && update.$set && update.$set.github_id && !update.$setOnInsert);
+    if (!isClaim) return realFindOneAndUpdate.call(Dev, filter, update, ...rest);
+    Dev.findOneAndUpdate = realFindOneAndUpdate;
+    const _id = new mongoose.mongo.ObjectId(world.devIds[alias]);
+    await Dev.collection.updateOne({ _id }, { $set: { avatar_url: 'https://avatars.githubusercontent.com/u/111?v=4' } });
+    const missed = await realFindOneAndUpdate.call(Dev, filter, update, ...rest);
+    await Dev.collection.updateOne({ _id }, { $unset: { avatar_url: 1 } });
+    world.raceRan = missed === null;
+    return missed;
+  };
+});
+
+/**
+ * @param {unknown} value - read with promoteValues: false
+ * @returns {unknown} the shape of `value`: every leaf replaced by its BSON type name
+ */
+function bsonShape(value) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return value.map(bsonShape);
+  if (value instanceof Date) return 'Date';
+  if (typeof value === 'object') {
+    if (value._bsontype) return value._bsontype;
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, bsonShape(value[key])]));
+  }
+  return typeof value;
+}
+
+/** @param {number} githubId @returns {Promise<object>} the stored dev, BSON values not promoted */
+async function storedByAccount(githubId) {
+  const doc = await Dev.collection.findOne({ github_id: githubId }, { promoteValues: false });
+  expect(doc, `a developer should belong to GitHub account ${githubId}`).to.not.equal(null);
+  return doc;
+}
+
+Then(
+  'the stored developers of GitHub accounts {int} and {int} should have the same fields with the same BSON types',
+  async function (first, second) {
+    const a = bsonShape(await storedByAccount(first));
+    const b = bsonShape(await storedByAccount(second));
+    // The _id itself differs on purpose (ObjectId vs hand-edited string).
+    delete a._id;
+    delete b._id;
+    expect(b, `account ${second} (driver path) vs account ${first} (model path)`).to.deep.equal(a);
+  }
+);
+
+Then(
+  'the stored developers of GitHub accounts {int} and {int} should have the same techs and location',
+  async function (first, second) {
+    const pick = (doc) => JSON.parse(JSON.stringify({ techs: doc.techs, location: { ...doc.location, _id: undefined } }));
+    const a = await Dev.collection.findOne({ github_id: first });
+    const b = await Dev.collection.findOne({ github_id: second });
+    expect(pick(b)).to.deep.equal(pick(a));
+  }
+);
 
 // Captured at load time, before any scenario stubs it (like profile-busy.steps.js, whose After
 // restores it after every scenario anyway): the same original function.
