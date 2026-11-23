@@ -399,6 +399,13 @@ Feature: QA review of 503 profile_busy (retry exhaustion)
   Scenario: GET /devs lists a developer with a hand-edited string _id under that _id (QA-PB-4)
   Scenario Outline: The operator tool lists a developer with the hand-edited github_id <github_id> that the API treats as legacy (QA-PB-5)
   Scenario: Two guarded developers whose string _ids differ only in letter case can both be displaced (QA-PB-6)
+  Scenario Outline: A developer stored with the github_id <type> "<value>" is account 222's: mine to update, never another login holder's
+  Scenario Outline: A developer stored with the github_id <type> "<value>" is never taken over by another account holding its login
+  Scenario Outline: A developer stored with the github_id <type> "<value>" names no account: claimed by my login, unless its avatar names another account
+  Scenario Outline: The operator tool does not list a developer stored with the owned github_id <type> "<value>"
+  Scenario Outline: The operator tool's claimable_by agrees with the API for the legacy github_id <type> "<value>" and <avatar>
+  Scenario: GET /devs and GET /search answer normal developers byte for byte as before
+  Scenario: A guarded developer whose string _id holds control characters is displaced to a printable placeholder
 
 # QA review: qa/web-tests/features/profile-busy-review.feature
 Feature: QA review of 503 profile_busy, web

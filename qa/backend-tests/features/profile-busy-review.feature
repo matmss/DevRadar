@@ -158,10 +158,11 @@ Feature: QA review of 503 profile_busy (retry exhaustion)
     And the response status should be 200
     And the developer "alice" should belong to GitHub account 222
 
-  # QA-PB-7: the driver path (writeStored for a hand-edited _id) neither casts nor validates the
-  # update. The same request must store the same document shape as the model path; today the
-  # model path gives location (PointSchema) an ObjectId _id and the driver path does not. Types of
-  # every other field (Int32 github_id, Date, Double coordinates, string techs) agree.
+  # QA-PB-7 (accepted by the coordinator): the driver path (writeStored for a hand-edited _id)
+  # neither casts nor validates the update. The same request must store the same document shape
+  # as the model path, except that the model path gives location (PointSchema) an ObjectId _id and
+  # the driver path does not (nothing reads it; the step ignores it). Every other field type
+  # (Int32 github_id, Date, Double coordinates, string techs) must agree.
   @edge @regression @P3
   Scenario: A claim and update of a hand-edited string _id store the same fields and BSON types as for an ObjectId (QA-PB-7)
     Given the legacy developer "alice" was stored before sign-in without an avatar
@@ -173,7 +174,7 @@ Feature: QA review of 503 profile_busy (retry exhaustion)
     Then the stored developers of GitHub accounts 222 and 333 should have the same fields with the same BSON types
     And the stored developers of GitHub accounts 222 and 333 should have the same techs and location
     When I search at latitude "-23.5505", longitude "-46.6333" for techs "Rust"
-    Then the response should contain 2 developers
+    Then the response should contain exactly 2 developers
 
   # QA-PB-4: since the fix GET /devs/me, PUT, dev-updated and dev-deleted carry a hand-edited
   # string _id, but GET /devs (Dev.find) and GET /search still drop it (Mongoose cannot cast it),
@@ -215,3 +216,118 @@ Feature: QA review of 503 profile_busy (retry exhaustion)
     When I submit a registration with techs "Go", latitude "-23.5505" and longitude "-46.6333"
     Then the response status should be 200
     And exactly 1 developer should belong to GitHub account 333
+
+  # --- Final re-check (8b08167): utils/githubId.js storedGithubId, the one ownership rule --------
+
+  # Every owned form is that account's: its owner reads, updates (normalized to Int32 for a string
+  # or Decimal128) and nobody else takes it over by login.
+  @edge @regression @P2
+  Scenario Outline: A developer stored with the github_id <type> "<value>" is account 222's: mine to update, never another login holder's
+    Given the developer "alice" was stored with the github_id <type> "<value>" and no avatar
+    And I am signed in as "alice" with GitHub account 222
+    When I request my profile
+    Then the response status should be 200
+    When I update my profile with techs "Go", latitude "-23.5505" and longitude "-46.6333"
+    Then the response status should be 200
+    And exactly 1 developer should belong to GitHub account 222
+    And the developer "alice" should store github_id 222 as a BSON <stored as>
+
+    Examples:
+      | type       | value    | stored as |
+      | String     | 222      | Int32     |
+      | Decimal128 | 2.22E+2  | Int32     |
+      | Decimal128 | 222.000  | Int32     |
+      | Long       | 222      | Long      |
+      | Double     | 222      | Double    |
+
+  @edge @regression @P2
+  Scenario Outline: A developer stored with the github_id <type> "<value>" is never taken over by another account holding its login
+    Given the developer "alice" was stored with the github_id <type> "<value>" and no avatar
+    And I am signed in as "alice" with GitHub account 333
+    When I submit a registration with techs "Go", latitude "-23.5505" and longitude "-46.6333"
+    Then the response status should be 200
+    And the developer "alice" should not belong to GitHub account 333
+    And exactly 1 developer should belong to GitHub account 333
+
+    Examples:
+      | type       | value    |
+      | Decimal128 | 2.22E+2  |
+      | Decimal128 | 222.000  |
+      | String     | 222      |
+
+  # Forms that name no account are legacy: claimed by the login's holder, the claim guard first.
+  @edge @regression @P2
+  Scenario Outline: A developer stored with the github_id <type> "<value>" names no account: claimed by my login, unless its avatar names another account
+    Given the developer "alice" was stored with the github_id <type> "<value>" and <avatar>
+    And I am signed in as "alice" with GitHub account 222
+    When I update my profile with techs "Go", latitude "-23.5505" and longitude "-46.6333"
+    Then the response status should be <status>
+    And exactly <count> developers should belong to GitHub account 222
+
+    Examples:
+      | type       | value     | avatar        | status | count |
+      | String     | 0222      | no avatar     | 200    | 1     |
+      | String     | 222 x     | no avatar     | 200    | 1     |
+      | Number     | -5        | no avatar     | 200    | 1     |
+      | Number     | 1.5       | no avatar     | 200    | 1     |
+      | Number     | Infinity  | no avatar     | 200    | 1     |
+      | Boolean    | true      | no avatar     | 200    | 1     |
+      | Document   | 222       | no avatar     | 200    | 1     |
+      | Decimal128 | 222.5     | no avatar     | 200    | 1     |
+      | String     | 0222      | avatar id 111 | 404    | 0     |
+      | Decimal128 | 0         | avatar id 111 | 404    | 0     |
+      | Number     | -5        | avatar id 222 | 200    | 1     |
+
+  # The operator CLI reads the same rule: an owned form is not listed, a legacy form is listed and
+  # its claimable_by agrees with what the API does.
+  @edge @regression @P3
+  Scenario Outline: The operator tool does not list a developer stored with the owned github_id <type> "<value>"
+    Given the developer "alice" was stored with the github_id <type> "<value>" and no avatar
+    When the operator lists the legacy developers as JSON
+    Then the listing should not include the developer "alice"
+
+    Examples:
+      | type       | value   |
+      | String     | 222     |
+      | Decimal128 | 2.22E+2 |
+      | Long       | 222     |
+
+  @edge @regression @P3
+  Scenario Outline: The operator tool's claimable_by agrees with the API for the legacy github_id <type> "<value>" and <avatar>
+    Given the developer "alice" was stored with the github_id <type> "<value>" and <avatar>
+    When the operator lists the legacy developers as JSON
+    And GitHub account 222 as "alice" updates their profile
+    Then the update should agree with the listing's claimable_by for "alice" and GitHub account 222
+
+    Examples:
+      | type     | value | avatar        |
+      | String   | 0222  | no avatar     |
+      | Number   | -5    | no avatar     |
+      | Boolean  | true  | no avatar     |
+      | String   | 0222  | avatar id 111 |
+      | Number   | 0     | avatar id 222 |
+
+  # GET /devs and GET /search now read lean and hydrate (QA-PB-4): for normal developers the
+  # answer must be byte for byte what Dev.find() serialized (field order, location _id, __v, no
+  # github_username_seen_at), and $near keeps its distance order.
+  @edge @regression @P2
+  Scenario: GET /devs and GET /search answer normal developers byte for byte as before
+    Given the legacy developer "legacy" was stored before sign-in with avatar "https://avatars.githubusercontent.com/u/9?v=4"
+    And I am signed in as "alice" with GitHub account 222
+    And I submit a registration with techs "Go, Rust", latitude "-23.5505" and longitude "-46.6333"
+    And I am signed in as "bob" with GitHub account 333
+    And I submit a registration with techs "Rust", latitude "-23.56" and longitude "-46.64"
+    When I request the list of all developers
+    Then the response body should be byte-identical to Dev.find() serialized
+    When I search at latitude "-23.5505", longitude "-46.6333" for techs "Rust,Node.js"
+    Then the response body should be byte-identical to a Mongoose search at latitude -23.5505, longitude -46.6333 for techs "Rust,Node.js"
+
+  # QA-PB-6 fix: a string _id with control characters gets a printable, hex-encoded placeholder.
+  @edge @regression @P3
+  Scenario: A guarded developer whose string _id holds control characters is displaced to a printable placeholder
+    Given the legacy developer "alice" was stored before sign-in with a 100-character string _id holding control characters and avatar id 111
+    And I am signed in as "alice" with GitHub account 222
+    When I submit a registration with techs "Go", latitude "-23.5505" and longitude "-46.6333"
+    Then the response status should be 200
+    And the developer "alice" should have been displaced to "_stale_s_" plus the hex of its stored _id, printable ASCII only
+    And exactly 1 developer should belong to GitHub account 222
