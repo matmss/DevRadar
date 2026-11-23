@@ -33,6 +33,8 @@ jest.mock('expo-crypto', () => ({
 }));
 jest.mock('expo-location', () => ({
   requestForegroundPermissionsAsync: jest.fn(async () => ({ granted: true })),
+  // Main reads it (never prompts) on returning to the app while a permission message is shown.
+  getForegroundPermissionsAsync: jest.fn(async () => ({ granted: true, status: 'granted', canAskAgain: true })),
   getCurrentPositionAsync: jest.fn(async () => ({ coords: { latitude: -23.5505, longitude: -46.6333 } })),
 }));
 jest.mock('react-native-maps', () => {

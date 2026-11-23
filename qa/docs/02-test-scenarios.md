@@ -664,6 +664,63 @@ Feature: Search and view developers on the map
     When the app launches
     Then the app should not crash
     And the map should not attempt to render without a region
+
+  # Location-settings change (FR-6.1). Covered by Jest (dev/tests/mobile/pages/Main.test.js,
+  # expo-location, Linking and AppState mocked); on a device it is manual (see TC-021).
+  @edge
+  Scenario: Denied while the system can still ask: "Tentar novamente" asks again
+    Given location permission was denied and the system can still ask
+    When the map screen opens
+    Then I see "Permita o acesso à localização para ver os devs perto de você" and "Tentar novamente"
+    And there is no "Abrir configurações"
+    When I tap "Tentar novamente" and allow it
+    Then the map is shown
+
+  @edge
+  Scenario: Denied for good: the message points to the device settings
+    Given location permission was denied and the system will not ask again
+    When the map screen opens
+    Then I see "A localização está bloqueada para o DevRadar. Ative-a nas configurações do aparelho para ver os devs perto de você."
+    And I see "Abrir configurações" and "Tentar novamente"
+    When I tap "Abrir configurações"
+    Then the app's page in the device settings opens
+    # A failure to open the settings is logged and the screen stays (no crash).
+
+  @edge
+  Scenario: Allowing it in the settings and returning shows the map without another prompt
+    Given the "bloqueada" message is shown
+    When I allow location in the device settings and return to the app
+    Then the map is shown, and no system prompt appeared
+
+  Scenario: Returning to the app re-checks only while a permission message is shown
+    # Not when the map is shown or location is unavailable (services off), not after leaving the
+    # screen, never as a prompt, and never two checks at once.
+
+  # QA-LS-1 (qa/mobile-tests/unit/locationSettings.test.js and Main.test.js)
+  @edge
+  Scenario: While the position is read the screen is busy, not blank and not "bloqueada"
+    Given the "bloqueada" message is shown
+    When I allow location in the device settings and return to the app
+    Then I see "Obtendo sua localização…" with a spinner and no buttons until the map is shown
+
+  @edge
+  Scenario: A position that never comes ends as "unavailable" after 15 seconds
+    Given location is allowed but no position arrives
+    When 15 seconds pass
+    Then I see "Não foi possível obter sua localização. Verifique se ela está ativada e tente novamente"
+    And "Tentar novamente" reads the position again
+    # QA-LS-2: the 15 s also run while the app is not in front (Android's "turn on location"
+    # dialog). A position that arrives after them still shows the map, unless "Tentar novamente"
+    # started a newer check since; a read that fails after them changes nothing.
+
+  @edge
+  Scenario: Accepting Android's "turn on location" dialog after more than 15 seconds still shows the map
+    Given location services are off and the app shows the busy state
+    When I take more than 15 seconds to accept the system's "turn on location" dialog
+    Then I may briefly see the "unavailable" message
+    And the map is shown as soon as the position arrives, without tapping "Tentar novamente"
+
+  Scenario: Screen readers hear each new location message once
 ```
 
 ## Cross-cutting / Integration Scenarios — covers FR-4, NFR-3

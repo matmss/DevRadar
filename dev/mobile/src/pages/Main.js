@@ -1,7 +1,22 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, Image, View, Text, TextInput, TouchableOpacity } from 'react-native';
+import {
+  AccessibilityInfo,
+  ActivityIndicator,
+  AppState,
+  Linking,
+  StyleSheet,
+  Image,
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+} from 'react-native';
 import MapView, { Marker, Callout } from 'react-native-maps';
-import { requestForegroundPermissionsAsync, getCurrentPositionAsync } from 'expo-location';
+import {
+  requestForegroundPermissionsAsync,
+  getForegroundPermissionsAsync,
+  getCurrentPositionAsync,
+} from 'expo-location';
 import { MaterialIcons } from '@expo/vector-icons';
 
 import api from '../services/api';
@@ -17,6 +32,55 @@ import { githubLoginOf } from '../services/githubLogin';
 import { getToken } from '../services/session';
 import { MESSAGES, requestFailureMessage } from '../services/authErrors';
 
+// Why there is no map yet. LOCATING: asking for the permission or reading the position (a busy
+// state, no buttons). DENIED: the system can still ask ("Tentar novamente" asks). BLOCKED: it will
+// not ask any more, the user has to allow it in the device settings. UNAVAILABLE: no position
+// (services off, no fix in time, the permission request itself failed).
+const LOCATION_STATUS = {
+  LOCATING: 'locating',
+  DENIED: 'denied',
+  BLOCKED: 'blocked',
+  UNAVAILABLE: 'unavailable',
+};
+
+const LOCATION_STATUS_MESSAGE = {
+  [LOCATION_STATUS.LOCATING]: MESSAGES.locating,
+  [LOCATION_STATUS.DENIED]: MESSAGES.locationDenied,
+  [LOCATION_STATUS.BLOCKED]: MESSAGES.locationBlocked,
+  [LOCATION_STATUS.UNAVAILABLE]: MESSAGES.locationUnavailable,
+};
+
+// getCurrentPositionAsync has no timeout of its own (expo-location 57; Android's getCurrentLocation
+// can wait for a fix forever, e.g. a cold GPS indoors): after this long the screen says the
+// location is unavailable and "Tentar novamente" works again. The timer is wall-clock time, also
+// while the app is not in front (e.g. Android's own "turn on location" dialog, shown by the read
+// itself), so a read that answers after its timeout still shows the map if nothing happened in
+// between (QA-LS-2, see loadInitialPosition).
+export const LOCATION_TIMEOUT_MS = 15000;
+
+/**
+ * The current position, or a rejection after `ms`. On timeout the error carries the read itself
+ * as `lateRead`, which the caller may keep listening to.
+ * @param {number} ms
+ * @param {{ current: any }} timerRef - holds the timer, so unmounting can clear it
+ */
+function currentPositionWithin(ms, timerRef) {
+  const read = Promise.resolve().then(() => getCurrentPositionAsync({ enableHighAccuracy: true }));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const timeout = new Error(`No position within ${ms} ms`);
+      timeout.lateRead = read;
+      reject(timeout);
+    }, ms);
+    timerRef.current = timer;
+    const settle = (done) => (value) => {
+      clearTimeout(timer);
+      done(value);
+    };
+    read.then(settle(resolve), settle(reject));
+  });
+}
+
 // Only reachable signed in (routes.js). /search and the socket both send the session token; an
 // auth failure from either ends the session in SessionProvider, which replaces this screen with
 // the sign-in screen (and unmounting closes the socket below).
@@ -25,51 +89,114 @@ function Main({ navigation }) {
   const [currentRegion, setCurrentRegion] = useState(null);
   const [techs, setTechs] = useState('');
   const [searchError, setSearchError] = useState(null);
-  const [locationError, setLocationError] = useState(null);
+  // One of LOCATION_STATUS while there is no map (the first check starts at once), null once the
+  // map is shown.
+  const [locationStatus, setLocationStatus] = useState(LOCATION_STATUS.LOCATING);
   // False once the screen is gone (sign-out, session ended): late async results are dropped.
   const mounted = useRef(true);
+  // True while a location check runs: a second one (a return to the foreground) is dropped
+  // instead of asking twice. Released when the check ends, also by the position timeout.
+  const checkingLocation = useRef(false);
+  const positionTimer = useRef(null);
+  // Counts the location checks that started. A timed-out read's late answer is used only while
+  // no newer check has started: the status is then still the "unavailable" its timeout set (only
+  // checks change it, and a return to the app does not check while it is "unavailable").
+  const locationCheck = useRef(0);
 
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      clearTimeout(positionTimer.current);
     };
   }, []);
 
   // Location can fail (services off, no fix, permission denied): say so instead of a blank screen
-  // or an unhandled rejection, and let the user try again.
-  const loadInitialPosition = useCallback(async () => {
-    setLocationError(null);
+  // or an unhandled rejection, and let the user try again. `ask: true` (first check, "Tentar
+  // novamente") shows the busy state at once and may show the system prompt. `ask: false` (back
+  // in the app) only reads the permission, never a prompt, and keeps the current message on screen
+  // until the permission reads granted. While the position is read the screen is busy, without
+  // buttons, for at most LOCATION_TIMEOUT_MS.
+  const loadInitialPosition = useCallback(async ({ ask = true } = {}) => {
+    if (checkingLocation.current) return;
+    checkingLocation.current = true;
+    locationCheck.current += 1;
+    const check = locationCheck.current;
+    const showPosition = ({ coords }) => {
+      const { latitude, longitude } = coords;
+      setLocationStatus(null);
+      setCurrentRegion({
+        latitude,
+        longitude,
+        latitudeDelta: 0.04,
+        longitudeDelta: 0.04,
+      });
+    };
+    if (ask) setLocationStatus(LOCATION_STATUS.LOCATING);
     try {
-      const { granted } = await requestForegroundPermissionsAsync();
-      if (!granted) {
-        if (mounted.current) setLocationError(MESSAGES.locationDenied);
+      const permission = ask
+        ? await requestForegroundPermissionsAsync()
+        : await getForegroundPermissionsAsync();
+      if (!mounted.current) return;
+      if (!permission.granted) {
+        // canAskAgain false: the system shows no prompt any more (iOS after the first denial,
+        // Android after "don't ask again" or the second denial), only the settings can allow it.
+        setLocationStatus(permission.canAskAgain === false ? LOCATION_STATUS.BLOCKED : LOCATION_STATUS.DENIED);
         return;
       }
 
-      const { coords } = await getCurrentPositionAsync({
-        enableHighAccuracy: true,
-      });
-
-      const { latitude, longitude } = coords;
-
-      if (mounted.current) {
-        setCurrentRegion({
-          latitude,
-          longitude,
-          latitudeDelta: 0.04,
-          longitudeDelta: 0.04,
-        });
-      }
+      // Allowed: never "allow it" any more while the position is read.
+      setLocationStatus(LOCATION_STATUS.LOCATING);
+      const position = await currentPositionWithin(LOCATION_TIMEOUT_MS, positionTimer);
+      if (mounted.current) showPosition(position);
     } catch (err) {
       console.warn('Could not get the current location:', err.message);
-      if (mounted.current) setLocationError(MESSAGES.locationUnavailable);
+      if (!mounted.current) return;
+      setLocationStatus(LOCATION_STATUS.UNAVAILABLE);
+      // Timed out: the read may still answer (e.g. after the user took longer than the timeout to
+      // accept Android's "turn on location" dialog). Show that position, unless the screen is gone
+      // or a newer check ("Tentar novamente") started; a late failure stays silent.
+      if (err.lateRead) {
+        err.lateRead
+          .then((position) => {
+            if (mounted.current && locationCheck.current === check) showPosition(position);
+          }, () => {})
+          .catch((lateErr) => console.warn('Could not use the late location:', lateErr.message));
+      }
+    } finally {
+      checkingLocation.current = false;
     }
   }, []);
 
   useEffect(() => {
     loadInitialPosition();
   }, [loadInitialPosition]);
+
+  // Screen readers: say each new location message. accessibilityRole="alert" alone is not
+  // announced on Android (and the busy state has no alert).
+  useEffect(() => {
+    if (locationStatus) AccessibilityInfo.announceForAccessibility(LOCATION_STATUS_MESSAGE[locationStatus]);
+  }, [locationStatus]);
+
+  // While the screen says the permission is missing, coming back to the app (typically from the
+  // settings) checks it again. Only a read, never a prompt: the system dialog itself takes the app
+  // out of 'active' and back on both platforms, so asking here would ask again and again.
+  const permissionMissing = locationStatus === LOCATION_STATUS.DENIED || locationStatus === LOCATION_STATUS.BLOCKED;
+  useEffect(() => {
+    if (!permissionMissing) return undefined;
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && mounted.current) loadInitialPosition({ ask: false });
+    });
+    return () => subscription.remove();
+  }, [permissionMissing, loadInitialPosition]);
+
+  async function openSettings() {
+    try {
+      await Linking.openSettings();
+    } catch (err) {
+      console.warn('Could not open the device settings:', err && err.message);
+    }
+  }
 
   // One listener per event for the screen's lifetime (it used to add another on every change of
   // `devs`). Live pushes change the markers without a new search: a new or updated dev replaces
@@ -125,12 +252,45 @@ function Main({ navigation }) {
   }
 
   if(!currentRegion) {
-    if (!locationError) return null;
+    if (!locationStatus) return null;
+    if (locationStatus === LOCATION_STATUS.LOCATING) {
+      return (
+        <View
+          testID="location-loading"
+          accessible
+          accessibilityLabel={MESSAGES.locating}
+          accessibilityState={{ busy: true }}
+          style={styles.locationError}
+        >
+          <ActivityIndicator size="large" color="#8E4DFF" />
+          <Text style={styles.locatingText}>{MESSAGES.locating}</Text>
+        </View>
+      );
+    }
+    const blocked = locationStatus === LOCATION_STATUS.BLOCKED;
     return (
       <View testID="location-error" style={styles.locationError}>
-        <Text accessibilityRole="alert" style={styles.locationErrorText}>{locationError}</Text>
-        <TouchableOpacity testID="location-retry-button" accessibilityRole="button" onPress={loadInitialPosition} style={styles.retryButton}>
-          <Text style={styles.retryButtonText}>Tentar novamente</Text>
+        <Text accessibilityRole="alert" style={styles.locationErrorText}>{LOCATION_STATUS_MESSAGE[locationStatus]}</Text>
+        {blocked ? (
+          <TouchableOpacity
+            testID="open-settings"
+            accessibilityRole="button"
+            accessibilityLabel="Abrir configurações"
+            accessibilityHint="Abre as configurações do aparelho para permitir a localização"
+            onPress={openSettings}
+            style={styles.retryButton}
+          >
+            <Text style={styles.retryButtonText}>Abrir configurações</Text>
+          </TouchableOpacity>
+        ) : null}
+        <TouchableOpacity
+          testID="location-retry-button"
+          accessibilityRole="button"
+          accessibilityLabel="Tentar novamente"
+          onPress={() => loadInitialPosition()}
+          style={blocked ? styles.secondaryButton : styles.retryButton}
+        >
+          <Text style={blocked ? styles.secondaryButtonText : styles.retryButtonText}>Tentar novamente</Text>
         </TouchableOpacity>
       </View>
     );
@@ -249,6 +409,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 30,
   },
+  locatingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+  },
   locationErrorText: {
     fontSize: 16,
     color: '#C0392B',
@@ -265,6 +431,21 @@ const styles = StyleSheet.create({
   },
   retryButtonText: {
     color: '#FFF',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  secondaryButton: {
+    marginTop: 12,
+    height: 46,
+    paddingHorizontal: 25,
+    borderRadius: 23,
+    borderWidth: 2,
+    borderColor: '#8E4DFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  secondaryButtonText: {
+    color: '#8E4DFF',
     fontWeight: 'bold',
     fontSize: 16,
   },
