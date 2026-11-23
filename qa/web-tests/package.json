@@ -12,7 +12,7 @@
     "test:headed": "bddgen && playwright test --headed"
   },
   "devDependencies": {
-    "@playwright/test": "^1.48.0",
+    "@playwright/test": "^1.65.1",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "mongodb-memory-server": "^10.1.2",
