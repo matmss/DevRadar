@@ -9,6 +9,7 @@ import {
   SIGN_IN_RESULT,
 } from './services/auth';
 import { upsertDev, removeDev } from './services/devList';
+import { requestErrorMessage } from './services/requestErrors';
 
 import './Global.css'
 import './App.css'
@@ -30,7 +31,6 @@ const MESSAGES = {
   serverUnreachable: 'Não foi possível falar com o servidor, tente novamente mais tarde',
   tooManyRequests: 'Muitas tentativas em pouco tempo, tente novamente mais tarde',
   pkceUnsupported: 'Este navegador não permite entrar com segurança (use https)',
-  serverUnreachableShort: 'Não foi possível falar com o servidor, tente novamente',
   profileUpdated: 'Perfil atualizado',
   profileDeleted: 'Perfil excluído',
   profileGone: 'Seu perfil não existe mais, cadastre-se novamente',
@@ -60,19 +60,6 @@ function signInFailureMessage(result) {
 /** @param {unknown} err @param {number} status @returns {boolean} */
 function hasStatus(err, status) {
   return Boolean(err && err.response && err.response.status === status);
-}
-
-/**
- * The text to show for a failed save or delete: the backend's `{ error, details }`, or "server
- * unreachable" when there is no answer.
- * @param {unknown} err
- * @returns {string}
- */
-function requestErrorMessage(err) {
-  const body = err && err.response && err.response.data;
-  if (!body || typeof body.error !== 'string') return MESSAGES.serverUnreachableShort;
-  const details = Array.isArray(body.details) && body.details.length > 0 ? `: ${body.details.join('; ')}` : '';
-  return `${body.error}${details}`;
 }
 
 /**
@@ -298,7 +285,10 @@ function App() {
     }
   }
 
-  /** Shows a failed save or delete; any 401 already switched to the signed-out view. */
+  /**
+   * Shows a failed save or delete; any 401 already switched to the signed-out view. A 503
+   * profile_busy says "try again" and keeps the session and the form as they are.
+   */
   function showRequestError(err) {
     if (!hasStatus(err, 401)) setFormError(requestErrorMessage(err));
   }

@@ -84,9 +84,62 @@ Three layers, one shared backend:
 - **Error handler** (`middleware/errorHandler.js`, BUG-012): every route answers errors as
   `{ error, code, details }`, never Express's HTML page with a stack trace.
   `body_invalid` (400, malformed JSON), `body_too_large` (413, over 100 kb),
-  `request_invalid` (any other 4xx), `internal_error` (500, no message or stack).
+  `request_invalid` (any other 4xx), `profile_busy` (503, see below), `internal_error` (500, no
+  message or stack).
   Body-parser errors log only `err.type`, never the raw body or the parse message (which
   quotes the input); other 500s log the stack server-side.
+- **`profile_busy`** (`utils/profileBusyError.js`): a profile write in
+  `services/devOwnership.js` that runs out of retries after concurrent changes (the legacy claim
+  loop in `resolveOwnDev`, `MAX_ATTEMPTS`; taking the login in `inLoginOrder`, `MAX_ATTEMPTS` lost
+  races / `MAX_ROUNDS` rounds) throws a `ProfileBusyError`. The handler answers it **503**
+  `{ error: "Profile is busy", code: "profile_busy", details: ["Too many concurrent changes to
+  this profile; try again"] }` with **`Retry-After: 1`** and logs one warn line
+  (`Gave up on <method> <path>: profile_busy (503)`, no stack, no message). The caller's own
+  profile is unchanged (each write is one conditional update); displacements of older holders
+  done in earlier rounds stay, and were pushed as `dev-updated`. A retry can succeed, so a 500
+  would wrongly say the server is broken. Only this error type is mapped: an error that merely carries
+  a 5xx `status` (or `code: 'profile_busy'`) stays 500 `internal_error`. Reachable from
+  `POST /devs`, `PUT /devs/me` and `DELETE /devs/me`; `GET /devs/me` never claims, so it answers
+  in the first round. Sign-in catches it like any other login-refresh failure (logged, the sign-in
+  succeeds). Web and mobile show "Perfil ocupado, tente novamente." and keep the session.
+- **Stored values in ownership writes** (QA-PB-1): every conditional write in
+  `services/devOwnership.js` (claim, displacement, login refresh, update, delete) matches the dev
+  by its **stored** `_id`, `github_id` and login, read with the driver, not by what Mongoose made
+  of them (it reads a hand-edited non-ObjectId `_id` as undefined, a `github_id` that is no number
+  as undefined or null, and casts or refuses such filter values). A filter on such a value goes to
+  the driver (`writeStored`, no casting or validation of the update; normal data still goes through
+  the model). A conditional write that misses on a document that has not
+  changed since it was read and that its filter does not match (e.g. a hand-edited
+  `github_username_seen_at` that is no date, which no "older than" filter matches) is not
+  contention: a plain error, 500 `internal_error`, logged with the stored `_id` (`printable`),
+  never 503. Accepted difference (QA-PB-7): a driver-path update does not give `location` the
+  PointSchema subdocument `_id` the model adds; nothing reads it. Every other field is stored with
+  the same BSON types.
+- **Ownership by stored `github_id`, one rule** (QA-PB-3, QA-PB-5; `utils/githubId.js`
+  `storedGithubId`/`isLegacyDoc`, used by `services/devOwnership.js`, `utils/githubAvatarId.js`
+  and the operator CLI): a stored value that carries a valid GitHub id is that account's
+  ownership: a number of any BSON numeric type (Int32, Double, Long, Decimal128, by value) or the
+  canonical decimal string (`"222"`). The account finds it (`findDevByAccount` matches the number,
+  then the string), nobody else can claim it by login (an older holder is displaced as usual), and
+  the owner's next write that changes the dev stores the plain number when the stored form is not
+  a number as the driver reads it (a string, a Decimal128; Int32, Double and safe Longs read as
+  numbers and stay as they are). Values with no id at all are **legacy**: missing, null, `""`,
+  non-canonical or non-numeric strings (`"0222"`, `"not-a-number"`), 0, negatives, non-integers,
+  booleans, documents; claimable by login after the claim guard, and the claim stores the
+  account's number. `list` shows exactly these devs; `assign`/`merge` match their `github_id` as
+  read. `merge` still only accepts a target profile stored as the plain number (what the
+  `github_id_unique` index covers, QA-LM-3). A string-stored profile is not in that partial index,
+  so an account could hold two devs (one numeric, one `"222"`) only through hand edits; the numeric
+  one wins.
+- **Displaced placeholders** (`utils/githubUsername.js` `staleLoginFor`, shared with the CLI's
+  `restore`): `_stale_<24 hex>` for an ObjectId `_id` (unchanged); any other stored `_id` is
+  tagged and hex-encoded, `_stale_s_<hex of the string's UTF-8>` or `_stale_x_<hex of its
+  canonical Extended JSON>`, so `_id`s that differ only in letter case stay distinct under the
+  login index's case-insensitive collation (QA-PB-6) and no control character reaches a login.
+  The login has no length limit in the schema; a long hand-edited `_id` gives a long placeholder.
+- **Lists carry the stored `_id`** (QA-PB-4): `GET /devs` and `GET /search` read lean and hydrate
+  with the stored `_id` (`models/utils/hydrateStored.js`), like `/devs/me` and the live events;
+  normal devs are answered exactly as before, and `$near` keeps its order.
 - **`TRUST_PROXY`** (`config/proxy.js`): off by default, so `req.ip` is the socket address and
   a client cannot choose its rate-limit key by sending `X-Forwarded-For`. Behind a reverse
   proxy, set the hop count (`1`), a comma-separated list of trusted addresses/subnets
@@ -337,7 +390,8 @@ existed) is found (Q5, US-8).
     multi-key task takes keys in the same order and a single-key task never waits for a second
     key, so no two tasks wait for each other: swaps and concurrent writes cannot deadlock. Under
     the keys it checks the holder is unchanged; if not (or a write lost a race, e.g. a
-    duplicate-key error on insert), it starts over, at most three times. `DELETE` changes no login
+    duplicate-key error on insert), it starts over, at most three times, then answers 503
+    `profile_busy` (see "App assembly and errors"). `DELETE` changes no login
     and takes only the account's key. Legacy devs have no account key: their claim and their
     displacement are conditional updates that exclude each other.
   - **Indexes, one dev per account and per login** (QA-AUTH2-1, Q10): `github_id_unique`, unique
@@ -402,7 +456,8 @@ existed) is found (Q5, US-8).
   username or id, so nobody can reach another user's profile; they are registered before any
   `/devs/:param` route could be (none exists: `PUT /devs/bob` is a JSON 404 `not_found`).
   Errors use `{ error, code, details }`, except the 400s, which are exactly `POST /devs`'s
-  `{ error, details }`.
+  `{ error, details }`. `PUT` and `DELETE` (and `POST /devs`) answer 503 `profile_busy` with
+  `Retry-After: 1` when they give up after too many concurrent changes; `GET` never does.
   - `GET /devs/me`: 200 with the dev, or 404 `dev_not_found`. Added so clients can tell
     "register" from "update" without scanning `GET /devs` (which will need pagination one day).
   - `PUT /devs/me` `{ techs, latitude, longitude }`: **all three required** (no partial update),
@@ -475,7 +530,8 @@ existed) is found (Q5, US-8).
   | 429 | `rate_limited` | rate limit hit |
   | 503 | `not_configured` | GitHub credentials not set |
 
-  Plus the app-wide `body_invalid`, `body_too_large`, `request_invalid`, `internal_error`.
+  Plus the app-wide `body_invalid`, `body_too_large`, `request_invalid`, `internal_error`, and
+  503 `profile_busy` on the profile writes (`POST /devs`, `PUT`/`DELETE /devs/me`).
 - **Rate limits** (`middleware/rateLimit.js`, `express-rate-limit`), per client IP
   (`req.ip`, see `TRUST_PROXY`) per 15 minutes, two independent limiters:
   sign-in (`GET /auth/github`, the callback, `POST /auth/token`): `AUTH_RATE_LIMIT_MAX`,
@@ -586,6 +642,9 @@ existed) is found (Q5, US-8).
   **Only a 404 with `code: "dev_not_found"` means "no profile"** (QA-AUTH5-1): any other 404
   (e.g. `not_found` from a backend without these routes, or a proxy that does not route
   `/devs/me`) changed nothing, so it is shown as an error and the form stays in update mode.
+  A save or delete answered 503 `profile_busy` shows "Perfil ocupado, tente novamente."
+  (`services/requestErrors.js`) instead of the backend's text, keeps the typed values and the
+  session; any other failure shows the backend's `error: details`.
   Update answered `dev_not_found` (deleted on another device): registration form with "Seu
   perfil não existe mais, cadastre-se novamente" and the values the user typed, so "Salvar"
   registers them. Delete answered `dev_not_found`: treated as done. If `GET /devs/me` fails
@@ -683,7 +742,10 @@ existed) is found (Q5, US-8).
   QA-AUTH4-1). The map remembers the token a search was sent with and opens the socket only if
   it is still mounted and that token is still in use; the socket service never connects without
   a token. Other socket refusals (`subscription_invalid`) are only logged; other search failures
-  show "Não foi possível buscar devs, tente novamente". If the location cannot be read (services
+  show "Não foi possível buscar devs, tente novamente", except a 503 `profile_busy`, which shows
+  "Perfil ocupado, tente novamente." (`services/authErrors.js` `requestFailureMessage`; the app
+  makes no profile writes today, so this is the web's mapping kept for any request that gets
+  that answer; never an auth failure). If the location cannot be read (services
   off, permission denied or the request failing), the map screen says so with "Tentar
   novamente". A second "Entrar com GitHub" tap during a sign-in is ignored.
 - **"Sair"** closes the socket, forgets its token and deletes the token from secure storage.
@@ -739,7 +801,8 @@ and the mobile map moves or removes the marker.
   409 and logs one "claim refused" warning, without bound.
 - **Retries are bounded.** A write that takes a login starts over at most three times for a lost
   race (`MAX_ATTEMPTS`); a round that displaced the holder starts over without using one up
-  (QA-CG-2), and all rounds are capped at nine (`MAX_ROUNDS`), after which it answers 500.
+  (QA-CG-2), and all rounds are capped at nine (`MAX_ROUNDS`), after which it answers 503
+  `profile_busy` with `Retry-After: 1` (a legacy claim that loses three races in a row too).
 - **Login ordering trusts the server clock.** Reads are compared by the backend's `Date.now()`
   at the callback. A clock that steps back between two sign-ins of different accounts could make
   the later read look older; a step back within one sign-in is clamped (QA-AUTH6-5).

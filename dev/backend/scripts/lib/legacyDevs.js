@@ -2,7 +2,8 @@
 // option A). scripts/legacy-devs.js is the command line around them; the QA suite calls run()
 // in-process against its ephemeral MongoDB.
 //
-// A legacy dev has no github_id (missing or null): it was created before sign-in existed. Its
+// A legacy dev has no github_id naming an account (missing, null, or a hand-edited "", 0, ...;
+// utils/githubId.js isLegacyDoc, the rule the API uses): it was created before sign-in existed. Its
 // owner claims it by login on their first write (services/devOwnership.js), unless its avatar
 // names another GitHub account (the claim guard, dev/docs/05-claim-guard-spec.md) or the login was
 // given to an account that already has a profile or that the dev is guarded against, which
@@ -16,7 +17,7 @@
 //  - Dry run unless --apply. Every refusal happens before any write.
 //  - Runs outside the API process, so it cannot take the API's per-account queue keys
 //    (keyedQueue). It never needs them: every write is ONE conditional single-document write
-//    whose filter is the state the decision was made on (same _id, still no github_id, same
+//    whose filter is the state the decision was made on (same _id, the same github_id as read, same
 //    login), as a claim and a displacement check it. If the API claimed, displaced or
 //    deleted the dev in between, the write matches nothing and the tool reports "changed since
 //    read". A registration of the target account in between is refused by the github_id_unique
@@ -28,9 +29,9 @@
 const fs = require('fs');
 const mongoose = require('mongoose');
 const Dev = require('../../src/models/Dev');
-const { githubIdFromSubject, isValidGithubId } = require('../../src/utils/githubId');
+const { githubIdFromSubject, isValidGithubId, isLegacyDoc, storedGithubId, storedGithubIdForms } = require('../../src/utils/githubId');
 const { AVATAR_ID_STATUS, legacyAvatarEvidence } = require('../../src/utils/githubAvatarId');
-const { isValidGithubUsername } = require('../../src/utils/githubUsername');
+const { isValidGithubUsername, staleLoginFor } = require('../../src/utils/githubUsername');
 
 const { EJSON } = mongoose.mongo.BSON;
 
@@ -57,7 +58,7 @@ option). Dry run by default: nothing is written without --apply.
 
 Commands:
   list [--json]
-      Every legacy developer (no github_id): login, status (legacy | displaced), name,
+      Every legacy developer (no github_id naming an account): login, status (legacy | displaced), name,
       coordinates, techs, avatar_url, the GitHub id derived from the avatar (or "unparseable" /
       "none"), who can claim it by login (claimable_by: that GitHub id, "login" for whoever
       holds the login, "none" when its login is no GitHub login, e.g. displaced), whether that
@@ -177,9 +178,24 @@ function recoveryJson(doc) {
 
 // --- Reading -------------------------------------------------------------------------------------
 
-/** @param {{ github_id?: unknown }} doc @returns {boolean} same rule as services/devOwnership.js */
+/**
+ * @param {{ github_id?: unknown }} doc - as stored
+ * @returns {boolean} true for a legacy dev: its stored github_id names no account. The one rule
+ *   the API uses too (utils/githubId.js isLegacyDoc / storedGithubId, QA-PB-5): missing, null, "",
+ *   "not-a-number", 0, ... are legacy; any numeric BSON type or the canonical string of a valid id
+ *   is that account's.
+ */
 function isLegacy(doc) {
-  return doc.github_id === undefined || doc.github_id === null;
+  return isLegacyDoc(doc);
+}
+
+/**
+ * @param {{ github_id?: unknown }} doc - a legacy dev as read
+ * @returns {null | { $eq: unknown }} a filter value for its github_id exactly as stored: null for a
+ *   missing or null field (matches both), else the stored value itself (a hand-edited "", ...)
+ */
+function legacyGithubIdAsRead(doc) {
+  return doc.github_id === undefined || doc.github_id === null ? null : { $eq: doc.github_id };
 }
 
 /**
@@ -208,26 +224,39 @@ function parseGithubId(value) {
 
 /** @returns {Promise<Array<{ doc: object, evidence: object }>>} every legacy dev, oldest first */
 async function loadLegacyDevs() {
-  // { github_id: null } matches a missing field and null: the legacy rule.
-  const docs = await Dev.collection.find({ github_id: null }).sort({ _id: 1 }).toArray();
-  return docs.map((doc) => ({ doc, evidence: legacyAvatarEvidence(doc) }));
+  // The legacy rule (isLegacy) is not one query (a hand-edited "" or 0 is legacy too): every dev
+  // is read and filtered here. An operator command, so a full scan is fine.
+  const docs = await Dev.collection.find({}).sort({ _id: 1 }).toArray();
+  return docs.filter(isLegacy).map((doc) => ({ doc, evidence: legacyAvatarEvidence(doc) }));
 }
+
+const PROFILE_FIELDS = { projection: { _id: 1, github_id: 1, github_username: 1 } };
 
 /**
  * @param {number[]} githubIds
- * @returns {Promise<Map<number, object>>} the dev of each account that has one
+ * @returns {Promise<Map<number, object>>} the dev of each account that has one, in any stored form
+ *   of its github_id (storedGithubIdForms), the normal number first
  */
 async function profilesOf(githubIds) {
   if (githubIds.length === 0) return new Map();
   const owners = await Dev.collection
-    .find({ github_id: { $in: githubIds } }, { projection: { _id: 1, github_id: 1, github_username: 1 } })
+    .find({ github_id: { $in: githubIds.flatMap(storedGithubIdForms) } }, PROFILE_FIELDS)
     .toArray();
-  return new Map(owners.map((owner) => [owner.github_id, owner]));
+  const byAccount = new Map();
+  owners.forEach((owner) => {
+    const id = storedGithubId(owner.github_id);
+    if (!byAccount.has(id) || typeof owner.github_id === 'number') byAccount.set(id, owner);
+  });
+  return byAccount;
 }
 
-/** @param {number} githubId @returns {Promise<object | null>} the account's dev */
-function profileOf(githubId) {
-  return Dev.collection.findOne({ github_id: githubId }, { projection: { _id: 1, github_id: 1, github_username: 1 } });
+/** @param {number} githubId @returns {Promise<object | null>} the account's dev, in any stored form */
+async function profileOf(githubId) {
+  for (const form of storedGithubIdForms(githubId)) {
+    const owner = await Dev.collection.findOne({ github_id: form }, PROFILE_FIELDS);
+    if (owner) return owner;
+  }
+  return null;
 }
 
 /**
@@ -457,7 +486,7 @@ async function assign({ devId, githubId: githubIdText, fromAvatar = false, force
     // The state the decision was made on: same dev, still legacy, same login (a claim sets
     // github_id, a displacement changes the login).
     updated = await Dev.collection.findOneAndUpdate(
-      { _id, github_id: null, github_username: dev.github_username },
+      { _id, github_id: legacyGithubIdAsRead(dev), github_username: dev.github_username },
       { $set: { github_id: target } },
       { returnDocument: 'after' }
     );
@@ -508,8 +537,11 @@ async function merge({ devId, into, force = false, apply = false }, out) {
   if (isLegacy(profile)) {
     throw refusal(`developer ${profileId} has no github_id; merge only into an account's profile (assign one first).`);
   }
-  // Only an id a GitHub account can have (what the github_id index and sign-in know). --force never
-  // overrides this: it only overrides the avatar id check (QA-LM-3).
+  // Only a profile whose github_id is stored in the normal form, the plain number (what the
+  // github_id_unique index covers, so a concurrent registration is detected). A profile stored as
+  // "501" or a Decimal128 is account 501's (isLegacy), but is refused here until its owner's next
+  // write normalizes it. --force never overrides this: it only overrides the avatar id check
+  // (QA-LM-3).
   if (!isValidGithubId(profile.github_id)) {
     throw refusal(`developer ${profileId} has github_id ${show(profile.github_id)}, which no GitHub account can have (a positive integer); merge only into an account's profile.`);
   }
@@ -536,7 +568,7 @@ async function merge({ devId, into, force = false, apply = false }, out) {
   }
 
   // Only the state the decision was made on: same dev, still legacy, same login.
-  const deleted = await Dev.collection.findOneAndDelete({ _id: legacyId, github_id: null, github_username: dev.github_username });
+  const deleted = await Dev.collection.findOneAndDelete({ _id: legacyId, github_id: legacyGithubIdAsRead(dev), github_username: dev.github_username });
   if (!deleted) throw refusal(await changedSinceRead(dev));
 
   out.log(`Applied${forced ? ' (FORCED)' : ''}: developer ${legacyId} was deleted.`);
@@ -553,11 +585,11 @@ async function merge({ devId, into, force = false, apply = false }, out) {
 // --- restore -------------------------------------------------------------------------------------
 
 // A restored dev is always DISPLACED: its login becomes the same placeholder
-// services/devOwnership.js gives a displaced dev (`_stale_<_id>`, never a valid GitHub login), so
-// no account can ever claim it by login, whatever the file says. Only `assign` (a human decision,
-// with the avatar id guard) gives it an owner. Otherwise a crafted record could create a new
-// claimable legacy dev, which the spec rules out (no new legacy devs can arise; B1 relies on it).
-const STALE_LOGIN_PREFIX = '_stale_';
+// services/devOwnership.js gives a displaced dev (utils/githubUsername.js staleLoginFor:
+// `_stale_<_id>`, never a valid GitHub login), so no account can ever claim it by login, whatever
+// the file says. Only `assign` (a human decision, with the avatar id guard) gives it an owner.
+// Otherwise a crafted record could create a new claimable legacy dev, which the spec rules out (no
+// new legacy devs can arise; B1 relies on it).
 
 // The fields a Dev document can have (models/Dev.js), and those of its location (PointSchema).
 const RECORD_FIELDS = new Set(Object.keys(Dev.schema.paths));
@@ -651,7 +683,7 @@ function loadRecoveryRecord(file) {
  * @returns {object}
  */
 function asDisplaced(doc) {
-  const restored = { ...doc, github_username: `${STALE_LOGIN_PREFIX}${doc._id.toHexString()}`, github_username_stale: true };
+  const restored = { ...doc, github_username: staleLoginFor(doc._id), github_username_stale: true };
   if (typeof doc.name === 'string' && doc.name.toLowerCase() === doc.github_username.toLowerCase()) restored.name = null;
   return restored;
 }

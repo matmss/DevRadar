@@ -361,6 +361,60 @@ Feature: A legacy profile registered by another GitHub account is not mine (web,
   Scenario: Signed in as a login whose legacy profile has another account's avatar: empty form, a fresh profile, both listed (AC-18)
 ```
 
+## Feature: A profile write that gives up after concurrent changes is 503 profile_busy (Backend + Web + Mobile) — covers FR-1.3, FR-1.8, FR-1.9, FR-5, FR-6
+
+Automated in `qa/backend-tests/features/profile-busy.feature` (all `@regression @P2`), the updated
+"endless stream of older holders" scenario in `claim-guard-review.feature`,
+`qa/backend-tests/unit/errorHandler.test.js`, `dev/web/src/services/{requestErrors,api}.test.js`
+and `dev/tests/mobile/{services/authErrors,pages/Main}.test.js`. Exhaustion is forced by making
+every conditional claim or displacement write miss.
+
+```gherkin
+Feature: A profile write that gives up after concurrent changes answers 503 profile_busy
+  Scenario Outline: A legacy claim that loses every race answers 503 profile_busy: <method> <path>  (POST /devs, PUT /devs/me, DELETE /devs/me)
+  Scenario: Reading my profile never gives up, even when every claim would miss
+  Scenario Outline: Taking my login loses every race against its holder: <method> <path> answers 503 profile_busy  (POST /devs, PUT /devs/me)
+  Scenario: Sign-in still succeeds when taking my login loses every race against its holder
+  # QA-PB-1 fix: conditional writes match stored values
+  Scenario: A legacy developer with a hand-edited string _id is claimed, then read, updated and deleted
+  Scenario Outline: A legacy developer with the hand-edited github_id <github_id> is claimed and gets my id, then deleted  ("not-a-number", "", "0")
+  # QA-PB-3 to QA-PB-6 fixes
+  Scenario Outline: My developer stored with github_id 222 as a BSON <type> is mine, and my update stores <stored as>  (String, Decimal128 -> Int32; Int32, Long, Double kept)
+  Scenario: GET /search finds a developer with a hand-edited string _id under that _id (QA-PB-4)
+  Scenario Outline: A holder whose stored login state is no date can never be displaced: <method> <path> is a 500 naming it, not "busy, try again"  (POST /devs, PUT /devs/me)
+  Scenario: Sign-in still succeeds when the login's holder can never be displaced
+
+# QA review: qa/backend-tests/features/profile-busy-review.feature
+Feature: QA review of 503 profile_busy (retry exhaustion)
+  Scenario Outline: After a 503 profile_busy on <method> <path>, nothing stays queued and my next write succeeds
+  Scenario: After a 503 profile_busy that held the login holder's key too, the holder's account can still write
+  Scenario: Many concurrent writes of one account that all give up are each answered 503 and leave the queue empty
+  Scenario Outline: A <method> <path> that gives up pushes no live event
+  Scenario: An unexpected server error is still 500 internal_error, without Retry-After
+  Scenario: A write that does not give up carries no Retry-After
+  Scenario Outline: A legacy developer stored with <hand edit> is never answered "busy, try again" forever (QA-PB-1)
+  Scenario Outline: A developer whose github_id names account 222 as a BSON <type> is never taken over by another account with its login (QA-PB-3)
+  Scenario: A legacy developer changed and changed back around my claim is still claimed, not a 500
+  Scenario: A claim and update of a hand-edited string _id store the same fields and BSON types as for an ObjectId (QA-PB-7)
+  Scenario: GET /devs lists a developer with a hand-edited string _id under that _id (QA-PB-4)
+  Scenario Outline: The operator tool lists a developer with the hand-edited github_id <github_id> that the API treats as legacy (QA-PB-5)
+  Scenario: Two guarded developers whose string _ids differ only in letter case can both be displaced (QA-PB-6)
+  Scenario Outline: A developer stored with the github_id <type> "<value>" is account 222's: mine to update, never another login holder's
+  Scenario Outline: A developer stored with the github_id <type> "<value>" is never taken over by another account holding its login
+  Scenario Outline: A developer stored with the github_id <type> "<value>" names no account: claimed by my login, unless its avatar names another account
+  Scenario Outline: The operator tool does not list a developer stored with the owned github_id <type> "<value>"
+  Scenario Outline: The operator tool's claimable_by agrees with the API for the legacy github_id <type> "<value>" and <avatar>
+  Scenario: GET /devs and GET /search answer normal developers byte for byte as before
+  Scenario: A guarded developer whose string _id holds control characters is displaced to a printable placeholder
+
+# QA review: qa/web-tests/features/profile-busy-review.feature
+Feature: QA review of 503 profile_busy, web
+  Scenario: A 503 profile_busy on update says "try again" and keeps the typed values and the session
+  Scenario: A 503 profile_busy on delete says "try again", deletes nothing and closes the confirmation
+  Scenario: A 503 profile_busy on registration says "try again" and keeps the typed values and the session
+  Scenario: A 503 that is not profile_busy still shows the backend's own text
+```
+
 ## Feature: Reads and live updates require sign-in (Backend) — covers FR-2.1, FR-3.1, FR-4.1, US-5, Q6
 
 ```gherkin

@@ -1,4 +1,5 @@
 const Dev = require('../models/Dev');
+const { hydrateStored } = require('../models/utils/hydrateStored');
 const parseStringAsArray = require('../utils/parseStringAsArray');
 const { NEARBY_RADIUS_METERS } = require('../utils/nearby');
 
@@ -26,7 +27,9 @@ module.exports = {
             return res.status(400).json({ error: 'Invalid request', details: errors });
         }
 
-        const devs = await Dev.find({
+        // Lean, then hydrated with the stored _id (QA-PB-4): a hand-edited non-ObjectId _id is
+        // answered as stored; a normal dev exactly as before. $near keeps its distance order.
+        const stored = await Dev.find({
             techs: {
                 $in: techsArray,
             },
@@ -39,8 +42,8 @@ module.exports = {
                     $maxDistance: NEARBY_RADIUS_METERS,
                 },
             },
-        });
+        }, null, { lean: true });
 
-        return res.json({ devs });
+        return res.json({ devs: stored.map((doc) => hydrateStored(Dev, doc)) });
     },
 };

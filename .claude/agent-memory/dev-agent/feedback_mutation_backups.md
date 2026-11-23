@@ -9,4 +9,6 @@ Self-mutation runs (drop a guard, run the new scenarios, restore) are a standard
 
 **Why:** a stale backup restore looks like a clean revert, and the committed file would not be the one the suites ran against.
 
+A sed mutation that inserts `// MUTATION n` mid-line comments out the rest of the line (the closing `);`), so the "mutant" is a syntax error, not a behaviour change (profile-busy item, 2026-11-22): put the marker at the end of the line (`s/^\(.*\);$/... \1); \/\/ MUTATION 1/`).
+
 **How to apply:** undo each mutation with an Edit of the exact mutated line (marked `// MUTATION n`), or re-copy the backup right before every mutation. Afterwards `diff` the file against the backup and `grep -c MUTATION`, and make sure the last full suite ran on the final code. See [[worktree-bash-compound-commands]].

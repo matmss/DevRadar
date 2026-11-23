@@ -272,6 +272,23 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
   - Web: signed in as "alice" (222), the form is empty with "Salvar"; registering lists both profiles, the old one without a GitHub link ("Perfil do GitHub indisponível").
 - **Automated:** `qa/backend-tests/features/claim-guard.feature`, `qa/web-tests/features/claim-guard.feature`; the updated races in `legacy-merge.feature`; parser table in `unit/githubAvatarId.test.js`.
 
+## TC-037 — A profile write that gives up after concurrent changes answers 503 profile_busy
+- **Requirement:** FR-1.3, FR-1.8, FR-1.9, FR-5, FR-6
+- **Type:** Functional / Concurrency / Error handling | **P2**
+- **Preconditions:** The ownership service's retries are exhausted deterministically: every conditional claim of a legacy profile misses (legacy "alice" without an avatar, signed in as "alice"/222), or every displacement of the login's holder misses ("alice" owned by 111 and "alice-old" owned by 222, both with an older login state, signed in as "alice"/222).
+- **Steps / expected result:**
+  - Claim exhausted: `POST /devs`, `PUT /devs/me`, `DELETE /devs/me` each answer 503 `{ error: "Profile is busy", code: "profile_busy", details: ["Too many concurrent changes to this profile; try again"] }`, JSON, header `Retry-After: 1`; the legacy profile is still legacy with its login; account 222 has no profile. The log has exactly one warn line `Gave up on <METHOD> <path>: profile_busy (503)` and no error line (no stack).
+  - `GET /devs/me` under the same conditions: 200 with the legacy profile (a read never claims, so never gives up).
+  - Login exhausted: `POST /devs` and `PUT /devs/me` answer the same 503; both profiles keep their logins and 222's techs are unchanged; same single warn line. An endless stream of older holders gives up after at most nine displacements with the same 503 (`claim-guard-review.feature`).
+  - Sign-in under login exhaustion: still succeeds (token issued, `GET /auth/me` 200); one "Could not refresh the developer login at sign-in" line; nothing changed.
+  - Error handler (unit): only a `ProfileBusyError` becomes 503 `profile_busy` with `Retry-After`; a plain `Error` with `status` 503, with `code: 'profile_busy'`, or named `ProfileBusyError` stays 500 `internal_error`, logged as an error, without `Retry-After`.
+  - Web: a failed save or delete answered 503 `profile_busy` shows "Perfil ocupado, tente novamente." (not the backend text) and never ends the session; any other failure shows the backend's `error: details` as before.
+  - Mobile: a request answered 503 `profile_busy` (the app makes no profile writes today; the search is the request that shows API errors) shows "Perfil ocupado, tente novamente." instead of its own failure message, and is not an auth failure.
+  - QA review (`profile-busy-review.feature`, backend and web): after a 503 nothing stays queued and the next write of the account (and of the login holder's account) succeeds; 6 concurrent writes that all give up are each 503 with `Retry-After: 1`; a write that gives up pushes no `new-dev`/`dev-updated`/`dev-deleted`; a 500 or a 200 carries no `Retry-After`; a legacy profile whose hand-edited `_id` or `github_id` Mongoose cannot read is never answered "busy, try again" forever (QA-PB-1); web keeps the typed values, the session and the profile on a 503 save/delete/registration, closes the delete confirmation, and shows any other 503's own text. Re-check of the QA-PB-1 fix: a github_id naming another account as a numeric string or Decimal128 is never taken over by login (QA-PB-3); a dev changed and changed back around a claim is still claimed (no false 500); a driver-path write stores the same field types as the model path (QA-PB-7); GET /devs keeps a hand-edited string `_id` (QA-PB-4); the operator CLI lists what the API treats as legacy (QA-PB-5); two string `_id`s differing only in case can both be displaced (QA-PB-6). Final re-check (`utils/githubId.js` storedGithubId): every owned form ("222", Decimal128 2.22E+2/222.000, Long, Double) is the account's (read, updated, string/Decimal128 normalized to Int32) and never taken over by login; every legacy form ("0222", "222 x", -5, 1.5, Infinity, true, a document, Decimal128 222.5/0) is claimed by the login's holder with the claim guard first; the CLI lists exactly the legacy forms and its claimable_by agrees with the API; GET /devs and GET /search answer normal developers byte for byte as `Dev.find()` did; a string `_id` with control characters gets a printable `_stale_s_<hex>` placeholder.
+  - QA-PB-1 fix (`profile-busy.feature`): conditional writes match the stored `_id`/`github_id`. A legacy profile with the hand-edited string `_id` "legacy-alice-1" is claimed by `PUT`, updated again, read by `GET /devs/me` (responses carry `_id` "legacy-alice-1"), and deleted (204, `dev-deleted` with that `_id`). A legacy profile with the hand-edited `github_id` "not-a-number", "" or "0" is claimed and stores 222, then deleted. A holder whose `github_username_seen_at` is the string "garbage" (no "older than" filter matches it): `POST`/`PUT` answer 500 `internal_error` without `Retry-After`, one error line "Developer <_id> cannot be displaced", nothing changed; sign-in still succeeds with the same error line.
+  - QA-PB-3 to QA-PB-6 fixes (`profile-busy.feature`, `unit/{storedOwnership,githubAvatarId}.test.js`): one ownership rule for a stored `github_id` (`storedGithubId`, API and CLI): any numeric BSON type or the canonical string "222" is account 222's; missing, null, "", "0222", "not-a-number", 0, negatives, non-integers are legacy. Account 222 reads, updates and deletes its profile stored as String, Decimal128, Int32, Long or Double; after its update a String or Decimal128 is stored as Int32 222 (Int32, Long, Double stay as they are). `GET /search` answers a hand-edited string `_id` as stored. Placeholders: `_stale_<24 hex>` for ObjectIds, `_stale_s_<hex>`/`_stale_x_<hex>` otherwise, distinct case-insensitively and printable.
+- **Automated:** `qa/backend-tests/features/profile-busy.feature`, `profile-busy-review.feature` (QA), `claim-guard-review.feature` (endless stream); `qa/web-tests/features/profile-busy-review.feature` (QA); `qa/backend-tests/unit/{errorHandler,storedOwnership,githubAvatarId}.test.js`; `dev/web/src/services/{requestErrors,api}.test.js`; `dev/tests/mobile/{services/authErrors,pages/Main}.test.js`.
+
 ## TC-017 (Mobile) — Map centers on current location
 - **Requirement:** FR-6.1
 - **Type:** Functional | **P2**
@@ -316,9 +333,9 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 
 | Requirement | Test Cases |
 |---|---|
-| FR-1 | TC-001, TC-002, TC-003, TC-004, TC-011, TC-012, TC-013, TC-031, TC-032 |
+| FR-1 | TC-001, TC-002, TC-003, TC-004, TC-011, TC-012, TC-013, TC-031, TC-032, TC-037 |
 | US-3 (auth) | TC-001, TC-002, TC-011, TC-012, TC-025 |
-| US-4 (auth) | TC-031, TC-032, TC-033 |
+| US-4 (auth) | TC-031, TC-032, TC-033, TC-037 |
 | US-6 (auth) | TC-015, TC-016, TC-023, TC-024, TC-025, TC-026, TC-029, TC-033 |
 | US-5 (auth) | TC-027, TC-028 |
 | US-7 (auth) | TC-019, TC-030, TC-034 |
@@ -326,8 +343,8 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 | FR-2 | TC-007, TC-027 |
 | FR-3 | TC-008, TC-009, TC-010, TC-027 |
 | FR-4 | TC-004, TC-005, TC-006, TC-019, TC-028, TC-031, TC-032 |
-| FR-5 | TC-014, TC-015, TC-016, TC-029, TC-033 |
-| FR-6 | TC-017, TC-018, TC-019, TC-020, TC-021, TC-030 |
+| FR-5 | TC-014, TC-015, TC-016, TC-029, TC-033, TC-037 |
+| FR-6 | TC-017, TC-018, TC-019, TC-020, TC-021, TC-030, TC-037 |
 | FR-7 | TC-012, TC-034, TC-035, TC-036 |
 | NFR-1/2 | TC-010 |
 | NFR-7 | TC-022 |

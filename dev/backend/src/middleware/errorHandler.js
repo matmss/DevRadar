@@ -6,12 +6,27 @@
 // body-parser attaches the raw body to its errors, and JSON.parse messages quote the input, so
 // either would write one-time sign-in codes (or anything else a client sent) to the logs.
 // Body errors log `err.type` only; other errors log name, message and stack server-side.
+//
+// 5xx answers: only a ProfileBusyError (utils/profileBusyError.js: a profile write gave up after
+// too many concurrent changes, a retry can succeed) is 503 profile_busy with `Retry-After`,
+// logged as one warning line. Any other error is 500 internal_error, whatever `status` it carries.
+
+const { PROFILE_BUSY, isProfileBusy } = require('../utils/profileBusyError');
 
 /**
  * @param {Error & { type?: string, status?: number, statusCode?: number, expose?: boolean }} err
- * @returns {{ status: number, code: string, error: string, details: string[] }}
+ * @returns {{ status: number, code: string, error: string, details: string[], headers?: Record<string, string> }}
  */
 function describeError(err) {
+  if (isProfileBusy(err)) {
+    return {
+      status: PROFILE_BUSY.status,
+      code: PROFILE_BUSY.code,
+      error: PROFILE_BUSY.error,
+      details: [...PROFILE_BUSY.details],
+      headers: { 'Retry-After': String(PROFILE_BUSY.retryAfterSeconds) },
+    };
+  }
   if (err.type === 'entity.parse.failed') {
     return { status: 400, code: 'body_invalid', error: 'Invalid request body', details: ['The request body is not valid JSON'] };
   }
@@ -45,13 +60,17 @@ function errorHandler(err, req, res, next) {
     return;
   }
 
-  const { status, code, error, details } = describeError(err);
-  if (err.type) {
+  const { status, code, error, details, headers } = describeError(err);
+  if (isProfileBusy(err)) {
+    // Expected under contention, not a server fault: one line, no stack, no message.
+    console.warn(`Gave up on ${req.method} ${req.path}: ${code} (${status})`);
+  } else if (err.type) {
     console.warn(`Rejected request to ${req.method} ${req.path}: ${err.type} (${status})`);
   } else if (status >= 500) {
     console.error(`Unhandled error on ${req.method} ${req.path}:`, err.stack || `${err.name}: ${err.message}`);
   }
 
+  if (headers) res.set(headers);
   res.status(status).json({ error, code, details });
 }
 

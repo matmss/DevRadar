@@ -1,4 +1,5 @@
 const Dev = require('../models/Dev');
+const { hydrateStored } = require('../models/utils/hydrateStored');
 const parseStringAsArray = require('../utils/parseStringAsArray');
 const validateDevInput = require('../utils/validateDevInput');
 const { EVENT, announce, announceStored } = require('../services/devEvents');
@@ -11,6 +12,7 @@ const {
   loginFields,
   refreshLogin,
   updateOwnDev,
+  deleteOwnDev,
   inAccountOrder,
   inLoginOrder,
   displaceStaleHolder,
@@ -107,10 +109,12 @@ async function createOwnDev(user, fields) {
 // decided by services/devOwnership.js (by github_id; legacy devs by login, claimed on the first
 // write). The /devs/me routes take no username or id, so nobody can touch another user's dev.
 module.exports = {
+    // Read lean and hydrated here, so a hand-edited non-ObjectId _id is listed under that _id
+    // (QA-PB-4); a normal dev is answered exactly as Dev.find() would.
     async index(req, res) {
-      const devs = await Dev.find();
+      const stored = await Dev.find({}, null, { lean: true });
 
-      return res.json(devs)
+      return res.json(stored.map((doc) => hydrateStored(Dev, doc)))
     },
 
     // The name, avatar and bio come from the profile captured at sign-in (the token's `profile`
@@ -230,7 +234,7 @@ module.exports = {
         const { dev: own } = await resolveOwnDev(user, { claim: true });
         if (!own) return null;
 
-        const deleted = await Dev.findOneAndDelete({ _id: own._id, github_id: user.github_id });
+        const deleted = await deleteOwnDev(own, user);
 
         // Subscribers that could show the dev (its last position and techs) remove the marker.
         // Only the ids and the login: nothing else about a deleted profile is sent.
