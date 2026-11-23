@@ -375,6 +375,23 @@ Feature: A profile write that gives up after concurrent changes answers 503 prof
   Scenario: Reading my profile never gives up, even when every claim would miss
   Scenario Outline: Taking my login loses every race against its holder: <method> <path> answers 503 profile_busy  (POST /devs, PUT /devs/me)
   Scenario: Sign-in still succeeds when taking my login loses every race against its holder
+
+# QA review: qa/backend-tests/features/profile-busy-review.feature
+Feature: QA review of 503 profile_busy (retry exhaustion)
+  Scenario Outline: After a 503 profile_busy on <method> <path>, nothing stays queued and my next write succeeds
+  Scenario: After a 503 profile_busy that held the login holder's key too, the holder's account can still write
+  Scenario: Many concurrent writes of one account that all give up are each answered 503 and leave the queue empty
+  Scenario Outline: A <method> <path> that gives up pushes no live event
+  Scenario: An unexpected server error is still 500 internal_error, without Retry-After
+  Scenario: A write that does not give up carries no Retry-After
+  Scenario Outline: A legacy developer stored with <hand edit> is never answered "busy, try again" forever (QA-PB-1)
+
+# QA review: qa/web-tests/features/profile-busy-review.feature
+Feature: QA review of 503 profile_busy, web
+  Scenario: A 503 profile_busy on update says "try again" and keeps the typed values and the session
+  Scenario: A 503 profile_busy on delete says "try again", deletes nothing and closes the confirmation
+  Scenario: A 503 profile_busy on registration says "try again" and keeps the typed values and the session
+  Scenario: A 503 that is not profile_busy still shows the backend's own text
 ```
 
 ## Feature: Reads and live updates require sign-in (Backend) — covers FR-2.1, FR-3.1, FR-4.1, US-5, Q6
