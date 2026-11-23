@@ -1,7 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, Image, View, Text, TextInput, TouchableOpacity } from 'react-native';
+import { AppState, Linking, StyleSheet, Image, View, Text, TextInput, TouchableOpacity } from 'react-native';
 import MapView, { Marker, Callout } from 'react-native-maps';
-import { requestForegroundPermissionsAsync, getCurrentPositionAsync } from 'expo-location';
+import {
+  requestForegroundPermissionsAsync,
+  getForegroundPermissionsAsync,
+  getCurrentPositionAsync,
+} from 'expo-location';
 import { MaterialIcons } from '@expo/vector-icons';
 
 import api from '../services/api';
@@ -17,6 +21,21 @@ import { githubLoginOf } from '../services/githubLogin';
 import { getToken } from '../services/session';
 import { MESSAGES, requestFailureMessage } from '../services/authErrors';
 
+// Why there is no map yet. DENIED: the system can still ask ("Tentar novamente" asks).
+// BLOCKED: it will not ask any more, the user has to allow it in the device settings.
+// UNAVAILABLE: no position (services off, no fix, the permission request itself failed).
+const LOCATION_ERROR = {
+  DENIED: 'denied',
+  BLOCKED: 'blocked',
+  UNAVAILABLE: 'unavailable',
+};
+
+const LOCATION_ERROR_MESSAGE = {
+  [LOCATION_ERROR.DENIED]: MESSAGES.locationDenied,
+  [LOCATION_ERROR.BLOCKED]: MESSAGES.locationBlocked,
+  [LOCATION_ERROR.UNAVAILABLE]: MESSAGES.locationUnavailable,
+};
+
 // Only reachable signed in (routes.js). /search and the socket both send the session token; an
 // auth failure from either ends the session in SessionProvider, which replaces this screen with
 // the sign-in screen (and unmounting closes the socket below).
@@ -25,9 +44,13 @@ function Main({ navigation }) {
   const [currentRegion, setCurrentRegion] = useState(null);
   const [techs, setTechs] = useState('');
   const [searchError, setSearchError] = useState(null);
+  // One of LOCATION_ERROR, or null.
   const [locationError, setLocationError] = useState(null);
   // False once the screen is gone (sign-out, session ended): late async results are dropped.
   const mounted = useRef(true);
+  // True while a location check runs: a second one (a retry tap, a return to the foreground) is
+  // dropped instead of asking twice.
+  const checkingLocation = useRef(false);
 
   useEffect(() => {
     mounted.current = true;
@@ -37,13 +60,21 @@ function Main({ navigation }) {
   }, []);
 
   // Location can fail (services off, no fix, permission denied): say so instead of a blank screen
-  // or an unhandled rejection, and let the user try again.
-  const loadInitialPosition = useCallback(async () => {
-    setLocationError(null);
+  // or an unhandled rejection, and let the user try again. `ask: false` only reads the permission
+  // (never a system prompt) and keeps the current message on screen until the answer.
+  const loadInitialPosition = useCallback(async ({ ask = true } = {}) => {
+    if (checkingLocation.current) return;
+    checkingLocation.current = true;
+    if (ask) setLocationError(null);
     try {
-      const { granted } = await requestForegroundPermissionsAsync();
-      if (!granted) {
-        if (mounted.current) setLocationError(MESSAGES.locationDenied);
+      const permission = ask
+        ? await requestForegroundPermissionsAsync()
+        : await getForegroundPermissionsAsync();
+      if (!mounted.current) return;
+      if (!permission.granted) {
+        // canAskAgain false: the system shows no prompt any more (iOS after the first denial,
+        // Android after "don't ask again" or the second denial), only the settings can allow it.
+        setLocationError(permission.canAskAgain === false ? LOCATION_ERROR.BLOCKED : LOCATION_ERROR.DENIED);
         return;
       }
 
@@ -54,6 +85,7 @@ function Main({ navigation }) {
       const { latitude, longitude } = coords;
 
       if (mounted.current) {
+        setLocationError(null);
         setCurrentRegion({
           latitude,
           longitude,
@@ -63,13 +95,35 @@ function Main({ navigation }) {
       }
     } catch (err) {
       console.warn('Could not get the current location:', err.message);
-      if (mounted.current) setLocationError(MESSAGES.locationUnavailable);
+      if (mounted.current) setLocationError(LOCATION_ERROR.UNAVAILABLE);
+    } finally {
+      checkingLocation.current = false;
     }
   }, []);
 
   useEffect(() => {
     loadInitialPosition();
   }, [loadInitialPosition]);
+
+  // While the screen says the permission is missing, coming back to the app (typically from the
+  // settings) checks it again. Only a read, never a prompt: the system dialog itself takes the app
+  // out of 'active' and back on both platforms, so asking here would ask again and again.
+  const permissionMissing = locationError === LOCATION_ERROR.DENIED || locationError === LOCATION_ERROR.BLOCKED;
+  useEffect(() => {
+    if (!permissionMissing) return undefined;
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && mounted.current) loadInitialPosition({ ask: false });
+    });
+    return () => subscription.remove();
+  }, [permissionMissing, loadInitialPosition]);
+
+  async function openSettings() {
+    try {
+      await Linking.openSettings();
+    } catch (err) {
+      console.warn('Could not open the device settings:', err && err.message);
+    }
+  }
 
   // One listener per event for the screen's lifetime (it used to add another on every change of
   // `devs`). Live pushes change the markers without a new search: a new or updated dev replaces
@@ -126,11 +180,30 @@ function Main({ navigation }) {
 
   if(!currentRegion) {
     if (!locationError) return null;
+    const blocked = locationError === LOCATION_ERROR.BLOCKED;
     return (
       <View testID="location-error" style={styles.locationError}>
-        <Text accessibilityRole="alert" style={styles.locationErrorText}>{locationError}</Text>
-        <TouchableOpacity testID="location-retry-button" accessibilityRole="button" onPress={loadInitialPosition} style={styles.retryButton}>
-          <Text style={styles.retryButtonText}>Tentar novamente</Text>
+        <Text accessibilityRole="alert" style={styles.locationErrorText}>{LOCATION_ERROR_MESSAGE[locationError]}</Text>
+        {blocked ? (
+          <TouchableOpacity
+            testID="open-settings"
+            accessibilityRole="button"
+            accessibilityLabel="Abrir configurações"
+            accessibilityHint="Abre as configurações do aparelho para permitir a localização"
+            onPress={openSettings}
+            style={styles.retryButton}
+          >
+            <Text style={styles.retryButtonText}>Abrir configurações</Text>
+          </TouchableOpacity>
+        ) : null}
+        <TouchableOpacity
+          testID="location-retry-button"
+          accessibilityRole="button"
+          accessibilityLabel="Tentar novamente"
+          onPress={() => loadInitialPosition()}
+          style={blocked ? styles.secondaryButton : styles.retryButton}
+        >
+          <Text style={blocked ? styles.secondaryButtonText : styles.retryButtonText}>Tentar novamente</Text>
         </TouchableOpacity>
       </View>
     );
@@ -265,6 +338,21 @@ const styles = StyleSheet.create({
   },
   retryButtonText: {
     color: '#FFF',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  secondaryButton: {
+    marginTop: 12,
+    height: 46,
+    paddingHorizontal: 25,
+    borderRadius: 23,
+    borderWidth: 2,
+    borderColor: '#8E4DFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  secondaryButtonText: {
+    color: '#8E4DFF',
     fontWeight: 'bold',
     fontSize: 16,
   },

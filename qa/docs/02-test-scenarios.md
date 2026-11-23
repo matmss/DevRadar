@@ -664,6 +664,37 @@ Feature: Search and view developers on the map
     When the app launches
     Then the app should not crash
     And the map should not attempt to render without a region
+
+  # Location-settings change (FR-6.1). Covered by Jest (dev/tests/mobile/pages/Main.test.js,
+  # expo-location, Linking and AppState mocked); on a device it is manual (see TC-021).
+  @edge
+  Scenario: Denied while the system can still ask: "Tentar novamente" asks again
+    Given location permission was denied and the system can still ask
+    When the map screen opens
+    Then I see "Permita o acesso à localização para ver os devs perto de você" and "Tentar novamente"
+    And there is no "Abrir configurações"
+    When I tap "Tentar novamente" and allow it
+    Then the map is shown
+
+  @edge
+  Scenario: Denied for good: the message points to the device settings
+    Given location permission was denied and the system will not ask again
+    When the map screen opens
+    Then I see "A localização está bloqueada para o DevRadar. Ative-a nas configurações do aparelho para ver os devs perto de você."
+    And I see "Abrir configurações" and "Tentar novamente"
+    When I tap "Abrir configurações"
+    Then the app's page in the device settings opens
+    # A failure to open the settings is logged and the screen stays (no crash).
+
+  @edge
+  Scenario: Allowing it in the settings and returning shows the map without another prompt
+    Given the "bloqueada" message is shown
+    When I allow location in the device settings and return to the app
+    Then the map is shown, and no system prompt appeared
+
+  Scenario: Returning to the app re-checks only while a permission message is shown
+    # Not when the map is shown or location is unavailable (services off), not after leaving the
+    # screen, never as a prompt, and never two checks at once.
 ```
 
 ## Cross-cutting / Integration Scenarios — covers FR-4, NFR-3

@@ -30,6 +30,9 @@ appId: com.matmss.mobile
     timeout: 20000
 - assertNotVisible: "has stopped" # generic Android crash-dialog text; adjust per OS under test
 # The map screen explains why there is no map, with a retry (dev/mobile/src/pages/Main.js).
+# A first "Don't allow" on Android leaves canAskAgain true, so this is the "Permita" message. A
+# permanent denial (iOS after the first one, Android "Don't ask again") shows "A localização está
+# bloqueada..." with "Abrir configurações" (id open-settings) instead; manual, see TC-021.
 - assertVisible: "Permita o acesso à localização.*"
 - assertVisible:
     id: "location-retry-button"

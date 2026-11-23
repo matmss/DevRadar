@@ -319,6 +319,12 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 - **Type:** Exploratory → promoted to regression | **P2**
 - **Steps:** Deny location permission at OS level, launch app.
 - **Expected result:** App does not crash; renders `null`/loading state gracefully (currently returns `null` indefinitely with no retry affordance — UX gap to flag, not necessarily a hard bug).
+- **Since the location-settings change (FR-6.1):** the UX gap is closed. The screen (`testID` `location-error`) explains why there is no map:
+  - Denied, the system can still ask (`canAskAgain` true; Android's first "Don't allow"): "Permita o acesso à localização para ver os devs perto de você", "Tentar novamente" (`location-retry-button`) shows the system prompt again; allowing it shows the map. No "Abrir configurações".
+  - Denied for good (`canAskAgain` false; iOS after the first denial, Android after "Don't ask again" or the second denial): "A localização está bloqueada para o DevRadar. Ative-a nas configurações do aparelho para ver os devs perto de você.", "Abrir configurações" (`open-settings`) opens the app's page in the device settings, "Tentar novamente" checks again. Both are buttons with accessibility labels. If the settings cannot be opened: one warn log line, the screen stays.
+  - Allow location in the settings, return to the app: the map appears without a system prompt and without tapping anything. Still denied on return: the message stays (no blank screen in between). While the system prompt itself is up, nothing extra is checked (no prompt storm).
+  - Location unavailable (services off, no fix): "Não foi possível obter sua localização. Verifique se ela está ativada e tente novamente" with "Tentar novamente"; returning to the app does not re-check.
+- **Automated:** Jest `dev/tests/mobile/pages/Main.test.js` ("location", "location permission": both denied variants, open settings resolving/rejecting/throwing, foreground re-check granted/still denied/now blocked/no position, no re-check without a permission message or after unmount, one check in flight). Maestro `qa/mobile-tests/maestro/03-permission-denied-no-crash.yaml` (Android, first denial: the "Permita" message). Manual on a device: "Don't ask again" / second denial, "Abrir configurações", return from the settings, iOS.
 
 ## TC-022 — Config portability: mobile base URL is hardcoded
 - **Requirement:** NFR-7

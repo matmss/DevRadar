@@ -204,7 +204,10 @@ Routes (`dev/backend/src/routes.js`):
   scoped to the current map region (`services/socket.js`, token in the handshake `auth` payload)
   to receive live `new-dev`, `dev-updated` and `dev-deleted` pushes (merged by `services/devList.js`:
   replace by `_id`, then `github_id`, then (legacy only) case-insensitive login, add if new, remove on delete). It only connects if still mounted and the token the search
-  used is still the session's (QA-AUTH4-1).
+  used is still the session's (QA-AUTH4-1). A location permission denied with `canAskAgain: false`
+  shows "Abrir configurações" (`Linking.openSettings()`); while a denied message is up, returning to
+  the foreground re-reads the permission with `getForegroundPermissionsAsync` (never a prompt: the
+  system dialog itself toggles `AppState`), one check at a time.
   `dev/mobile/src/pages/Profile.js` is just a `WebView` pointed at the dev's GitHub profile URL
   (only for a valid GitHub login, `services/githubLogin.js`) —
   there's no native profile screen.

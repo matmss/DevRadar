@@ -8,6 +8,7 @@ jest.setTimeout(30000);
 
 jest.mock('expo-location', () => ({
   requestForegroundPermissionsAsync: jest.fn(),
+  getForegroundPermissionsAsync: jest.fn(),
   getCurrentPositionAsync: jest.fn(),
 }));
 jest.mock('react-native-maps', () => {
@@ -32,6 +33,8 @@ jest.mock('socket.io-client', () => {
 jest.mock('../../../mobile/src/services/session', () => ({ getToken: jest.fn() }));
 
 const Location = require('expo-location');
+// Both are jest mocks from the react-native preset (AppState.addEventListener, Linking.openSettings).
+const { AppState, Linking } = require('react-native');
 const { fakeSocket } = require('socket.io-client').default;
 const { getToken } = require('../../../mobile/src/services/session');
 const { default: api } = require('../../../mobile/src/services/api');
@@ -60,6 +63,24 @@ async function unmountOnce(test, renderer) {
 
 /** The handlers Main registered for `event` (the fake socket records every `on`). */
 const handlersFor = (event) => fakeSocket.on.mock.calls.filter(([name]) => name === event).map(([, fn]) => fn);
+
+// AppState 'change' listeners that are still registered (each test starts with none).
+let appStateListeners = new Set();
+
+/** Every AppState 'change' handler ever registered, removed or not. */
+const allAppStateHandlers = () => AppState.addEventListener.mock.calls.filter(([event]) => event === 'change').map(([, fn]) => fn);
+
+/** A promise the test settles itself, to hold a check in flight. */
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+const DENIED = { granted: false, status: 'denied', canAskAgain: true };
+const BLOCKED = { granted: false, status: 'denied', canAskAgain: false };
+const GRANTED = { granted: true, status: 'granted', canAskAgain: true };
 
 /** Mounts Main for the running test; every helper on the result belongs to that test. */
 async function mount() {
@@ -101,6 +122,12 @@ async function mount() {
       assertRunning(test);
       await unmountOnce(test, renderer);
     },
+    /** The app changes state (e.g. 'active' back from the settings): the registered listeners hear it. */
+    async appState(state) {
+      assertRunning(test);
+      await act(async () => { [...appStateListeners].forEach(fn => fn(state)); });
+    },
+    hasText: (text) => view.root().findAllByProps({ children: text }).length > 0,
     byTestId: (testID) => view.root().findAll((node) => node.props.testID === testID && typeof node.type === 'string'),
     /** The markers on the map, in order: id and coordinate. */
     markers: () => view.root()
@@ -120,8 +147,24 @@ describe('Main', () => {
     jest.clearAllMocks();
     warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     getToken.mockReturnValue('token-1');
+    // clearAllMocks keeps unused mock*Once values: a test that ends before using one would hand
+    // it to the next test. Reset the mocks whose answers the tests queue.
+    [
+      Location.requestForegroundPermissionsAsync,
+      Location.getForegroundPermissionsAsync,
+      Location.getCurrentPositionAsync,
+      AppState.addEventListener,
+      Linking.openSettings,
+    ].forEach(mock => mock.mockReset());
     Location.requestForegroundPermissionsAsync.mockResolvedValue({ granted: true });
+    Location.getForegroundPermissionsAsync.mockResolvedValue(GRANTED);
     Location.getCurrentPositionAsync.mockResolvedValue(POSITION);
+    appStateListeners = new Set();
+    AppState.addEventListener.mockImplementation((event, fn) => {
+      if (event === 'change') appStateListeners.add(fn);
+      return { remove: jest.fn(() => { appStateListeners.delete(fn); }) };
+    });
+    Linking.openSettings.mockResolvedValue(undefined);
   });
   afterEach(async () => {
     const test = currentTest;
@@ -150,10 +193,249 @@ describe('Main', () => {
       expect(view.root().findAllByProps({ children: MESSAGES.locationUnavailable }).length).toBeGreaterThan(0);
     });
 
-    it('asks for the permission when it is denied', async () => {
+    it('asks for the permission when it is denied (a response without canAskAgain counts as "can ask")', async () => {
       Location.requestForegroundPermissionsAsync.mockResolvedValueOnce({ granted: false });
       const view = await mount();
       expect(view.root().findAllByProps({ children: MESSAGES.locationDenied }).length).toBeGreaterThan(0);
+      expect(Location.getCurrentPositionAsync).not.toHaveBeenCalled();
+    });
+
+    it('does not check the location again on returning to the app when it could not be read (services off)', async () => {
+      Location.getCurrentPositionAsync.mockRejectedValueOnce(new Error('Location services are disabled'));
+      const view = await mount();
+      await view.appState('active');
+      await view.flush();
+      expect(Location.getForegroundPermissionsAsync).not.toHaveBeenCalled();
+      expect(Location.requestForegroundPermissionsAsync).toHaveBeenCalledTimes(1);
+      expect(view.hasText(MESSAGES.locationUnavailable)).toBe(true);
+      expect(view.byTestId('open-settings')).toHaveLength(0);
+    });
+  });
+
+  // Backlog "location-denied message points to system settings": once the system will not ask
+  // any more (canAskAgain false), "Tentar novamente" alone was a dead end.
+  describe('location permission', () => {
+    it('denied but the system can still ask: the "allow" message and a retry that asks again', async () => {
+      Location.requestForegroundPermissionsAsync.mockResolvedValueOnce(DENIED);
+      const view = await mount();
+      expect(view.byTestId('location-error')).toHaveLength(1);
+      expect(view.hasText(MESSAGES.locationDenied)).toBe(true);
+      expect(view.hasText(MESSAGES.locationBlocked)).toBe(false);
+      expect(view.byTestId('open-settings')).toHaveLength(0);
+
+      await view.press('location-retry-button');
+      await view.flush();
+      expect(Location.requestForegroundPermissionsAsync).toHaveBeenCalledTimes(2);
+      expect(view.byTestId('map-view')).toHaveLength(1);
+    });
+
+    it('blocked (the system will not ask again): says to enable it in the settings, with "Abrir configurações" and "Tentar novamente"', async () => {
+      Location.requestForegroundPermissionsAsync.mockResolvedValueOnce(BLOCKED);
+      const view = await mount();
+      expect(view.byTestId('location-error')).toHaveLength(1);
+      expect(view.hasText(MESSAGES.locationBlocked)).toBe(true);
+      expect(view.hasText(MESSAGES.locationDenied)).toBe(false);
+      expect(MESSAGES.locationBlocked).toBe('A localização está bloqueada para o DevRadar. Ative-a nas configurações do aparelho para ver os devs perto de você.');
+
+      const [settings] = view.byTestId('open-settings');
+      expect(settings.props.accessibilityRole).toBe('button');
+      expect(settings.props.accessibilityLabel).toBe('Abrir configurações');
+      expect(view.hasText('Abrir configurações')).toBe(true);
+      const [retry] = view.byTestId('location-retry-button');
+      expect(retry.props.accessibilityRole).toBe('button');
+      expect(retry.props.accessibilityLabel).toBe('Tentar novamente');
+      expect(Location.getCurrentPositionAsync).not.toHaveBeenCalled();
+      expect(Linking.openSettings).not.toHaveBeenCalled();
+    });
+
+    it('"Abrir configurações" opens the device settings and keeps the screen', async () => {
+      Location.requestForegroundPermissionsAsync.mockResolvedValueOnce(BLOCKED);
+      const view = await mount();
+      await view.press('open-settings');
+      await view.flush();
+      expect(Linking.openSettings).toHaveBeenCalledTimes(1);
+      expect(view.hasText(MESSAGES.locationBlocked)).toBe(true);
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['rejects', () => Promise.reject(new Error('Unable to open settings'))],
+      ['throws', () => { throw new Error('Unable to open settings'); }],
+    ])('if opening the settings %s: a warning, the screen stays, no unhandled rejection', async (_label, impl) => {
+      const unhandled = jest.fn();
+      process.on('unhandledRejection', unhandled);
+      try {
+        Location.requestForegroundPermissionsAsync.mockResolvedValueOnce(BLOCKED);
+        Linking.openSettings.mockImplementation(impl);
+        const view = await mount();
+        await view.press('open-settings');
+        await view.flush();
+        await view.flush();
+        expect(Linking.openSettings).toHaveBeenCalledTimes(1);
+        expect(warn).toHaveBeenCalledWith('Could not open the device settings:', 'Unable to open settings');
+        expect(view.byTestId('location-error')).toHaveLength(1);
+        expect(view.byTestId('open-settings')).toHaveLength(1);
+        expect(unhandled).not.toHaveBeenCalled();
+      } finally {
+        process.off('unhandledRejection', unhandled);
+      }
+    });
+
+    it('"Tentar novamente" while blocked checks the permission again and shows the map once it is allowed', async () => {
+      Location.requestForegroundPermissionsAsync.mockResolvedValueOnce(BLOCKED).mockResolvedValueOnce(BLOCKED);
+      const view = await mount();
+      await view.press('location-retry-button');
+      await view.flush();
+      expect(Location.requestForegroundPermissionsAsync).toHaveBeenCalledTimes(2);
+      expect(view.hasText(MESSAGES.locationBlocked)).toBe(true);
+
+      await view.press('location-retry-button');
+      await view.flush();
+      expect(Location.requestForegroundPermissionsAsync).toHaveBeenCalledTimes(3);
+      expect(view.byTestId('map-view')).toHaveLength(1);
+    });
+
+    it('back in the app after allowing it in the settings: checks without a prompt and shows the map', async () => {
+      Location.requestForegroundPermissionsAsync.mockResolvedValueOnce(BLOCKED);
+      const view = await mount();
+      await view.press('open-settings');
+      Location.getForegroundPermissionsAsync.mockResolvedValueOnce(GRANTED);
+
+      await view.appState('background');
+      await view.flush();
+      expect(Location.getForegroundPermissionsAsync).not.toHaveBeenCalled();
+
+      await view.appState('active');
+      await view.flush();
+      expect(Location.getForegroundPermissionsAsync).toHaveBeenCalledTimes(1);
+      expect(Location.requestForegroundPermissionsAsync).toHaveBeenCalledTimes(1); // never asked again
+      expect(view.byTestId('location-error')).toHaveLength(0);
+      expect(view.byTestId('map-view')).toHaveLength(1);
+      // The map is shown: no more checks on later returns.
+      expect(appStateListeners.size).toBe(0);
+      await view.appState('active');
+      await view.flush();
+      expect(Location.getForegroundPermissionsAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('back in the app still blocked: keeps the message on screen while checking, and after', async () => {
+      Location.requestForegroundPermissionsAsync.mockResolvedValueOnce(BLOCKED);
+      const view = await mount();
+      const check = deferred();
+      Location.getForegroundPermissionsAsync.mockReturnValueOnce(check.promise);
+
+      await view.appState('active');
+      expect(view.hasText(MESSAGES.locationBlocked)).toBe(true); // no blank screen meanwhile
+      await act(async () => { check.resolve(BLOCKED); });
+      await view.flush();
+      expect(view.hasText(MESSAGES.locationBlocked)).toBe(true);
+      expect(view.byTestId('open-settings')).toHaveLength(1);
+      expect(Location.getCurrentPositionAsync).not.toHaveBeenCalled();
+    });
+
+    it('back in the app while denied but askable: reads the permission, never prompts', async () => {
+      Location.requestForegroundPermissionsAsync.mockResolvedValueOnce(DENIED);
+      const view = await mount();
+      Location.getForegroundPermissionsAsync.mockResolvedValue(DENIED);
+
+      await view.appState('active');
+      await view.flush();
+      await view.appState('active');
+      await view.flush();
+      expect(Location.getForegroundPermissionsAsync).toHaveBeenCalledTimes(2);
+      expect(Location.requestForegroundPermissionsAsync).toHaveBeenCalledTimes(1);
+      expect(view.hasText(MESSAGES.locationDenied)).toBe(true);
+    });
+
+    it('back in the app, now blocked (the user chose "don\'t ask again" elsewhere): switches to the settings message', async () => {
+      Location.requestForegroundPermissionsAsync.mockResolvedValueOnce(DENIED);
+      const view = await mount();
+      Location.getForegroundPermissionsAsync.mockResolvedValueOnce(BLOCKED);
+      await view.appState('active');
+      await view.flush();
+      expect(view.hasText(MESSAGES.locationBlocked)).toBe(true);
+      expect(view.byTestId('open-settings')).toHaveLength(1);
+    });
+
+    it('back in the app, allowed, but no position: the "unavailable" message, and no more checks on return', async () => {
+      Location.requestForegroundPermissionsAsync.mockResolvedValueOnce(BLOCKED);
+      const view = await mount();
+      Location.getCurrentPositionAsync.mockRejectedValueOnce(new Error('Location services are disabled'));
+      await view.appState('active');
+      await view.flush();
+      expect(view.hasText(MESSAGES.locationUnavailable)).toBe(true);
+      expect(view.byTestId('open-settings')).toHaveLength(0);
+
+      await view.appState('active');
+      await view.flush();
+      expect(Location.getForegroundPermissionsAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('never checks on returning to the app when there is no error (map shown)', async () => {
+      const view = await mount();
+      expect(view.byTestId('map-view')).toHaveLength(1);
+      await view.appState('active');
+      await view.flush();
+      expect(AppState.addEventListener).not.toHaveBeenCalled();
+      expect(Location.getForegroundPermissionsAsync).not.toHaveBeenCalled();
+      expect(Location.requestForegroundPermissionsAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('one check at a time: repeated returns and a retry tap during a check do not start another', async () => {
+      Location.requestForegroundPermissionsAsync.mockResolvedValueOnce(BLOCKED);
+      const view = await mount();
+      const check = deferred();
+      Location.getForegroundPermissionsAsync.mockReturnValueOnce(check.promise);
+
+      await view.appState('active');
+      await view.appState('active');
+      await view.appState('active');
+      await view.press('location-retry-button');
+      expect(Location.getForegroundPermissionsAsync).toHaveBeenCalledTimes(1);
+      expect(Location.requestForegroundPermissionsAsync).toHaveBeenCalledTimes(1);
+
+      await act(async () => { check.resolve(GRANTED); });
+      await view.flush();
+      expect(Location.getCurrentPositionAsync).toHaveBeenCalledTimes(1);
+      expect(view.byTestId('map-view')).toHaveLength(1);
+    });
+
+    it('the system prompt taking the app out of "active" and back checks nothing (no prompt storm)', async () => {
+      const request = deferred();
+      Location.requestForegroundPermissionsAsync.mockReturnValueOnce(request.promise);
+      const view = await mount();
+      await view.appState('inactive');
+      await view.appState('active');
+      expect(Location.getForegroundPermissionsAsync).not.toHaveBeenCalled();
+      await act(async () => { request.resolve(BLOCKED); });
+      await view.flush();
+      expect(Location.requestForegroundPermissionsAsync).toHaveBeenCalledTimes(1);
+      expect(view.hasText(MESSAGES.locationBlocked)).toBe(true);
+    });
+
+    it('removes the AppState listener on unmount, and a late event checks nothing', async () => {
+      Location.requestForegroundPermissionsAsync.mockResolvedValueOnce(BLOCKED);
+      const view = await mount();
+      expect(appStateListeners.size).toBe(1);
+      const [handler] = allAppStateHandlers();
+      await view.unmount();
+      expect(appStateListeners.size).toBe(0);
+
+      await act(async () => { handler('active'); });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+      expect(Location.getForegroundPermissionsAsync).not.toHaveBeenCalled();
+    });
+
+    it('a check still in flight at unmount reads no position and changes nothing', async () => {
+      Location.requestForegroundPermissionsAsync.mockResolvedValueOnce(BLOCKED);
+      const view = await mount();
+      const check = deferred();
+      Location.getForegroundPermissionsAsync.mockReturnValueOnce(check.promise);
+      await view.appState('active');
+      await view.unmount();
+
+      await act(async () => { check.resolve(GRANTED); });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
       expect(Location.getCurrentPositionAsync).not.toHaveBeenCalled();
     });
   });
