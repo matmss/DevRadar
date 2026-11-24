@@ -11,7 +11,7 @@ that owns all testing — the two top-level folders mirror each other: `dev/` is
 | Layer | Path | Stack | Role |
 |---|---|---|---|
 | Backend | [`dev/backend/`](dev/backend/) | Node.js, Express 5, Mongoose 9 (MongoDB), Socket.io 4 | REST API, geospatial search, real-time push of new devs |
-| Web | [`dev/web/`](dev/web/) | React 18 (Create React App) | Browser UI to register a developer and view the full list |
+| Web | [`dev/web/`](dev/web/) | React 18 (Vite) | Browser UI to register a developer and view the full list |
 | Mobile | [`dev/mobile/`](dev/mobile/) | React Native / Expo SDK 57, `react-native-maps` | Map UI to search nearby devs by tech, view profiles, receive live updates |
 | QA | [`qa/`](qa/) | Cucumber.js, Playwright + BDD, Detox/Maestro | Docs, automated tests, and a unified test runner for all three layers above |
 
@@ -34,14 +34,14 @@ mounts two routes ([`routes.js`](dev/backend/src/routes.js)):
 - [`websocket.js`](dev/backend/src/websocket.js) tracks each connected socket's coordinates and
   techs in memory, and does the "who's nearby" matching that drives the real-time push.
 
-**Web** ([`App.js`](dev/web/src/App.js)) is a registration form plus a flat list — CRUD against
+**Web** ([`App.jsx`](dev/web/src/App.jsx)) is a registration form plus a flat list — CRUD against
 `/devs`, no map.
 
 **Mobile** ([`Main.js`](dev/mobile/src/pages/Main.js)) is the map experience — reads device
 location via `expo-location`, calls `/search`, opens a Socket.io connection scoped to the
 visible region, and renders dev pins with a profile callout. Its backend URL is
 environment-configurable via `EXPO_PUBLIC_API_URL` (see [`mobile/.env.example`](dev/mobile/.env.example)),
-falling back to `localhost:3333`; web uses the equivalent `REACT_APP_API_URL` convention.
+falling back to `localhost:3333`; web uses the equivalent `VITE_API_URL` (Vite) convention.
 
 ## QA workspace
 

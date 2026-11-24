@@ -19,7 +19,7 @@ For each layer: (a) native fit with the actual stack, (b) first-class or well-su
 
 Rejected: **Jest-Cucumber** (wraps Jest with Gherkin-like syntax but isn't real Gherkin — weaker fit for a project whose mandate is BDD-first); **Mocha+Chai** (no native Gherkin).
 
-## 3. Web — React (Create React App)
+## 3. Web — React (Vite)
 
 **Choice: Playwright + `playwright-bdd` (Cucumber-style `.feature` files on top of Playwright) + React Testing Library (component unit layer)**
 
@@ -27,7 +27,7 @@ Rejected: **Jest-Cucumber** (wraps Jest with Gherkin-like syntax but isn't real 
 |---|---|---|
 | E2E/BDD runner | `playwright-bdd` | Generates Playwright tests from real `.feature` files; keeps Gherkin as source of truth while getting Playwright's superior auto-waiting, tracing, and multi-browser support. |
 | Browser automation | Playwright | Mocks browser Geolocation API cleanly (`context.setGeolocation` / `context.grantPermissions`) — required for FR-5.1; faster and less flaky than Selenium/Cypress for this. |
-| Component/unit | React Testing Library + Jest (already a dependency via `react-scripts`) | Fast isolated checks of `DevForm`/`DevItem` rendering logic without a full browser. |
+| Component/unit | React Testing Library + Vitest (jsdom), in `dev/web` (`npm test`); Jest via `react-scripts` until the 2026-11-23 move to Vite, same tests and assertions | Fast isolated checks of `DevForm`/`DevItem` rendering logic without a full browser. |
 | Reporting | Playwright's built-in HTML reporter + Cucumber JSON (via `playwright-bdd`'s formatter) → merged into unified report | |
 
 Rejected: **Cypress + `cypress-cucumber-preprocessor`** — viable alternative, but Playwright was preferred for native multi-tab/WebSocket network interception (useful for asserting the real-time scenarios) and first-class geolocation mocking; Cypress's Gherkin plugin is also less actively maintained than `playwright-bdd`.

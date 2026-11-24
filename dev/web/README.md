@@ -1,68 +1,41 @@
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+# DevRadar web client
 
-## Available Scripts
+React 18, built with [Vite](https://vite.dev/) and tested with [Vitest](https://vitest.dev/)
+(jsdom + React Testing Library). GitHub sign-in, then your own profile (register, update,
+delete) and the list of registered developers. See `dev/docs/00-architecture.md`, Web.
 
-In the project directory, you can run:
+## Setup
 
-### `npm start`
+```bash
+cp .env.example .env   # VITE_API_URL, defaults to http://localhost:3333
+npm ci
+```
 
-Runs the app in the development mode.<br />
-Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+`VITE_API_URL` is inlined when the dev server starts or the build runs: restart `npm start`
+after changing it. Open the URL the dev server prints, `http://127.0.0.1:3000`: the backend's
+default `CORS_ORIGINS` (and its sign-in redirect allow-list) includes it. Avoid
+`http://localhost:3000`: on macOS another server listening on the wildcard `::` port 3000 can
+run next to Vite (which only warns; `strictPort` fails only against another 127.0.0.1:3000
+holder) and answers `localhost`, which browsers try as `::1` first. A deployed web origin must
+be added to the backend's `CORS_ORIGINS`.
 
-The page will reload if you make edits.<br />
-You will also see any lint errors in the console.
+## Scripts
 
-### `npm test`
+| Command | What it does |
+|---|---|
+| `npm start` | Dev server on `http://127.0.0.1:3000` (loopback only; fails if another process holds 127.0.0.1:3000). |
+| `npm run build` | Production build into `build/` (`public/` is copied as is). |
+| `npm run preview` | Serves `build/` on `http://127.0.0.1:3000`, to check a build locally. |
+| `npm test` | Unit tests (`src/**/*.test.{js,jsx}`). Watch mode in a terminal; one run when `CI` is set or with `npm test -- --run`. |
 
-Launches the test runner in the interactive watch mode.<br />
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+Configuration is in `vite.config.js` (dev/preview server, build output and browser target,
+Vitest). Files that contain JSX use the `.jsx` extension.
 
-### `npm run build`
+## Deployment
 
-Builds the app for production to the `build` folder.<br />
-It correctly bundles React in production mode and optimizes the build for the best performance.
+The build is static files. GitHub sign-in returns to `<web origin>/auth/callback`, so the web
+server must answer unknown paths with `index.html` (SPA fallback), e.g. nginx
+`try_files $uri /index.html`, Netlify `/* /index.html 200`, or `serve -s build`. The dev server
+and `npm run preview` already do this.
 
-The build is minified and the filenames include the hashes.<br />
-Your app is ready to be deployed!
-
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
-
-### `npm run eject`
-
-**Note: this is a one-way operation. Once you `eject`, you can’t go back!**
-
-If you aren’t satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (Webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you’re on your own.
-
-You don’t have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn’t feel obligated to use this feature. However we understand that this tool wouldn’t be useful if you couldn’t customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: https://facebook.github.io/create-react-app/docs/code-splitting
-
-### Analyzing the Bundle Size
-
-This section has moved here: https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size
-
-### Making a Progressive Web App
-
-This section has moved here: https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app
-
-### Advanced Configuration
-
-This section has moved here: https://facebook.github.io/create-react-app/docs/advanced-configuration
-
-### Deployment
-
-This section has moved here: https://facebook.github.io/create-react-app/docs/deployment
-
-### `npm run build` fails to minify
-
-This section has moved here: https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify
+Functional tests for this client live in `qa/web-tests/` (Playwright, real backend).

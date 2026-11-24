@@ -4,7 +4,7 @@
 // QA-CI-1: no workflow declares `permissions`, and the repository's default workflow token is
 // read/write (`gh api repos/<owner>/<repo>/actions/permissions/workflow` ->
 // "default_workflow_permissions": "write"). So every job that runs `npm ci` (third-party install
-// scripts: mongodb-memory-server's postinstall, react-scripts' tree, ...) holds a write token,
+// scripts: mongodb-memory-server's postinstall, the web build tooling, ...) holds a write token,
 // and actions/checkout leaves it in .git/config (persist-credentials). In release.yml that is
 // the resolve job, the regression gate and the web build; only "Publish GitHub Release" needs
 // `contents: write`.

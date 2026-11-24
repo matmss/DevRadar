@@ -561,9 +561,30 @@ existed) is found (Q5, US-8).
 
 ## Web (`web/`)
 
-- **Framework:** Create React App.
-- **API access:** `web/src/services/api.js`, reads `REACT_APP_API_URL`
-  (CRA's required env var prefix) with a `localhost:3333` fallback for dev.
+- **Framework:** React 18 built with Vite (`web/vite.config.js`), unit tests with Vitest +
+  jsdom + React Testing Library (`npm test`). Moved off Create React App (react-scripts 5.0.1,
+  unmaintained) on 2026-11-23; `src/` logic did not change, files with JSX became `.jsx`.
+  - Dev server (`npm start`) and `npm run preview` listen on `127.0.0.1:3000` only, never on
+    `::` or `0.0.0.0` (BUG-013), and print `http://127.0.0.1:3000`, which is in the backend's
+    default `CORS_ORIGINS` (also the sign-in redirect allow-list). Open that URL, not
+    `localhost`: on macOS a wildcard (`::`) listener on port 3000 can bind next to Vite's
+    127.0.0.1 one (Vite only warns) and answers `localhost`/`::1`. `strictPort` fails the start
+    only when another process holds 127.0.0.1:3000 itself, instead of moving to 3001. Both serve
+    `index.html` for unknown paths, so `/auth/callback` works.
+  - `npm run build` writes `web/build/` (`build.outDir`), with `public/` copied as is; that
+    folder is what `release.yml` zips.
+  - Browser target: kept from CRA. Its production browserslist (`>0.2%, not dead,
+    not op_mini all`) resolved on 2026-11-23 to Chrome 109 at the oldest (the last release for
+    Windows 7/8), iOS Safari 16.6, Safari 17.6, Firefox 157, Edge 154. `build.target` in
+    `vite.config.js` pins `chrome109`, `edge109`, `firefox115`, `safari16.6`, `ios16.6` (at or
+    below every one of those), because Vite reads no browserslist for JavaScript; the
+    `browserslist` field left `package.json` with react-scripts. Syntax is lowered to that
+    target; neither CRA nor Vite adds API polyfills. The list's UC Browser entry is unknown to
+    both CRA's Babel and Vite, as before.
+- **API access:** `web/src/services/api.js`, reads `import.meta.env.VITE_API_URL`
+  (Vite exposes only `VITE_`-prefixed variables to client code) with a `localhost:3333`
+  fallback for dev. It is inlined at build time: restart the dev server after changing
+  `web/.env`. `REACT_APP_API_URL` (the CRA name) is no longer read.
   An axios request interceptor adds `Authorization: Bearer <token>` when a
   session exists and remembers which token each request carried. Every 401,
   whatever its body (QA-AUTH2-4), ends the session: token cleared, signed-out
@@ -583,7 +604,7 @@ existed) is found (Q5, US-8).
   view (no message) and the user signs in again once.
 - Talks to the same `/devs` and `/search` endpoints as mobile, plus the
   `/auth/*` endpoints and `GET`/`PUT`/`DELETE /devs/me`; no web-specific backend routes exist. Nothing secret is
-  in the bundle: only `REACT_APP_API_URL`.
+  in the bundle: only `VITE_API_URL`.
 - **Sign-in flow** (US-6, `web/src/services/auth.js`, `services/pkce.js`):
   1. "Entrar com GitHub" makes a 32-byte random PKCE verifier
      (`crypto.getRandomValues`, base64url, 43 characters) and its S256 challenge
@@ -611,14 +632,14 @@ existed) is found (Q5, US-8).
   sign-in returns to `<web origin>/auth/callback`. The web server must answer every unknown
   path (at least `/auth/callback`) with `index.html`, e.g. nginx `try_files $uri /index.html`,
   Netlify `/* /index.html 200`, or `serve -s build`. Without it the callback is a 404 and
-  sign-in cannot finish. The CRA dev server already does this. Also noted in
+  sign-in cannot finish. The Vite dev server and `vite preview` already do this. Also noted in
   `web/.env.example`.
 - **Views:** signed out, only the sign-in button (plus a message after "Login cancelado", a
   failure, or an expired session; the button is also the retry). Signed in, the GitHub username
   and avatar (from `POST /auth/token`, then `GET /auth/me` on every load), "Sair", the
   registration form without a username field, and the dev list. "Salvar" is disabled while a
   registration is in flight (QA-AUTH2-1).
-- **Own profile** (US-6 "Already registered"; `App.js`, `components/DevForm`). After
+- **Own profile** (US-6 "Already registered"; `App.jsx`, `components/DevForm`). After
   sign-in the app asks `GET /devs/me` (in parallel with `GET /devs`; the form waits with
   "Carregando seu perfil..."). 404: the registration form ("Cadastro", "Salvar", location from
   the browser). A profile: "Meu perfil", the form prefilled with the saved techs ("ReactJS,

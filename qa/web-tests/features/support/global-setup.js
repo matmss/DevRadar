@@ -1,7 +1,7 @@
 const { startBackend, stopBackend } = require('./backend-server');
 
 // Fixed on purpose (not dynamically allocated) so it can be baked into
-// playwright.integration.config.js's webServer.env as REACT_APP_API_URL without any
+// playwright.config.js's webServer.env as VITE_API_URL without any
 // cross-process coordination. Deliberately different from the real dev backend's 3333 so
 // this suite doesn't collide with (or accidentally hit) a developer's already-running app.
 const INTEGRATION_BACKEND_PORT = 3334;

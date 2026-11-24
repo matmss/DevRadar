@@ -45,15 +45,17 @@ elsewhere. This was checked before scaffolding rather than assumed:
 | Layer   | Unit tests live at                          | Why not `dev/tests/<layer>/` |
 |---------|----------------------------------------------|-------------------------------|
 | backend | `qa/backend-tests/unit/`                     | Already existed before this pass (mirrors `backend/src/utils/`); adding a second location here would be the exact "redundant logic" this doc warns against below. |
-| web     | `web/src/**/*.test.js` (co-located)          | Create React App's Jest config hardcodes `roots: ["<rootDir>/src"]`. `react-scripts test` will not discover or run tests outside `web/src/`, and CRA offers no supported way to override this without ejecting. Verified against `web/package.json` before placing tests. |
+| web     | `web/src/**/*.test.{js,jsx}` (co-located)    | Originally forced by Create React App (its Jest only searched `web/src/`). Kept in place when the web client moved to Vite + Vitest (2026-11-23): `web/vite.config.js` `test.include` is `src/**/*.test.{js,jsx}`, so the tests stay next to the code they cover and no test moved. Files with JSX are `.jsx`. |
 | mobile  | `dev/tests/mobile/`                          | No such constraint — nothing in `mobile/package.json` restricts Jest's `rootDir`/`testMatch`, so `mobile/jest.config.js` points here explicitly. |
 
 Concretely, for new tests:
 - **Backend:** add to `qa/backend-tests/unit/`, following
   `parseStringAsArray.test.js` / `calculateDistance.test.js`.
 - **Web:** co-locate — `web/src/services/api.test.js` next to `api.js`,
-  `web/src/components/DevItem/DevItem.test.js` inside the component's own
-  folder. Run via `npm test` in `web/`.
+  `web/src/components/DevItem/DevItem.test.jsx` inside the component's own
+  folder. Run via `npm test` in `web/` (Vitest + jsdom, React Testing
+  Library; `vi.fn()`/`vi.spyOn()`, jest-dom matchers come from
+  `web/src/setupTests.js`).
 - **Mobile:** add to `dev/tests/mobile/`, mirroring
   `mobile/src/` (e.g. `dev/tests/mobile/services/api.test.js` for
   `mobile/src/services/api.js`). Run via `npm test` in `mobile/`
@@ -75,7 +77,7 @@ separate layer testing user-facing scenarios — see
 | Layer   | File               | Var                   |
 |---------|--------------------|------------------------|
 | backend | `backend/.env`     | `MONGO_URI`, `PORT`, `CORS_ORIGINS`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_CALLBACK_URL`, `JWT_SECRET`, `MOBILE_APP_SCHEME`, `AUTH_RATE_LIMIT_MAX`, `AUTH_SESSION_RATE_LIMIT_MAX`, `PROFILE_RATE_LIMIT_MAX`, `TRUST_PROXY` (see `00-architecture.md`, Authentication) |
-| web     | `web/.env`         | `REACT_APP_API_URL`   |
+| web     | `web/.env`         | `VITE_API_URL` (inlined at build time; `REACT_APP_API_URL` is no longer read) |
 | mobile  | `mobile/.env`      | `EXPO_PUBLIC_API_URL` |
 
 Never commit `.env` — only `.env.example` with placeholder values. All

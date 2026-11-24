@@ -9,7 +9,7 @@ nearby devs on a map in real time. Four independent npm projects, no monorepo to
 (no Lerna/Turborepo/Nx) — each has its own `package.json` and is installed/run separately:
 
 - `dev/backend/` — Node.js, Express 5, Mongoose 9 (MongoDB), Socket.io 4
-- `dev/web/` — React 18 (Create React App)
+- `dev/web/` — React 18 (Vite, Vitest)
 - `dev/mobile/` — React Native / Expo SDK 57
 - `qa/` — the test suites for all three of the above (own workspace, see below)
 
@@ -38,12 +38,18 @@ avatar's id, `login`, or `none` when the login is no GitHub login); runbook in `
 
 ### Web (`dev/web/`)
 ```bash
-cp .env.example .env   # REACT_APP_API_URL, defaults to http://localhost:3333
+cp .env.example .env   # VITE_API_URL, defaults to http://localhost:3333 (inlined: restart the dev server after a change)
 npm ci
-npm start                # CRA dev server, port 3000
-npm run build
-npm test                  # CRA/Jest unit tests (src/services, src/components), run on every PR (pr.yml `web-unit`, CI=true --watchAll=false)
+npm start                # Vite dev server, 127.0.0.1:3000 only (strictPort), SPA fallback for /auth/callback
+npm run build            # vite build -> build/ (what release.yml zips; also built on every PR, pr.yml `web-unit`)
+npm run preview          # serves build/ on 127.0.0.1:3000, same SPA fallback
+npm test                  # Vitest + jsdom unit tests (src/services, src/components); watch mode unless CI is set; on every PR (pr.yml `web-unit`, CI=true npm test -- --run)
 ```
+Config lives in `dev/web/vite.config.js` (dev server, build target, Vitest); `index.html` is at
+the `dev/web/` root, files with JSX are `.jsx`. Open the URL it prints, `http://127.0.0.1:3000`
+(in the backend's default `CORS_ORIGINS`, so sign-in works), not `localhost`: on macOS a
+wildcard (`::`) listener on port 3000 can coexist with Vite's 127.0.0.1 one and answers
+`localhost`/`::1`. `strictPort` only fails against another exact 127.0.0.1 holder.
 
 ### Mobile (`dev/mobile/`)
 ```bash
@@ -182,7 +188,7 @@ Routes (`dev/backend/src/routes.js`):
   the websocket handshake parsing; keep them consistent if you change the format.
 
 ### Client responsibilities
-- `dev/web/` (`dev/web/src/App.js`): GitHub sign-in (PKCE, `services/auth.js`; token in
+- `dev/web/` (`dev/web/src/App.jsx`): GitHub sign-in (PKCE, `services/auth.js`; token in
   localStorage `devradar.session_token`, followed across tabs via the `storage` event; callback
   route `/auth/callback`), then the profile form (no username field): "Salvar" to register, or,
   when `GET /devs/me` finds a profile, prefilled "Atualizar" plus "Excluir meu perfil" behind an
@@ -215,8 +221,9 @@ Routes (`dev/backend/src/routes.js`):
   (only for a valid GitHub login, `services/githubLogin.js`) —
   there's no native profile screen.
 - Both web and mobile read their backend URL from an env var with a `localhost:3333`
-  fallback: `REACT_APP_API_URL` (web, CRA convention) / `EXPO_PUBLIC_API_URL` (mobile, Expo's
-  native convention, inlined at build time — restart the bundler after changing it).
+  fallback: `VITE_API_URL` (web, `import.meta.env`, Vite's convention; `REACT_APP_API_URL` is no
+  longer read) / `EXPO_PUBLIC_API_URL` (mobile, Expo's native convention). Both are inlined at
+  build time — restart the dev server/bundler after changing them.
 
 ### QA workspace structure
 `qa/` mirrors the three app layers 1:1, each suite matched to that layer's actual stack
@@ -229,7 +236,8 @@ rather than a single cross-language framework:
   `/users/*`, so any registration-time GitHub lookup fails the scenario.
 - `qa/web-tests/` — Playwright + `playwright-bdd`. `playwright.config.js` boots a **real**
   backend + real ephemeral Mongo via `features/support/global-setup.js` (see
-  `INTEGRATION_BACKEND_PORT`) and the real CRA dev server — deliberately no `page.route`
+  `INTEGRATION_BACKEND_PORT`) and the real Vite dev server (`npm start`, `VITE_API_URL` set to the
+  harness backend) — deliberately no `page.route`
   mocking; only GitHub and browser geolocation (`context.setGeolocation`) are faked: nock for
   GitHub's server-side OAuth API, `context.route` for the authorize page and avatar images, and
   a hook (`support/github-network.js`) fails any scenario whose browser reaches real GitHub.
@@ -240,7 +248,8 @@ rather than a single cross-language framework:
 - **Test servers bind `127.0.0.1` only, and clients use `127.0.0.1`, never `localhost`** (BUG-013):
   a server listening on `::` lets another macOS process bind `127.0.0.1` on the same port and steal
   the traffic (foreign 404/400 bodies, flaky scenarios). Backend tests go through
-  `support/loopback.js`; the web harness backend uses `127.0.0.1:3334` and CRA `127.0.0.1:3000`.
+  `support/loopback.js`; the web harness backend uses `127.0.0.1:3334` and the Vite dev server `127.0.0.1:3000`
+  (`dev/web/vite.config.js`, `strictPort`).
   Cucumber runs with `forceExit`.
 - `qa/mobile-tests/` — Detox + `jest-cucumber` is the intended primary suite
   (`.detoxrc.js` targets `Pixel_6a_API_34` emulator / `iPhone 15` simulator), but per

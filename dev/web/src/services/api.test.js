@@ -20,7 +20,7 @@ describe('api', () => {
   let handler;
   beforeEach(() => {
     window.localStorage.clear();
-    handler = jest.fn();
+    handler = vi.fn();
     setUnauthorizedHandler(handler);
   });
   afterEach(() => setUnauthorizedHandler(null));

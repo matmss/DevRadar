@@ -1,4 +1,4 @@
-// The dev list shown by App.js, updated in place after a save or delete.
+// The dev list shown by App.jsx, updated in place after a save or delete.
 //
 // Two entries are the same dev if they have the same _id; otherwise, if both carry a GitHub
 // account id (`github_id`, auth slice 6), if those are equal; otherwise (a legacy profile has no

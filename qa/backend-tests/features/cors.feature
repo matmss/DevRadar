@@ -3,7 +3,8 @@ Feature: Cross-origin access is limited to the DevRadar clients (BUG-006)
   I want only the DevRadar web clients to call me from a browser
   So that arbitrary websites can't read or write developer data through a visitor's browser
 
-  # Default allow-list (no CORS_ORIGINS set): http://localhost:3000 and http://localhost:8081.
+  # Default allow-list (no CORS_ORIGINS set): http://localhost:3000, http://127.0.0.1:3000 (the
+  # Vite web dev server's printed origin) and http://localhost:8081.
   # Since auth slice 4 reads and the socket also need a session token; these scenarios sign in,
   # so they only exercise the origin check. read-auth.feature checks that a 401 still carries
   # the CORS header for an allowed origin.

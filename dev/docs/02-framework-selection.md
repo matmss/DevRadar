@@ -12,7 +12,7 @@ project moves from a planning/QA exercise into full-scale development.
 | Backend | Express 5          | Minimal, unopinionated HTTP layer for a small REST surface (3 routes today). Express 5's built-in async-error forwarding removes a whole class of unhandled-rejection bugs common in Express 4 apps. |
 | Backend | Mongoose            | Schema validation + a `2dsphere` geo index out of the box, which is the one piece of real domain complexity here (radius search). A raw MongoDB driver would mean hand-rolling that validation. |
 | Backend | Socket.io           | Needs both a request/response API (registration) and a push channel (live map updates) — Socket.io's room/query-based connection tracking is a natural fit for "notify only clients whose filters match." |
-| Web     | Create React App    | Zero-config React setup already carries the app; no build customization has been needed yet, so there's no case for Vite/Next.js migration purely on current requirements. |
+| Web     | React 18 + Vite     | Was Create React App until 2026-11-23. react-scripts 5.0.1 is unmaintained and its build/dev-server/Jest tree carried 26 `npm audit` findings (13 high) with no fix short of replacing it, so the client moved to Vite (dev server + build) and Vitest (unit tests). Same React code, no routing or SSR need, so Next.js was not considered. |
 | Mobile  | Expo (managed) / RN | `expo-location` and OTA update support are used directly; no native module has needed a bare workflow eject so far. |
 
 None of these need to change to support the QA plan or the current feature
@@ -25,8 +25,8 @@ Ordered by how much pain they prevent per unit of setup effort:
 
 ### 1. Linting + formatting (ESLint + Prettier), shared across all three layers
 None of `backend/`, `web/`, or `mobile/` currently enforce a lint rule set
-beyond CRA's bundled `eslintConfig: { extends: "react-app" }` in `web/`.
-Backend and mobile have nothing. Before more than one person is writing
+(the web client's `eslintConfig: { extends: "react-app" }` came from react-scripts and was dropped with it on 2026-11-23).
+Before more than one person is writing
 code here, "run linting mentally before presenting code" (the stated
 convention) needs an actual linter behind it, or it silently stops
 happening. A root-level `.eslintrc` extended per-package, plus
@@ -61,7 +61,7 @@ JSDoc (see `01-conventions.md`) gets partway there today with zero
 build-step cost. A full TypeScript migration would get the rest of the
 way (compile-time enforcement instead of editor-only hints) but is a
 real, non-trivial cost across three packages with different toolchains
-(CRA supports it natively; Expo supports it natively; the Express backend
+(Vite supports it natively; Expo supports it natively; the Express backend
 would need a build step it doesn't have today). Recommendation: don't
 default into this — decide it explicitly once JSDoc coverage starts
 feeling insufficient, not before.
