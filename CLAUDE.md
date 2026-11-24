@@ -41,13 +41,15 @@ avatar's id, `login`, or `none` when the login is no GitHub login); runbook in `
 cp .env.example .env   # VITE_API_URL, defaults to http://localhost:3333 (inlined: restart the dev server after a change)
 npm ci
 npm start                # Vite dev server, 127.0.0.1:3000 only (strictPort), SPA fallback for /auth/callback
-npm run build            # vite build -> build/ (what release.yml zips)
+npm run build            # vite build -> build/ (what release.yml zips; also built on every PR, pr.yml `web-unit`)
 npm run preview          # serves build/ on 127.0.0.1:3000, same SPA fallback
 npm test                  # Vitest + jsdom unit tests (src/services, src/components); watch mode unless CI is set; on every PR (pr.yml `web-unit`, CI=true npm test -- --run)
 ```
 Config lives in `dev/web/vite.config.js` (dev server, build target, Vitest); `index.html` is at
-the `dev/web/` root, files with JSX are `.jsx`. Open the dev server as `http://localhost:3000`
-(the backend's default `CORS_ORIGINS`), or add `http://127.0.0.1:3000` there.
+the `dev/web/` root, files with JSX are `.jsx`. Open the URL it prints, `http://127.0.0.1:3000`
+(in the backend's default `CORS_ORIGINS`, so sign-in works), not `localhost`: on macOS a
+wildcard (`::`) listener on port 3000 can coexist with Vite's 127.0.0.1 one and answers
+`localhost`/`::1`. `strictPort` only fails against another exact 127.0.0.1 holder.
 
 ### Mobile (`dev/mobile/`)
 ```bash

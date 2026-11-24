@@ -1,4 +1,4 @@
-// What the profile form shows when a save or delete fails (App.js). UI strings are in Portuguese.
+// What the profile form shows when a save or delete fails (App.jsx). UI strings are in Portuguese.
 
 export const REQUEST_ERROR_MESSAGES = {
   serverUnreachable: 'Não foi possível falar com o servidor, tente novamente',

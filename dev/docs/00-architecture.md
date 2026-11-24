@@ -564,9 +564,13 @@ existed) is found (Q5, US-8).
 - **Framework:** React 18 built with Vite (`web/vite.config.js`), unit tests with Vitest +
   jsdom + React Testing Library (`npm test`). Moved off Create React App (react-scripts 5.0.1,
   unmaintained) on 2026-11-23; `src/` logic did not change, files with JSX became `.jsx`.
-  - Dev server (`npm start`) and `npm run preview` listen on `127.0.0.1:3000` only, with
-    `strictPort` (a busy port fails instead of moving to 3001, and nothing listens on `::` or
-    `0.0.0.0`, BUG-013). Both serve `index.html` for unknown paths, so `/auth/callback` works.
+  - Dev server (`npm start`) and `npm run preview` listen on `127.0.0.1:3000` only, never on
+    `::` or `0.0.0.0` (BUG-013), and print `http://127.0.0.1:3000`, which is in the backend's
+    default `CORS_ORIGINS` (also the sign-in redirect allow-list). Open that URL, not
+    `localhost`: on macOS a wildcard (`::`) listener on port 3000 can bind next to Vite's
+    127.0.0.1 one (Vite only warns) and answers `localhost`/`::1`. `strictPort` fails the start
+    only when another process holds 127.0.0.1:3000 itself, instead of moving to 3001. Both serve
+    `index.html` for unknown paths, so `/auth/callback` works.
   - `npm run build` writes `web/build/` (`build.outDir`), with `public/` copied as is; that
     folder is what `release.yml` zips.
   - Browser target: kept from CRA. Its production browserslist (`>0.2%, not dead,

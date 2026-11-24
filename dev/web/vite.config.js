@@ -4,8 +4,11 @@ import react from '@vitejs/plugin-react';
 // The dev server (`npm start`) and `npm run preview` listen on 127.0.0.1:3000 only. Never `::` or
 // 0.0.0.0: on macOS another process can bind 127.0.0.1 on a port a wildcard server holds and
 // answer instead of it (BUG-013, qa/docs/05-bug-tracker.md), and the QA web harness dials
-// http://127.0.0.1:3000 (qa/web-tests/playwright.config.js). strictPort makes a busy port fail
-// the start instead of moving to 3001, an origin the backend's CORS_ORIGINS does not allow.
+// http://127.0.0.1:3000 (qa/web-tests/playwright.config.js). Open the printed 127.0.0.1 URL (in
+// the backend's default CORS_ORIGINS), not localhost: a wildcard "::" listener on port 3000 can
+// still bind next to this one (Vite only warns) and answers localhost/::1. strictPort fails the
+// start only when another process holds 127.0.0.1:3000 itself, instead of moving to 3001, an
+// origin the backend's CORS_ORIGINS does not allow.
 // Both servers answer unknown paths with index.html (Vite's default `appType: 'spa'`), so the
 // GitHub sign-in callback /auth/callback loads the app.
 const LOOPBACK_SERVER = { host: '127.0.0.1', port: 3000, strictPort: true, open: false };
@@ -29,6 +32,9 @@ export default defineConfig({
     // describe/it/expect/beforeEach as globals, like Jest, so the tests only swap jest.* for vi.*;
     // it also lets React Testing Library unmount after each test by itself.
     globals: true,
+    // Reset every mock's calls and implementation before each test, as CRA's Jest config did
+    // (resetMocks: true), so a mockImplementation set in one test can't leak into the next.
+    mockReset: true,
     setupFiles: ['./src/setupTests.js'],
     include: ['src/**/*.test.{js,jsx}'],
   },

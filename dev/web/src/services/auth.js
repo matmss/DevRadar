@@ -13,7 +13,7 @@ export const CALLBACK_PATH = '/auth/callback';
 const HOME_PATH = '/';
 const VERIFIER_KEY = 'devradar.pkce_verifier';
 
-// Stable result codes the UI maps to messages (App.js).
+// Stable result codes the UI maps to messages (App.jsx).
 export const SIGN_IN_RESULT = {
   CANCELLED: 'sign_in_cancelled',
   FAILED: 'sign_in_failed',

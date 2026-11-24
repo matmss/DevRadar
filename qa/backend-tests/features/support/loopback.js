@@ -7,8 +7,9 @@
 // kernel delivers 127.0.0.1 connections to THAT process, not to the test server. Under machine
 // load (more processes, more ports in use) a scenario then got a foreign answer: a 404 with a
 // text/html body, a 400 instead of the backend's 413, a socket connect_error without `data`
-// (QA re-check of auth slice 6). A port bound on 127.0.0.1 itself cannot be shared: the other
-// process gets EADDRINUSE instead.
+// (QA re-check of auth slice 6). Bound on 127.0.0.1 itself, the port can't be taken over for
+// 127.0.0.1: another 127.0.0.1 binder gets EADDRINUSE. A wildcard "::" listener on the same port
+// can still bind next to it and answers ::1 and "localhost", which is why clients dial 127.0.0.1.
 //
 // Two patches, test process only:
 //  - http.Server#listen: a call without a host (a port, or options without host/path) listens on

@@ -7,9 +7,9 @@ describe('CORS config', () => {
     else process.env.CORS_ORIGINS = original;
   });
 
-  it('defaults to the local web and Expo web dev servers', () => {
+  it('defaults to the local web (localhost and the 127.0.0.1 origin Vite prints) and Expo web dev servers', () => {
     delete process.env.CORS_ORIGINS;
-    expect(allowedOrigins()).toEqual(['http://localhost:3000', 'http://localhost:8081']);
+    expect(allowedOrigins()).toEqual(['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:8081']);
   });
 
   it('reads a trimmed, comma-separated CORS_ORIGINS', () => {
@@ -28,5 +28,7 @@ describe('CORS config', () => {
     expect(isOriginAllowed('http://localhost:3000.evil.example')).toBe(false);
     expect(isOriginAllowed('http://localhost:30001')).toBe(false);
     expect(isOriginAllowed('https://localhost:3000')).toBe(false);
+    expect(isOriginAllowed('http://127.0.0.1:30001')).toBe(false);
+    expect(isOriginAllowed('http://127.0.0.1:3000.evil.example')).toBe(false);
   });
 });

@@ -46,8 +46,10 @@ let server;
 // process can still bind 127.0.0.1 (or ::1) on the same port and receive the traffic meant for
 // it; "localhost" may also resolve to ::1. That caused one-off foreign answers under load (QA
 // re-check of auth slice 6, see qa/docs/05-bug-tracker.md BUG-013). Bound on 127.0.0.1 itself,
-// the port cannot be shared: a second process gets EADDRINUSE. The Vite dev server runs on
-// 127.0.0.1:3000 for the same reason (dev/web/vite.config.js, server.host + strictPort).
+// 127.0.0.1 traffic can't be taken over: another 127.0.0.1 binder gets EADDRINUSE. A wildcard
+// "::" listener can still bind the same port and answers ::1/"localhost" (macOS), so clients
+// dial 127.0.0.1 only. The Vite dev server runs on 127.0.0.1:3000 for the same reason
+// (dev/web/vite.config.js, server.host + strictPort).
 const LOOPBACK = '127.0.0.1';
 
 /**

@@ -44,8 +44,9 @@ module.exports = defineConfig({
         timeout: 120000,
         // The Vite dev server listens on 127.0.0.1:3000 only, with strictPort (both set in
         // dev/web/vite.config.js, not here): the address the browser dials (baseURL above), so no
-        // other process can share the port and answer instead (see backend-server.js), and a busy
-        // port fails the start instead of moving to 3001. It opens no browser by itself.
+        // other process can take over 127.0.0.1:3000 (another 127.0.0.1 binder fails the start;
+        // a wildcard "::" one could only answer localhost/::1, which nothing here dials; see
+        // backend-server.js). It opens no browser by itself.
         env: {
           // Read through import.meta.env when the dev server starts (inlined, so a running server
           // would keep its old value: another reason CI never reuses one).

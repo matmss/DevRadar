@@ -4,7 +4,7 @@ const { mobileAppScheme } = require('../../../dev/backend/src/config/auth');
 describe('post-login redirect allow-list', () => {
   const original = { cors: process.env.CORS_ORIGINS, scheme: process.env.MOBILE_APP_SCHEME };
   beforeEach(() => {
-    delete process.env.CORS_ORIGINS; // defaults: http://localhost:3000, http://localhost:8081
+    delete process.env.CORS_ORIGINS; // defaults: http://localhost:3000, http://127.0.0.1:3000, http://localhost:8081
     delete process.env.MOBILE_APP_SCHEME; // default: com.matmss.mobile (dev/mobile/app.json scheme)
   });
   afterAll(() => {
@@ -19,6 +19,7 @@ describe('post-login redirect allow-list', () => {
     'http://localhost:3000/',
     'http://localhost:3000/some/path?x=1#frag',
     'http://localhost:8081/',
+    'http://127.0.0.1:3000/auth/callback', // the origin the Vite dev server prints
     'com.matmss.mobile://auth/callback',
     'com.matmss.mobile:///callback?x=1',
   ])('allows %p', (redirect) => {

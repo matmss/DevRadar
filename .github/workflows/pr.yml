@@ -114,6 +114,7 @@ jobs:
           cache-dependency-path: dev/web/package-lock.json
 
       - name: Install web app dependencies
+        id: install-web
         working-directory: dev/web
         run: npm ci
 
@@ -126,6 +127,13 @@ jobs:
         env:
           CI: 'true'
         run: npm test -- --run
+
+      # The production build (what release.yml zips) is otherwise only built at release time.
+      # Runs even when a unit test failed, so both results show; skipped if the install failed.
+      - name: Build web client (vite build)
+        if: ${{ !cancelled() && steps.install-web.outcome == 'success' }}
+        working-directory: dev/web
+        run: npm run build
 
   mobile-unit:
     name: Mobile unit (Jest, jest-expo)

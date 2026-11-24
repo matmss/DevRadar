@@ -1,5 +1,5 @@
 // Maps backend auth failures and sign-in results to what the app shows. UI strings are in
-// Portuguese, like the web app (dev/web/src/App.js).
+// Portuguese, like the web app (dev/web/src/App.jsx).
 
 export const MESSAGES = {
   sessionExpired: 'Sessão expirada, entre novamente',
