@@ -229,7 +229,7 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
   - "Excluir meu perfil": an in-page confirmation ("Confirmar exclusão" / "Cancelar"), never a native dialog. "Cancelar" keeps the profile. "Confirmar exclusão": "Perfil excluído", registration form ("Salvar", empty techs), the entry leaves the list, the backend no longer has it; registering again works.
   - Profile deleted on another device, then "Atualizar": "Seu perfil não existe mais, cadastre-se novamente" and the registration form.
   - Since the slice 5 review: a 404 that is not `dev_not_found` on update or delete shows the error and keeps the update form (QA-AUTH5-1); a stored coordinate like 1e-7 is prefilled as "0.0000001" and an unchanged "Atualizar" succeeds (QA-AUTH5-2); after `dev_not_found` on update the typed values stay in the registration form; "Salvar" answered with an existing profile shows "Você já tinha um perfil cadastrado (...)" and keeps the typed values in the update form; a profile re-created elsewhere is listed once.
-- **Automated:** `qa/web-tests/features/profile.feature`, `qa/web-tests/features/auth-slice5-review.feature`, `qa/web-tests/features/auth-slice6.feature`; `dev/web/src/components/DevForm/DevForm.test.js`, `dev/web/src/services/coordinates.test.js`, `dev/web/src/services/devList.test.js` (list entries matched by `_id`, then `github_id`, then login for legacy entries).
+- **Automated:** `qa/web-tests/features/profile.feature`, `qa/web-tests/features/auth-slice5-review.feature`, `qa/web-tests/features/auth-slice6.feature`; `dev/web/src/components/DevForm/DevForm.test.jsx`, `dev/web/src/services/coordinates.test.js`, `dev/web/src/services/devList.test.js` (list entries matched by `_id`, then `github_id`, then login for legacy entries).
 
 ## TC-034 — Profiles belong to a GitHub account id; legacy profiles (US-8, Q5, Q10)
 - **Requirement:** FR-7.1, FR-7.3, FR-1.3, FR-1.8, FR-1.9, US-8, Q10
@@ -332,7 +332,7 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 - **Requirement:** NFR-7
 - **Type:** Regression (infra) | **P1**
 - **Steps:** Attempt to point the mobile app at a CI-hosted backend without editing source.
-- **Expected result (desired):** Configurable via env var like web's `REACT_APP_API_URL`.
+- **Expected result (desired):** Configurable via env var like web's `VITE_API_URL` (`REACT_APP_API_URL` before the move to Vite).
 - **Actual result:** Hardcoded `192.168.15.11` in both `dev/mobile/src/services/api.js` and `socket.js` — blocks CI automation until fixed. Tracked as BUG-001 (blocker for mobile CI).
 
 ---

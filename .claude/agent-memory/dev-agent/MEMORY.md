@@ -2,8 +2,8 @@
 - [Worktree bash limits](feedback_worktree_bash.md) - compound shell writes, loops, cd+git get refused in worktree mode; use Write/Edit; old-code check via scratchpad copies
 - [Write tool unicode escapes](feedback_write_tool_unicode_escapes.md) - backslash-u escapes become raw chars (NUL, U+2028, U+202E); use code points, write U+XXXX in prose, scan after
 - [expo prebuild drops Detox wiring](project_expo_prebuild_detox.md) - prebuild regenerates dev/mobile/android; keep only the manifest diff, restore gradle files
-- [Web suite reuses :3000](feedback_web_suite_port_reuse.md) - check ports, run qa/web-tests with CI=1 so another worktree's dev server is never tested
-- [Worktree installs](project_worktree_install.md) - npm ci in dev/backend, dev/web, dev/mobile, qa/ (lockfiles tracked); CI npm 11.20; PW_CHROMIUM_PATH
+- [Web suite reuses :3000](feedback_web_suite_port_reuse.md) - check ports, CI=1; test:web JSON stats go to stdout, not qa/reports/web.json
+- [Worktree installs](project_worktree_install.md) - npm ci in dev/backend, dev/web, dev/mobile, qa/; CI npm 11.20; check browser rev, PW_CHROMIUM_PATH
 - [PR full vs nightly @regression](project_ci_subset_order.md) - nightly runs only @regression, neighbours differ; run both; check web.json order first
 - [Test loopback + timing](project_backend_suite_timing.md) - foreign answers = "::" vs 127.0.0.1 (BUG-013); forceExit; --tags; mobile Main.test.js times out under load
 - [npm overrides](project_npm_overrides_peer_scope.md) - root-only (qa/package.json, never members); scoped ones hit peers; key by version; stream-json 3 is ESM

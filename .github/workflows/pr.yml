@@ -117,13 +117,15 @@ jobs:
         working-directory: dev/web
         run: npm ci
 
-      # react-scripts test starts in watch mode unless CI is set; --watchAll=false
-      # makes the single run explicit, so the step always terminates.
+      # The job name above is a required status check in branch protection: it stays as is,
+      # although the runner is now Vitest (dev/web moved from react-scripts to Vite on
+      # 2026-11-23). `vitest` watches unless CI is set; --run makes the single run explicit,
+      # so the step always terminates, and a failing test exits non-zero.
       - name: Run web unit tests (src/services + src/components)
         working-directory: dev/web
         env:
           CI: 'true'
-        run: npm test -- --watchAll=false
+        run: npm test -- --run
 
   mobile-unit:
     name: Mobile unit (Jest, jest-expo)
@@ -205,7 +207,8 @@ jobs:
           key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}
 
       # web-tests boots the real backend in-process (features/support/backend-server.js)
-      # and the real CRA dev server (features/support/global-setup.js), so both
+      # and the real Vite dev server (`npm start` in dev/web, started by
+      # qa/web-tests/playwright.config.js's webServer), so both
       # dev/backend and dev/web need their own node_modules present.
       - name: Install backend app dependencies
         working-directory: dev/backend

@@ -1,5 +1,5 @@
 // Origins allowed to call the API from a browser (BUG-006). Comma-separated in CORS_ORIGINS.
-// Defaults cover local dev: the CRA web app (3000) and Expo web (8081).
+// Defaults cover local dev: the web dev server (3000, opened as http://localhost:3000) and Expo web (8081).
 const DEFAULT_CORS_ORIGINS = 'http://localhost:3000,http://localhost:8081';
 
 /** @returns {string[]} */

@@ -14,7 +14,7 @@ Three deployable layers share one MongoDB-backed API:
 | Layer | Stack | Role |
 |---|---|---|
 | Backend | Node.js, Express 5, Mongoose 9 (MongoDB), Socket.io 4 | REST API + geospatial search + real-time push of new developers |
-| Web | React 18 (Create React App) | Browser UI to register a developer and view the full list |
+| Web | React 18 (Vite) | Browser UI to register a developer and view the full list |
 | Mobile | React Native / Expo SDK 36 | Map-based UI to search nearby developers by tech, view profiles, receive live updates |
 
 Cross-cutting integration: the backend calls the public **GitHub Users API** (`GET https://api.github.com/users/:username`) to enrich a registration with `name`, `avatar_url`, and `bio`.
@@ -78,7 +78,7 @@ Cross-cutting integration: the backend calls the public **GitHub Users API** (`G
 - **NFR-4 (Resource cleanup):** In-memory WebSocket connection state should not grow unbounded across disconnect/reconnect cycles.
 - **NFR-5 (Security):** *BUG-006 fixed (auth slices 1-6). Since auth slice 4 every route that shows or changes developers (`GET /devs`, `POST /devs`, `GET /search`, and since slice 5 `GET`/`PUT`/`DELETE /devs/me`) and the Socket.io subscription require a GitHub sign-in session token; only `/auth/*` is public (`dev/docs/03-auth-spec.md`, access matrix). The text below describes the original code.* No authentication currently exists on `POST /devs`, `GET /devs`, or `GET /search`. CORS was fully open (`origin: '*'`); since 2026-11-08 it is restricted to the `CORS_ORIGINS` allow-list (Express and Socket.io). The missing authentication is an explicit, documented risk acceptance for a learning project — flagged in the Bug Tracker as known issues rather than defects, unless the project's threat model changes.
 - **NFR-6 (Compatibility):** Mobile targets an unmaintained Expo SDK (36, released 2019) and `react-native-maps` 0.26.1 — environment/tooling compatibility is itself a testable NFR (does the app still build and run on currently available Xcode/Android SDK toolchains?).
-- **NFR-7 (Config portability):** Mobile's API/socket base URL is hardcoded to a LAN IP (`192.168.15.11`) rather than an environment variable, unlike web (`REACT_APP_API_URL`). This blocks automated mobile testing against a configurable backend and is tracked as a defect (see Bug Tracker BUG-001).
+- **NFR-7 (Config portability):** Mobile's API/socket base URL is hardcoded to a LAN IP (`192.168.15.11`) rather than an environment variable, unlike web (`VITE_API_URL`; `REACT_APP_API_URL` until the 2026-11-23 move off Create React App). This blocks automated mobile testing against a configurable backend and is tracked as a defect (see Bug Tracker BUG-001).
 
 ## 4. Out of scope / not implemented (confirmed by code reading)
 - No update or delete endpoints for developers (`SearchController.update`/`destroy` are stubbed and commented out). *(Since auth slice 5: implemented as `PUT`/`DELETE /devs/me` in `DevController`, see FR-1.7 to FR-1.9; the stubs are removed, BUG-008 fixed.)*

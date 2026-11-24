@@ -41,19 +41,19 @@ let mongod;
 let server;
 
 // The harness backend listens on 127.0.0.1 and every client (the browser through
-// REACT_APP_API_URL, the steps' fetch calls, the GitHub callback) dials 127.0.0.1, never
+// VITE_API_URL, the steps' fetch calls, the GitHub callback) dials 127.0.0.1, never
 // "localhost". A server listening without a host binds the wildcard "::", and on macOS another
 // process can still bind 127.0.0.1 (or ::1) on the same port and receive the traffic meant for
 // it; "localhost" may also resolve to ::1. That caused one-off foreign answers under load (QA
 // re-check of auth slice 6, see qa/docs/05-bug-tracker.md BUG-013). Bound on 127.0.0.1 itself,
-// the port cannot be shared: a second process gets EADDRINUSE. The CRA dev server runs on
-// 127.0.0.1:3000 for the same reason (playwright.config.js, HOST).
+// the port cannot be shared: a second process gets EADDRINUSE. The Vite dev server runs on
+// 127.0.0.1:3000 for the same reason (dev/web/vite.config.js, server.host + strictPort).
 const LOOPBACK = '127.0.0.1';
 
 /**
  * Auth configuration for the harness backend (dev/backend/src/config/auth.js reads env at
  * request time). Set before the app is built. The GitHub credentials are dummies: GitHub is
- * faked. CORS_ORIGINS is the CRA dev server, so it is also the allowed sign-in redirect origin.
+ * faked. CORS_ORIGINS is the Vite dev server, so it is also the allowed sign-in redirect origin.
  * @param {number} port - the harness backend port
  */
 function applyTestAuthEnv(port) {

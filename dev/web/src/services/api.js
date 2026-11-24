@@ -2,7 +2,7 @@ import axios from 'axios';
 
 import { getToken } from './session';
 
-export const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3333';
+export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3333';
 
 // A request with no answer after this long fails like an unreachable server (no `response`), so
 // a hung GET /auth/me shows the "unavailable" view with "Tentar novamente" instead of

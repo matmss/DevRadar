@@ -82,7 +82,7 @@ Other decisions:
   profile write, not with this item). Clients see 404 `dev_not_found` (no profile) and a normal
   200 on POST; the response never reveals that a guarded dev exists or whose avatar it has.
 - **Clients:** no web or mobile change. Web already treats only 404 `dev_not_found` as "no profile"
-  (`dev/web/src/App.js`, empty form, "Salvar"). Mobile does not register or edit. Other users see
+  (`dev/web/src/App.jsx`, empty form, "Salvar"). Mobile does not register or edit. Other users see
   L as a displaced ghost ("Dev sem nome", "Perfil do GitHub indisponível", no link) until an
   operator acts, via the existing `dev-updated` push or next search.
 - **Observability:** each refused claim or guard displacement logs one line at warn level: dev

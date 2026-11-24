@@ -29,6 +29,9 @@ updates:
         update-types: [minor, patch]
     open-pull-requests-limit: 2
 
+  # Runtime: react, react-dom, axios. Everything else is dev tooling (Vite, Vitest, jsdom, Testing
+  # Library). One grouped PR keeps vite / @vitejs/plugin-react / vitest minors together; their
+  # majors (peer ranges tie them to each other) are planned work, like every major here.
   - package-ecosystem: npm
     directory: /dev/web
     schedule:

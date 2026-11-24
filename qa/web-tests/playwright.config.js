@@ -9,7 +9,7 @@ const testDir = defineBddConfig({
 
 // Assumes this package lives at repo-root/qa/web-tests, i.e. two levels below
 // repo-root (qa/ then web-tests/); the app it drives lives at repo-root/dev/web
-// (Create React App).
+// (React + Vite; `npm start` is its Vite dev server, configured in dev/web/vite.config.js).
 // The dev server is started automatically for local/CI runs; set
 // WEB_BASE_URL to point at an already-running instance instead (e.g. staging).
 //
@@ -42,12 +42,14 @@ module.exports = defineConfig({
         url: 'http://127.0.0.1:3000',
         reuseExistingServer: !process.env.CI,
         timeout: 120000,
+        // The Vite dev server listens on 127.0.0.1:3000 only, with strictPort (both set in
+        // dev/web/vite.config.js, not here): the address the browser dials (baseURL above), so no
+        // other process can share the port and answer instead (see backend-server.js), and a busy
+        // port fails the start instead of moving to 3001. It opens no browser by itself.
         env: {
-          BROWSER: 'none',
-          // CRA listens on 127.0.0.1 only, the address the browser dials (baseURL above), so no
-          // other process can share the port and answer instead (see backend-server.js).
-          HOST: '127.0.0.1',
-          REACT_APP_API_URL: backendUrl,
+          // Read through import.meta.env when the dev server starts (inlined, so a running server
+          // would keep its old value: another reason CI never reuses one).
+          VITE_API_URL: backendUrl,
         },
       },
   projects: [
