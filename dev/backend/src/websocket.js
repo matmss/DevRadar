@@ -76,6 +76,9 @@ const HANDSHAKE_ERRORS = {
 // `connectTimeout` (default 45 s). Lowered so a client that ignores connect_error does not keep
 // a refused connection open for long. A legitimate handshake takes well under a second.
 const HANDSHAKE_TIMEOUT_MS = 10000;
+// One object shared by every Socket.io server in the process (each createRealtime().attach passes
+// it as is, and Socket.io writes `path` onto it). Keep it to options that are the same for every
+// instance: per-instance options (e.g. a PR2 adapter) go in a copy made in attach, never here.
 const SOCKET_OPTIONS = { ...socketCorsOptions, connectTimeout: HANDSHAKE_TIMEOUT_MS };
 
 /**

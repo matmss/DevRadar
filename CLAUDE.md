@@ -97,7 +97,11 @@ one-time code stores, the three rate limiters, the `writesByAccount` queue, and 
 `devOwnership` queue operations bound to them; `createServer()` returns `{ app, server, context }`,
 also `app.locals.context`). Controllers and routes are factories over it (`createRoutes`,
 `createDevController`, `createAuthController`). Per server instance; shared state (Mongo-backed
-stores, a cross-instance push bus, a per-account lease lock) arrives in later phases. Every error, including unknown routes, is JSON `{ error, code, details }`
+stores, a cross-instance push bus, a per-account lease lock) arrives in later phases. The one
+deliberate exception is `config/auth.js`'s `fallbackJwtSecret` (random per process when
+`JWT_SECRET` is unset outside production): separate processes need one `JWT_SECRET`, or a token
+from one is `token_invalid` on another. `websocket.js` `SOCKET_OPTIONS` is one object shared by
+every `io` (Socket.io writes `path` onto it): per-instance options go in a copy. Every error, including unknown routes, is JSON `{ error, code, details }`
 (`middleware/errorHandler.js`, BUG-012); it never returns stacks and never logs request bodies.
 Unknown errors are 500 `internal_error`, whatever `status` they carry; the only typed 5xx is
 `ProfileBusyError` (`utils/profileBusyError.js`) → 503 `profile_busy` + `Retry-After: 1`, one warn line.

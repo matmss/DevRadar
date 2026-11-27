@@ -4,7 +4,9 @@
 //
 // Each createApp()/createServer() call builds its own server context (serverContext.js): its own
 // sockets, OAuth state and sign-in codes, rate-limit counters and write queue. Two servers in one
-// process share only MongoDB (per server instance; shared state arrives in later phases).
+// process share only MongoDB (per server instance; shared state arrives in later phases), plus
+// config/auth.js's per-process fallback JWT secret when JWT_SECRET is unset outside production
+// (the deliberate exception; separate processes need one JWT_SECRET).
 const express = require('express');
 const cors = require('cors');
 const http = require('http');

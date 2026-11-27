@@ -1,6 +1,9 @@
 // Everything a backend server instance keeps in memory, in one object built per server
 // (app.js createApp/createServer). Nothing here is a module-level singleton, so two servers built
-// in one process (the multi-instance test harness) share nothing but MongoDB.
+// in one process (the multi-instance test harness) share nothing but MongoDB, with one deliberate
+// exception: config/auth.js's fallback JWT secret (random per process when JWT_SECRET is unset
+// outside production), which every server in the process signs with. Separate processes need one
+// JWT_SECRET, or a token from one is token_invalid on another.
 //
 // Per server instance; shared state arrives in later phases. Each piece is the seam for one:
 //   realtime         Socket.io server + its `connections` (websocket.js): a cross-instance push
@@ -12,7 +15,8 @@
 //   writesByAccount  the per-account write queue (utils/keyedQueue.js) behind
 //                    services/devOwnership.js inAccountOrder/inLoginOrder; a shared lease lock
 //                    per account goes under it.
-//   ownership        devOwnership's queued/announcing operations, bound to the two above.
+//   ownership        devOwnership's queued/announcing operations, bound to `writesByAccount` and
+//                    `events`.
 const { createRealtime } = require('./websocket');
 const { createDevEvents } = require('./services/devEvents');
 const { createDevOwnership } = require('./services/devOwnership');
