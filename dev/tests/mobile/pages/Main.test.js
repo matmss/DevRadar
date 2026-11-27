@@ -10,6 +10,8 @@ jest.mock('expo-location', () => ({
   requestForegroundPermissionsAsync: jest.fn(),
   getForegroundPermissionsAsync: jest.fn(),
   getCurrentPositionAsync: jest.fn(),
+  // expo-location's LocationAccuracy values (Main asks for Balanced).
+  Accuracy: { Lowest: 1, Low: 2, Balanced: 3, High: 4, Highest: 5, BestForNavigation: 6 },
 }));
 jest.mock('react-native-maps', () => {
   const { View } = require('react-native');
@@ -197,6 +199,14 @@ describe('Main', () => {
   });
 
   describe('location', () => {
+    it('asks expo-location for Balanced accuracy by name (enableHighAccuracy is not an expo-location option)', async () => {
+      const view = await mount();
+      expect(view.byTestId('map-view')).toHaveLength(1);
+      expect(Location.getCurrentPositionAsync).toHaveBeenCalledTimes(1);
+      const [options] = Location.getCurrentPositionAsync.mock.calls[0];
+      expect(options).toEqual({ accuracy: Location.Accuracy.Balanced });
+    });
+
     it('shows a message and a retry when the location cannot be read (e.g. services off)', async () => {
       Location.getCurrentPositionAsync.mockRejectedValueOnce(new Error('Location services are disabled'));
       const view = await mount();

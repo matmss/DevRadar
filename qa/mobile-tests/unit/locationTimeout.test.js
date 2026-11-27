@@ -24,6 +24,8 @@ jest.mock('expo-location', () => ({
   requestForegroundPermissionsAsync: jest.fn(),
   getForegroundPermissionsAsync: jest.fn(),
   getCurrentPositionAsync: jest.fn(),
+  // expo-location's LocationAccuracy values (Main asks for Balanced).
+  Accuracy: { Lowest: 1, Low: 2, Balanced: 3, High: 4, Highest: 5, BestForNavigation: 6 },
 }));
 jest.mock('react-native-maps', () => {
   const { View } = require('react-native');

@@ -6,8 +6,8 @@
 // pages/Main.js#loadInitialPosition({ ask: false }) keeps the denied/blocked message on screen
 // "until the answer" and drops every other check while one runs (`checkingLocation`). The answer
 // it waits for is the whole check: permission read AND getCurrentPositionAsync({
-// enableHighAccuracy: true }), which can take seconds (cold GPS fix after the user just enabled
-// it) and has no timeout of its own in the app. Meanwhile the screen still says the location is
+// accuracy: Accuracy.Balanced }), which can take seconds (e.g. the first fix after the user just
+// enabled it) and has no timeout of its own in the app. Meanwhile the screen still says the location is
 // blocked and to enable it in the settings, which the user has just done, and "Tentar novamente"
 // is shown and enabled but does nothing.
 //
@@ -37,6 +37,8 @@ jest.mock('expo-location', () => ({
   requestForegroundPermissionsAsync: jest.fn(),
   getForegroundPermissionsAsync: jest.fn(),
   getCurrentPositionAsync: jest.fn(),
+  // expo-location's LocationAccuracy values (Main asks for Balanced).
+  Accuracy: { Lowest: 1, Low: 2, Balanced: 3, High: 4, Highest: 5, BestForNavigation: 6 },
 }));
 jest.mock('react-native-maps', () => {
   const { View } = require('react-native');
