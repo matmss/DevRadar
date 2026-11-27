@@ -9,4 +9,5 @@
 - [npm overrides](project_npm_overrides_peer_scope.md) - root-only (qa/package.json, never members); scoped ones hit peers; key by version; stream-json 3 is ESM
 - [Mutation backups](feedback_mutation_backups.md) - undo mutations by Edit or fresh backup; an older copy restore drops later edits
 - [Race hooks stub the model](project_backend_race_hooks.md) - tests patch Dev.findOneAndUpdate by filter shape; keep ownership writes on the model
+- [Multi-instance PR0-PR3](project_multi_instance_phases.md) - serverContext per server; invert multi-instance.feature per phase
 - [One backend feature](project_cucumber_single_feature.md) - CLI paths merge with cucumber.js; use npm test -- --config <relative scratch config>
