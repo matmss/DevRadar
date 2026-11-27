@@ -5,7 +5,8 @@
 //   2. GET /auth/github/callback?code&state
 //        -> 302 to <client url>?code=<one-time code> (60 s)
 //        -> 302 to <client url>?error=sign_in_cancelled on access_denied
-//        -> 302 to <client url>?error=sign_in_failed&reason=<code> on any other failure
+//        -> 302 to <client url>?error=sign_in_failed&reason=<code> on any other failure, also
+//           when the one-time code cannot be stored (reason sign_in_unavailable, QA-MI1-1)
 //   3. POST /auth/token { code, code_verifier } -> { token, token_type, expires_in, user }
 //   4. GET /auth/me (Bearer token) -> { github_id, github_username, name, avatar_url }
 // The session token never appears in a URL, the one-time code is only redeemable with the
@@ -23,6 +24,7 @@
 //
 // JSON error bodies: { error, code, details }. See dev/docs/00-architecture.md for every code.
 const { createSharedOneTimeStore } = require('../utils/sharedOneTimeStore');
+const { SharedStateError } = require('../utils/sharedStateError');
 const { isRedirectAllowed, buildRedirectUrl } = require('../utils/redirectAllowList');
 const { signSessionToken } = require('../utils/sessionToken');
 const { PKCE_METHOD, isValidCodeChallenge, verifyCodeVerifier } = require('../utils/pkce');
@@ -38,6 +40,8 @@ const STATE_TTL_MS = 10 * 60 * 1000;
 const SIGN_IN_CODE_TTL_MS = 60 * 1000;
 const SIGN_IN_CANCELLED = 'sign_in_cancelled';
 const SIGN_IN_FAILED = 'sign_in_failed';
+// The shared one-time code store (MongoDB) failed after the state was spent: sign in again later.
+const SIGN_IN_UNAVAILABLE = 'sign_in_unavailable';
 
 /**
  * The two one-time stores sign-in uses, shared by every instance through the `auth_one_time`
@@ -192,14 +196,26 @@ function createAuthController({ signInStores, ownership }) {
       if (!identity.user) return redirectFailure(res, attempt.redirect, githubFailureReason(identity));
 
       const { id, login, profile } = identity.user;
-      const signInCode = await signInCodeStore.issue({
-        githubId: id,
-        githubUsername: login,
-        // When GitHub said this login is this account's: orders login refreshes (QA-AUTH6-3).
-        loginReadAt: Date.now(),
-        profile,
-        codeChallenge: attempt.codeChallenge,
-      });
+      let signInCode;
+      try {
+        signInCode = await signInCodeStore.issue({
+          githubId: id,
+          githubUsername: login,
+          // When GitHub said this login is this account's: orders login refreshes (QA-AUTH6-3).
+          loginReadAt: Date.now(),
+          profile,
+          codeChallenge: attempt.codeChallenge,
+        });
+      } catch (err) {
+        // The state is already spent, so the browser still goes back to the client (QA-MI1-1),
+        // without a code. A SharedStateError message names the operation and the driver error
+        // class only (no key, no value); anything else is logged by its class alone.
+        console.error(
+          'Could not store the one-time sign-in code:',
+          err instanceof SharedStateError ? err.message : (err && err.name) || 'unknown error'
+        );
+        return redirectFailure(res, attempt.redirect, SIGN_IN_UNAVAILABLE);
+      }
       return res.redirect(302, buildRedirectUrl(attempt.redirect, { code: signInCode }));
     },
 
@@ -251,8 +267,10 @@ function createAuthController({ signInStores, ownership }) {
       });
     },
 
-    // Answers from the token alone (no database or GitHub call), so clients can show who is signed
-    // in after a reload. Values are the sign-in snapshot.
+    // Answers from the token (no GitHub call, no read of any dev), so clients can show who is signed
+    // in after a reload. Values are the sign-in snapshot. The route's session-check limiter
+    // (middleware/rateLimit.js, shared since multi-instance PR1) does one MongoDB round trip first,
+    // so with MongoDB unreachable this answers 500 internal_error once server selection times out.
     async me(req, res) {
       return res.json(publicUser(req.user));
     },

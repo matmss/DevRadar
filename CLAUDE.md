@@ -118,9 +118,13 @@ Routes (`dev/backend/src/routes.js`):
   `utils/sharedOneTimeStore.js`: `_id` = sha256 of the raw state/code, never the raw value or the
   GitHub token; consumed by one atomic `findOneAndDelete` that burns it whether expired or not and
   checks expiry against MongoDB's clock, `$$NOW`) and `rate_limits` (`models/RateLimit.js`,
-  `middleware/mongoRateLimitStore.js`, an express-rate-limit Store; fixed windows by `$$NOW`).
-  TTL indexes (built by `index.js`) only clean up. A store failure fails closed (500
-  `internal_error`, logged without keys, `utils/sharedStateError.js`). `utils/oneTimeStore.js` is
+  `middleware/mongoRateLimitStore.js`, an express-rate-limit Store; fixed windows by `$$NOW`; it
+  returns `resetTime` as `Date.now()` + the time left by `$$NOW`, so the headers are right under
+  clock skew). TTL indexes (built by `index.js`) only clean up. A store failure fails closed (500
+  `internal_error`, logged without keys, `utils/sharedStateError.js`), session checks included
+  (`GET /auth/me` makes one MongoDB round trip for its limiter); except that a code-store failure
+  at the callback, after the state was spent, still redirects to the client with
+  `error=sign_in_failed&reason=sign_in_unavailable` (no code). `utils/oneTimeStore.js` is
   the old in-memory store, kept for its unit tests only. Env: see `dev/backend/.env.example`.
   **Every dev-facing surface requires a token: `POST /devs`, `GET /devs`, `GET /search`,
   `GET`/`PUT`/`DELETE /devs/me` and the Socket.io handshake** (only `/auth/*` is public). Backend and web tests

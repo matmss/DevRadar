@@ -41,13 +41,16 @@ When(/^key "([^"]*)" gets (\d+) hits? taken back in store "([^"]*)"$/, async fun
 When('key {string} gets {int} hits at once in store {string}', async function (key, times, prefix) {
   const store = rateLimitStore(this, prefix);
   this.concurrentHits = await Promise.all(Array.from({ length: times }, () => store.increment(key)));
+  this.concurrentHitsId = `${prefix}${key}`;
 });
 
-Then('those hits should have counted 1 to {int}', function (last) {
+// The returned resetTime is on the instance's clock (Date.now() + time left), so it differs by a
+// few ms per hit; the window itself is the one stored document.
+Then('those hits should have counted 1 to {int}', async function (last) {
   const counted = this.concurrentHits.map((hit) => hit.totalHits).sort((a, b) => a - b);
   expect(counted).to.deep.equal(Array.from({ length: last }, (_, i) => i + 1));
-  const resetTimes = new Set(this.concurrentHits.map((hit) => hit.resetTime.getTime()));
-  expect(resetTimes.size, 'windows those hits counted in').to.equal(1);
+  const stored = await RateLimit.collection.find({ _id: this.concurrentHitsId }).toArray();
+  expect(stored.map((doc) => doc.hits), 'stored windows of that key').to.deep.equal([last]);
 });
 
 When('the window of key {string} in store {string} is over', async function (key, prefix) {
@@ -68,9 +71,15 @@ Then(
     const info = await rateLimitStore(this, prefix).get(key);
     expect(info, `the window of key "${key}"`).to.not.equal(undefined);
     expect(info.totalHits).to.equal(Number(hits));
-    const msLeft = info.resetTime.getTime() - (await mongoNow()).getTime();
-    expect(msLeft).to.be.at.most(Number(seconds) * 1000);
-    expect(msLeft).to.be.above(Number(seconds) * 1000 - WINDOW_SLACK_MS);
+    // Returned on this instance's clock (what express-rate-limit subtracts Date.now() from) ...
+    const msLeftHere = info.resetTime.getTime() - Date.now();
+    expect(msLeftHere, 'ms left, returned resetTime').to.be.at.most(Number(seconds) * 1000);
+    expect(msLeftHere, 'ms left, returned resetTime').to.be.above(Number(seconds) * 1000 - WINDOW_SLACK_MS);
+    // ... stored on MongoDB's.
+    const stored = await RateLimit.collection.findOne({ _id: `${prefix}${key}` });
+    const msLeftStored = stored.resetTime.getTime() - (await mongoNow()).getTime();
+    expect(msLeftStored, 'ms left, stored resetTime').to.be.at.most(Number(seconds) * 1000);
+    expect(msLeftStored, 'ms left, stored resetTime').to.be.above(Number(seconds) * 1000 - WINDOW_SLACK_MS);
   }
 );
 

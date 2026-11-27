@@ -91,7 +91,9 @@ Feature: Sign in and out of the web app with GitHub (US-6)
     Then I should be signed in as "gaearon"
 
   # The callback page never navigates to a URL taken from its query string, and a code without
-  # this browser's PKCE verifier (e.g. a forwarded link) does not sign anyone in.
+  # this browser's PKCE verifier (e.g. a forwarded link) does not sign anyone in. A reason the app
+  # has no message of its own for (e.g. the backend's sign_in_unavailable, multi-instance PR1
+  # QA-MI1-1: the one-time code could not be stored) gets the generic failure message.
   @edge @regression @P1
   Scenario Outline: A forged sign-in callback link does not sign me in or navigate away
     When I open the sign-in callback link "<link>"
@@ -104,3 +106,4 @@ Feature: Sign in and out of the web app with GitHub (US-6)
       | /auth/callback?code=stolen-code                             |
       | /auth/callback?code=stolen-code&redirect=//evil.example/    |
       | /auth/callback?error=sign_in_failed&reason=<script>x</script> |
+      | /auth/callback?error=sign_in_failed&reason=sign_in_unavailable |

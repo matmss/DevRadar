@@ -213,7 +213,11 @@ existed) is found (Q5, US-8).
        `github_error` (another GitHub `error`), `github_code_missing`, `github_unavailable`
        (GitHub rejected the code, 5xx or unreachable), `github_rate_limited`, or
        `github_user_invalid` (`GET /user` answered without a valid `id`, a positive safe integer
-       given as a JSON number, or without a valid login).
+       given as a JSON number, or without a valid login), or `sign_in_unavailable` (the one-time
+       code could not be stored: MongoDB failed after the state was spent; QA-MI1-1). Web and
+       mobile give their own message only for `github_rate_limited` and `github_unavailable`;
+       every other reason shows the generic "Não foi possível entrar com o GitHub, tente
+       novamente".
   3. `POST /auth/token` `{ code, code_verifier }`: consumes the one-time code first, then
      checks `BASE64URL(SHA256(code_verifier))` against the stored challenge with a
      timing-safe compare. A missing or wrong verifier is a 400 and the code is spent (sign in
@@ -222,8 +226,10 @@ existed) is found (Q5, US-8).
      dev still showing this login is displaced, and the account's dev takes it (see "Profile
      ownership").
   4. `GET /auth/me` (Bearer token): `{ github_id, github_username, name, avatar_url }`, answered
-     from the token alone (no database or GitHub call). Clients call it on load to show who is
-     signed in.
+     from the token (no GitHub call, no read of any dev). Its session-check rate limiter is shared
+     in MongoDB (below), so each call makes one MongoDB round trip, and with MongoDB unreachable
+     it answers 500 `internal_error` once server selection times out (QA-MI1-3). Clients call it
+     on load to show who is signed in.
 - **Shared sign-in state and rate limits** (multi-instance PR1). Each step above may run on a
   different instance.
   - `state` and one-time code (`utils/sharedOneTimeStore.js`, collection `auth_one_time`): issued
@@ -241,13 +247,22 @@ existed) is found (Q5, US-8).
     express-rate-limit v8 Store (`localKeys: false`, `init`/`get`/`increment`/`decrement`/
     `resetKey`/`resetAll`). One atomic upsert per hit; the window opens at the first hit, ends at
     `$$NOW` + 15 min, and a hit after it starts a new window (both decided by MongoDB's clock).
-    Only the `RateLimit`/`Retry-After` header values use the instance's clock. Same 429 body and
-    draft-7 headers as before. `context.rateLimits.reset()` clears every instance's counters.
+    The store hands express-rate-limit a `resetTime` on the instance's clock (`Date.now()` + the
+    time left by `$$NOW`, measured in the same operation), since express-rate-limit subtracts
+    `Date.now()` from it: the `RateLimit` reset and `Retry-After` seconds are right whatever the
+    skew between an instance and MongoDB (QA-MI1-2); the stored `resetTime` stays MongoDB's. Same
+    429 body and draft-7 headers as before. `context.rateLimits.reset()` clears every instance's
+    counters.
   - Failures: MongoDB errors become a `SharedStateError` (`utils/sharedStateError.js`) whose
     message names the operation and the driver error's class and code, never the driver message
     (it can quote the key: an IP, an account id, a hash). Fail closed: 500 `internal_error` from
     the error handler (`passOnStoreError: false` for the limiters), so a store outage blocks
-    sign-in and profile changes instead of lifting the limits.
+    sign-in (`GET /auth/github`, `POST /auth/token`), session checks (`GET /auth/me`) and profile
+    changes (`PUT`/`DELETE /devs/me`) instead of lifting the limits. The one exception is the
+    callback once its state is spent: a failure there still sends the browser back to the client,
+    `?error=sign_in_failed&reason=sign_in_unavailable` (no code), logged with the
+    `SharedStateError` message only; a failure before that (the rate limiter, or consuming the
+    state) is 500 JSON, as for any request whose client redirect is not known yet.
   - Clocks: expiry and windows follow MongoDB's clock. `loginReadAt` in the code payload (when the
     callback read GitHub) is still the instance's `Date.now()`, as before.
 - **Session token** (`utils/sessionToken.js`, `utils/githubId.js`): HS256 JWT signed with

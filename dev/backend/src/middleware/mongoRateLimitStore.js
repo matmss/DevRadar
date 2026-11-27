@@ -7,9 +7,14 @@
 // `windowMs`, every hit until it ends adds one, the first hit after it opens a new one. One
 // atomic upsert per hit on { _id: prefix + key }; the window's resetTime is MongoDB's clock
 // ($$NOW + windowMs) and the "is the window over?" check uses $$NOW too, so instances with skewed
-// clocks share the same windows. (The RateLimit/Retry-After headers express-rate-limit sends
-// subtract the instance's clock from resetTime: only they depend on it.) The TTL index on
-// resetTime removes finished windows; it is never needed for correctness.
+// clocks share the same windows. The TTL index on resetTime removes finished windows; it is never
+// needed for correctness.
+//
+// What get/increment return as `resetTime` is on the INSTANCE's clock: express-rate-limit turns it
+// into the RateLimit "reset" and Retry-After seconds by subtracting the instance's Date.now(), so
+// the store measures the time left by MongoDB's clock (resetTime - $$NOW, in the same operation)
+// and adds it to Date.now(). The headers then count the shared window down correctly whatever the
+// skew between the instance and MongoDB (QA-MI1-2). The stored resetTime stays MongoDB's.
 //
 // Errors: a MongoDB failure throws a SharedStateError (utils/sharedStateError.js) whose message
 // names no key. middleware/rateLimit.js leaves express-rate-limit's passOnStoreError at false,
@@ -18,6 +23,17 @@ const RateLimit = require('../models/RateLimit');
 const { sharedStateOperation } = require('../utils/sharedStateError');
 
 const DUPLICATE_KEY = 11000;
+
+// The time left in a stored window, by MongoDB's clock (ms; negative once it is over).
+const MS_LEFT = { $subtract: ['$resetTime', '$$NOW'] };
+
+/**
+ * @param {{ hits: number, msLeft: number }} doc - a counter read with the MS_LEFT projection
+ * @returns {{ totalHits: number, resetTime: Date }} with resetTime on this instance's clock
+ */
+function clientRateLimitInfo(doc) {
+  return { totalHits: doc.hits, resetTime: new Date(Date.now() + doc.msLeft) };
+}
 
 /** @param {string} text @returns {string} the text as a literal in a regular expression */
 function escapeRegExp(text) {
@@ -54,20 +70,21 @@ class MongoRateLimitStore {
 
   /**
    * @param {string} key
-   * @returns {Promise<{ totalHits: number, resetTime: Date } | undefined>}
+   * @returns {Promise<{ totalHits: number, resetTime: Date } | undefined>} resetTime on this
+   *   instance's clock (see the header)
    */
   async get(key) {
-    const doc = await sharedStateOperation('rate_limits get', () => this.collection().findOne({
-      _id: this.storedId(key),
-      $expr: { $gt: ['$resetTime', '$$NOW'] },
-    }));
-    return doc ? { totalHits: doc.hits, resetTime: doc.resetTime } : undefined;
+    const doc = await sharedStateOperation('rate_limits get', () => this.collection().findOne(
+      { _id: this.storedId(key), $expr: { $gt: ['$resetTime', '$$NOW'] } },
+      { projection: { _id: 0, hits: 1, msLeft: MS_LEFT } }
+    ));
+    return doc ? clientRateLimitInfo(doc) : undefined;
   }
 
   /**
    * One hit: +1 in the current window, or 1 in a new window if there is none or it is over.
    * @param {string} key
-   * @returns {Promise<{ totalHits: number, resetTime: Date }>}
+   * @returns {Promise<{ totalHits: number, resetTime: Date }>} resetTime on this instance's clock
    */
   async increment(key) {
     const live = { $gt: ['$resetTime', '$$NOW'] }; // false while resetTime is missing
@@ -80,7 +97,8 @@ class MongoRateLimitStore {
           resetTime: { $cond: [live, '$resetTime', { $add: ['$$NOW', this.windowMs] }] },
         },
       }],
-      { upsert: true, returnDocument: 'after' }
+      // msLeft: the updated window's time left, by the same $$NOW as the update.
+      { upsert: true, returnDocument: 'after', projection: { _id: 0, hits: 1, msLeft: MS_LEFT } }
     );
     const doc = await sharedStateOperation('rate_limits increment', async () => {
       try {
@@ -92,7 +110,7 @@ class MongoRateLimitStore {
         throw err;
       }
     });
-    return { totalHits: doc.hits, resetTime: doc.resetTime };
+    return clientRateLimitInfo(doc);
   }
 
   /** @param {string} key - takes back one hit of the current window (never below 0) */

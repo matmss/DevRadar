@@ -250,7 +250,10 @@ Scenario: Old sessions
   burns the code on every instance). **Expiry is enforced on read**, against MongoDB's clock
   (`$$NOW`, also used to set the expiry at issue), so instances with skewed clocks agree; the TTL
   index on `expiresAt` is **cleanup only**. Works on a standalone mongod 4.4+ (no replica set).
-  If MongoDB fails, sign-in fails closed (500 `internal_error`, logged without the value).
+  If MongoDB fails, sign-in fails closed (500 `internal_error`, logged without the value), except
+  at the callback after the `state` was spent: the browser still goes back to the client with
+  `?error=sign_in_failed&reason=sign_in_unavailable` and no code (the clients show their generic
+  sign-in failure message).
 - Session tokens: signed, `exp` = 7 days (Q3).
 - GitHub access token is used once to read identity, then discarded.
 - Post-login redirect targets are allow-listed (reuse the `CORS_ORIGINS` approach plus the mobile app scheme).
@@ -260,7 +263,9 @@ Scenario: Old sessions
   15-minute windows by MongoDB's clock), so spreading requests over instances does not raise the
   budget. The per-IP sign-in limit also bounds how many states one client can create (the old
   in-memory store's entry cap is gone). If the counter store fails, the request fails closed (500
-  `internal_error`), never unlimited.
+  `internal_error`), never unlimited; this includes session checks (`GET /auth/me`), which now
+  make one MongoDB round trip for their limiter. The `RateLimit`/`Retry-After` headers count the
+  shared window down by MongoDB's clock, whatever an instance's clock says.
 - Registration identity comes from the OAuth identity, not the unauthenticated `GET /users/:username` lookup.
 - All errors use `{ error, details }`; no stack traces or token values.
 
