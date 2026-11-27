@@ -1,24 +1,14 @@
 // Live dev events (Socket.io, websocket.js), pushed to the subscribers whose position and techs
 // match a dev (findConnections: the same isNearby + techs rule as GET /search).
-const { findConnections, sendMessage } = require('../websocket');
+//
+// The announcer is per server instance (serverContext.js): it pushes to the sockets connected to
+// that instance's realtime hub only. Shared (cross-instance) pushes arrive in a later phase.
 
 const EVENT = Object.freeze({
   NEW_DEV: 'new-dev',
   DEV_UPDATED: 'dev-updated',
   DEV_DELETED: 'dev-deleted',
 });
-
-/**
- * Pushes `event` to the connected sockets whose subscription (position and techs) matches a dev
- * at `latitude`/`longitude` with `techs`.
- * @param {string} event
- * @param {{ latitude: number, longitude: number }} position
- * @param {string[]} techs
- * @param {object} payload
- */
-function announce(event, position, techs, payload) {
-  sendMessage(findConnections(position, techs), event, payload);
-}
 
 /**
  * The position and techs a stored dev is matched by, or null if it has none usable (a malformed
@@ -34,14 +24,42 @@ function matchKeyOf(dev) {
 }
 
 /**
- * Announces a stored dev as `event` at its own position and techs (if it has usable ones).
- * @param {string} event
- * @param {object} dev - a Dev document
- * @param {object} [payload] - default: the dev
+ * @typedef {{
+ *   announce: (event: string, position: { latitude: number, longitude: number }, techs: string[], payload: object) => void,
+ *   announceStored: (event: string, dev: object, payload?: object) => void,
+ * }} DevEvents
  */
-function announceStored(event, dev, payload = dev) {
-  const key = matchKeyOf(dev);
-  if (key) announce(event, key.position, key.techs, payload);
+
+/**
+ * @param {Pick<import('../websocket').Realtime, 'findConnections' | 'sendMessage'>} realtime - the
+ *   server instance's hub
+ * @returns {DevEvents}
+ */
+function createDevEvents(realtime) {
+  /**
+   * Pushes `event` to the connected sockets whose subscription (position and techs) matches a dev
+   * at `latitude`/`longitude` with `techs`.
+   * @param {string} event
+   * @param {{ latitude: number, longitude: number }} position
+   * @param {string[]} techs
+   * @param {object} payload
+   */
+  function announce(event, position, techs, payload) {
+    realtime.sendMessage(realtime.findConnections(position, techs), event, payload);
+  }
+
+  /**
+   * Announces a stored dev as `event` at its own position and techs (if it has usable ones).
+   * @param {string} event
+   * @param {object} dev - a Dev document
+   * @param {object} [payload] - default: the dev
+   */
+  function announceStored(event, dev, payload = dev) {
+    const key = matchKeyOf(dev);
+    if (key) announce(event, key.position, key.techs, payload);
+  }
+
+  return { announce, announceStored };
 }
 
-module.exports = { EVENT, announce, announceStored };
+module.exports = { EVENT, createDevEvents };

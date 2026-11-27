@@ -23,7 +23,6 @@ const { isRedirectAllowed, buildRedirectUrl } = require('../utils/redirectAllowL
 const { signSessionToken } = require('../utils/sessionToken');
 const { PKCE_METHOD, isValidCodeChallenge, verifyCodeVerifier } = require('../utils/pkce');
 const { isGithubOAuthConfigured } = require('../config/auth');
-const { refreshLoginAtSignIn } = require('../services/devOwnership');
 const {
   buildAuthorizeUrl,
   exchangeCodeForToken,
@@ -36,11 +35,19 @@ const SIGN_IN_CODE_TTL_MS = 60 * 1000;
 const SIGN_IN_CANCELLED = 'sign_in_cancelled';
 const SIGN_IN_FAILED = 'sign_in_failed';
 
-// In-memory, per process: see the multi-instance note in utils/oneTimeStore.js.
-// stateStore payload:      { redirect, codeChallenge }
-// signInCodeStore payload: { githubId, githubUsername, loginReadAt, profile: { name, avatar_url, bio }, codeChallenge }
-const stateStore = createOneTimeStore({ ttlMs: STATE_TTL_MS });
-const signInCodeStore = createOneTimeStore({ ttlMs: SIGN_IN_CODE_TTL_MS });
+/**
+ * The two one-time stores sign-in uses, in memory, per server instance (serverContext.js; see the
+ * multi-instance note in utils/oneTimeStore.js). Shared stores arrive in a later phase.
+ *   stateStore payload:      { redirect, codeChallenge }
+ *   signInCodeStore payload: { githubId, githubUsername, loginReadAt, profile: { name, avatar_url, bio }, codeChallenge }
+ * @returns {{ stateStore: ReturnType<typeof createOneTimeStore>, signInCodeStore: ReturnType<typeof createOneTimeStore> }}
+ */
+function createSignInStores() {
+  return {
+    stateStore: createOneTimeStore({ ttlMs: STATE_TTL_MS }),
+    signInCodeStore: createOneTimeStore({ ttlMs: SIGN_IN_CODE_TTL_MS }),
+  };
+}
 
 /**
  * @param {import('express').Response} res
@@ -97,135 +104,148 @@ function isNonEmptyString(value) {
   return typeof value === 'string' && value !== '';
 }
 
-module.exports = {
-  async start(req, res) {
-    if (!isGithubOAuthConfigured()) {
-      return sendError(res, 503, 'not_configured', 'GitHub sign-in is not configured', [
-        'GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET must be set on the backend',
-      ]);
-    }
+/**
+ * The sign-in handlers of one server instance (serverContext.js): its one-time stores, and its
+ * write queue and announcer for the login refresh at sign-in.
+ * @param {{ signInStores: ReturnType<typeof createSignInStores>,
+ *   ownership: ReturnType<typeof import('../services/devOwnership').createDevOwnership> }} instance
+ */
+function createAuthController({ signInStores, ownership }) {
+  const { stateStore, signInCodeStore } = signInStores;
+  const { refreshLoginAtSignIn } = ownership;
 
-    const { redirect, code_challenge: codeChallenge, code_challenge_method: method } = req.query;
-    if (!isNonEmptyString(redirect)) {
-      return sendError(res, 400, 'redirect_invalid', 'Invalid redirect', ['redirect is required']);
-    }
-    if (!isRedirectAllowed(redirect)) {
-      return sendError(res, 400, 'redirect_invalid', 'Invalid redirect', ['redirect is not an allowed client URL']);
-    }
-    if (!isValidCodeChallenge(codeChallenge)) {
-      return sendError(res, 400, 'code_challenge_invalid', 'Invalid PKCE challenge', [
-        'code_challenge is required: BASE64URL(SHA256(code_verifier)), 43-128 characters',
-      ]);
-    }
-    if (method !== PKCE_METHOD) {
-      return sendError(res, 400, 'code_challenge_method_invalid', 'Invalid PKCE challenge', [
-        `code_challenge_method must be ${PKCE_METHOD}`,
-      ]);
-    }
-
-    const state = stateStore.issue({ redirect, codeChallenge });
-    noStore(res);
-    return res.redirect(302, buildAuthorizeUrl(state));
-  },
-
-  async callback(req, res) {
-    const { state, code, error } = req.query;
-
-    // Until the state is verified the redirect target is unknown, so these answer JSON.
-    if (!isNonEmptyString(state)) {
-      return sendError(res, 400, 'state_missing', 'Invalid sign-in state', ['state is required']);
-    }
-    const attempt = stateStore.consume(state);
-    if (!attempt) {
-      return sendError(res, 400, 'state_invalid', 'Invalid sign-in state', [
-        'state is unknown, expired or already used; start the sign-in again',
-      ]);
-    }
-
-    noStore(res);
-
-    if (error !== undefined) {
-      const githubError = safeErrorCode(error);
-      if (githubError === 'access_denied') {
-        return res.redirect(302, buildRedirectUrl(attempt.redirect, { error: SIGN_IN_CANCELLED }));
+  return {
+    async start(req, res) {
+      if (!isGithubOAuthConfigured()) {
+        return sendError(res, 503, 'not_configured', 'GitHub sign-in is not configured', [
+          'GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET must be set on the backend',
+        ]);
       }
-      console.error(`GitHub sign-in callback returned an error: ${githubError}`);
-      return redirectFailure(res, attempt.redirect, 'github_error');
-    }
 
-    if (!isNonEmptyString(code)) {
-      return redirectFailure(res, attempt.redirect, 'github_code_missing');
-    }
+      const { redirect, code_challenge: codeChallenge, code_challenge_method: method } = req.query;
+      if (!isNonEmptyString(redirect)) {
+        return sendError(res, 400, 'redirect_invalid', 'Invalid redirect', ['redirect is required']);
+      }
+      if (!isRedirectAllowed(redirect)) {
+        return sendError(res, 400, 'redirect_invalid', 'Invalid redirect', ['redirect is not an allowed client URL']);
+      }
+      if (!isValidCodeChallenge(codeChallenge)) {
+        return sendError(res, 400, 'code_challenge_invalid', 'Invalid PKCE challenge', [
+          'code_challenge is required: BASE64URL(SHA256(code_verifier)), 43-128 characters',
+        ]);
+      }
+      if (method !== PKCE_METHOD) {
+        return sendError(res, 400, 'code_challenge_method_invalid', 'Invalid PKCE challenge', [
+          `code_challenge_method must be ${PKCE_METHOD}`,
+        ]);
+      }
 
-    const exchanged = await exchangeCodeForToken(code);
-    if (!exchanged.accessToken) return redirectFailure(res, attempt.redirect, githubFailureReason(exchanged));
+      const state = stateStore.issue({ redirect, codeChallenge });
+      noStore(res);
+      return res.redirect(302, buildAuthorizeUrl(state));
+    },
 
-    const identity = await fetchAuthenticatedUser(exchanged.accessToken);
-    if (!identity.user) return redirectFailure(res, attempt.redirect, githubFailureReason(identity));
+    async callback(req, res) {
+      const { state, code, error } = req.query;
 
-    const { id, login, profile } = identity.user;
-    const signInCode = signInCodeStore.issue({
-      githubId: id,
-      githubUsername: login,
-      // When GitHub said this login is this account's: orders login refreshes (QA-AUTH6-3).
-      loginReadAt: Date.now(),
-      profile,
-      codeChallenge: attempt.codeChallenge,
-    });
-    return res.redirect(302, buildRedirectUrl(attempt.redirect, { code: signInCode }));
-  },
+      // Until the state is verified the redirect target is unknown, so these answer JSON.
+      if (!isNonEmptyString(state)) {
+        return sendError(res, 400, 'state_missing', 'Invalid sign-in state', ['state is required']);
+      }
+      const attempt = stateStore.consume(state);
+      if (!attempt) {
+        return sendError(res, 400, 'state_invalid', 'Invalid sign-in state', [
+          'state is unknown, expired or already used; start the sign-in again',
+        ]);
+      }
 
-  async token(req, res) {
-    const { code, code_verifier: codeVerifier } = req.body || {};
-    res.set('Cache-Control', 'no-store');
+      noStore(res);
 
-    if (!isNonEmptyString(code)) {
-      return sendError(res, 400, 'code_missing', 'Invalid sign-in code', ['code is required']);
-    }
-    // Consumed before the verifier is checked: a wrong or missing verifier burns the code,
-    // so it cannot be retried or brute-forced.
-    const pending = signInCodeStore.consume(code);
-    if (!pending) {
-      return sendError(res, 400, 'code_invalid', 'Invalid sign-in code', [
-        'code is unknown, expired or already used; sign in again',
-      ]);
-    }
-    if (codeVerifier === undefined || codeVerifier === '') {
-      return sendError(res, 400, 'code_verifier_missing', 'Invalid PKCE verifier', [
-        'code_verifier is required; the sign-in code is now spent, sign in again',
-      ]);
-    }
-    if (!verifyCodeVerifier(codeVerifier, pending.codeChallenge)) {
-      return sendError(res, 400, 'code_verifier_invalid', 'Invalid PKCE verifier', [
-        'code_verifier does not match the code_challenge; the sign-in code is now spent, sign in again',
-      ]);
-    }
+      if (error !== undefined) {
+        const githubError = safeErrorCode(error);
+        if (githubError === 'access_denied') {
+          return res.redirect(302, buildRedirectUrl(attempt.redirect, { error: SIGN_IN_CANCELLED }));
+        }
+        console.error(`GitHub sign-in callback returned an error: ${githubError}`);
+        return redirectFailure(res, attempt.redirect, 'github_error');
+      }
 
-    const user = {
-      github_id: pending.githubId,
-      github_username: pending.githubUsername,
-      profile: pending.profile,
-      login_read_at: pending.loginReadAt,
-    };
-    // loginReadAt: the read time as signed (clamped if the clock stepped back, QA-AUTH6-5).
-    const { token, expiresIn, loginReadAt } = signSessionToken(user);
+      if (!isNonEmptyString(code)) {
+        return redirectFailure(res, attempt.redirect, 'github_code_missing');
+      }
 
-    // GitHub's fresh answer is authoritative (auth spec Q10): a dev of another account still
-    // showing this login is displaced, and this account's dev takes it (a renamed account shows
-    // its new login, and frees its old one). Best effort: never fails the sign-in.
-    await refreshLoginAtSignIn({ ...user, login_read_at: loginReadAt });
+      const exchanged = await exchangeCodeForToken(code);
+      if (!exchanged.accessToken) return redirectFailure(res, attempt.redirect, githubFailureReason(exchanged));
 
-    return res.json({
-      token,
-      token_type: 'Bearer',
-      expires_in: expiresIn,
-      user: publicUser(user),
-    });
-  },
+      const identity = await fetchAuthenticatedUser(exchanged.accessToken);
+      if (!identity.user) return redirectFailure(res, attempt.redirect, githubFailureReason(identity));
 
-  // Answers from the token alone (no database or GitHub call), so clients can show who is signed
-  // in after a reload. Values are the sign-in snapshot.
-  async me(req, res) {
-    return res.json(publicUser(req.user));
-  },
-};
+      const { id, login, profile } = identity.user;
+      const signInCode = signInCodeStore.issue({
+        githubId: id,
+        githubUsername: login,
+        // When GitHub said this login is this account's: orders login refreshes (QA-AUTH6-3).
+        loginReadAt: Date.now(),
+        profile,
+        codeChallenge: attempt.codeChallenge,
+      });
+      return res.redirect(302, buildRedirectUrl(attempt.redirect, { code: signInCode }));
+    },
+
+    async token(req, res) {
+      const { code, code_verifier: codeVerifier } = req.body || {};
+      res.set('Cache-Control', 'no-store');
+
+      if (!isNonEmptyString(code)) {
+        return sendError(res, 400, 'code_missing', 'Invalid sign-in code', ['code is required']);
+      }
+      // Consumed before the verifier is checked: a wrong or missing verifier burns the code,
+      // so it cannot be retried or brute-forced.
+      const pending = signInCodeStore.consume(code);
+      if (!pending) {
+        return sendError(res, 400, 'code_invalid', 'Invalid sign-in code', [
+          'code is unknown, expired or already used; sign in again',
+        ]);
+      }
+      if (codeVerifier === undefined || codeVerifier === '') {
+        return sendError(res, 400, 'code_verifier_missing', 'Invalid PKCE verifier', [
+          'code_verifier is required; the sign-in code is now spent, sign in again',
+        ]);
+      }
+      if (!verifyCodeVerifier(codeVerifier, pending.codeChallenge)) {
+        return sendError(res, 400, 'code_verifier_invalid', 'Invalid PKCE verifier', [
+          'code_verifier does not match the code_challenge; the sign-in code is now spent, sign in again',
+        ]);
+      }
+
+      const user = {
+        github_id: pending.githubId,
+        github_username: pending.githubUsername,
+        profile: pending.profile,
+        login_read_at: pending.loginReadAt,
+      };
+      // loginReadAt: the read time as signed (clamped if the clock stepped back, QA-AUTH6-5).
+      const { token, expiresIn, loginReadAt } = signSessionToken(user);
+
+      // GitHub's fresh answer is authoritative (auth spec Q10): a dev of another account still
+      // showing this login is displaced, and this account's dev takes it (a renamed account shows
+      // its new login, and frees its old one). Best effort: never fails the sign-in.
+      await refreshLoginAtSignIn({ ...user, login_read_at: loginReadAt });
+
+      return res.json({
+        token,
+        token_type: 'Bearer',
+        expires_in: expiresIn,
+        user: publicUser(user),
+      });
+    },
+
+    // Answers from the token alone (no database or GitHub call), so clients can show who is signed
+    // in after a reload. Values are the sign-in snapshot.
+    async me(req, res) {
+      return res.json(publicUser(req.user));
+    },
+  };
+}
+
+module.exports = { createAuthController, createSignInStores, STATE_TTL_MS, SIGN_IN_CODE_TTL_MS };

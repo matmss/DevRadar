@@ -20,6 +20,10 @@ const REFUSED_APP_SCHEMES = [
 
 // Outside production a missing JWT_SECRET falls back to a random per-process secret, so local
 // development works without setup. Sessions then reset whenever the process restarts.
+// The one deliberate module-level runtime value (not in serverContext.js): every server instance
+// in a process signs with it, so they accept each other's tokens. Separate processes each pick
+// their own, so running several needs one JWT_SECRET (else a token from one is token_invalid on
+// another).
 let fallbackJwtSecret = null;
 
 /** @returns {boolean} */

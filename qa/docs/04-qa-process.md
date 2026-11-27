@@ -23,6 +23,7 @@ Defines how functional, regression, integration, and exploratory testing are run
    - `@integration` — requires real DB/socket/cross-layer, excluded from fast unit-style runs.
    - `@edge` — negative/boundary cases.
    - `@wip` — excluded from CI until stabilized.
+   - `@multi-instance` — backend scenarios that start a second backend instance in-process (`support/testApp.js` `startTestInstance`); `multi-instance.feature`.
 
 ## 3. Functional testing
 - Scope: one layer at a time, dependencies faked (GitHub API via `nock`/mock server, Mongo via `mongodb-memory-server`, browser geolocation mocked via Playwright, device location/permissions mocked via Detox).

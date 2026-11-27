@@ -81,6 +81,18 @@ Three layers, one shared backend:
   (`qa/backend-tests/features/support/testApp.js`, `qa/web-tests/features/support/backend-server.js`)
   use it, so the wiring cannot drift. The web harness mounts its `/__test__` seed routes
   through the `beforeRoutes` option.
+- **Server context** (`backend/src/serverContext.js`): every call builds its own runtime state,
+  so two servers in one process share only MongoDB: the realtime hub (Socket.io and its
+  `connections`, `websocket.js` `createRealtime`), the announcer (`services/devEvents.js`), the
+  OAuth `state` and one-time code stores, the three rate limiters, the per-account write queue
+  `writesByAccount` and the `devOwnership` operations bound to it (`createDevOwnership`:
+  `inAccountOrder`, `inLoginOrder`, displacements, the sign-in login refresh). Routes and
+  controllers are built over it. `createServer()` returns `{ app, server, context }`.
+  Multi-instance phases: PR0 (this split, no behaviour change); PR1 moves the stores and rate
+  limits to MongoDB; PR2 adds a cross-instance push bus (each instance still matches its own
+  sockets with `isNearby`); PR3 adds a MongoDB lease lock per account under the local queue.
+  `qa/backend-tests/features/multi-instance.feature` pins today's isolation and is inverted by
+  those phases.
 - **Error handler** (`middleware/errorHandler.js`, BUG-012): every route answers errors as
   `{ error, code, details }`, never Express's HTML page with a stack trace.
   `body_invalid` (400, malformed JSON), `body_too_large` (413, over 100 kb),
@@ -495,9 +507,9 @@ existed) is found (Q5, US-8).
     every dev, because only its owner ever writes it (rule 1), or the one account that wins its
     claim (rule 2; a losing claimant writes nothing), or a sign-in that displaces it while holding
     its owner's key too (sorted, see "Locks" above). Different accounts never wait for each
-    other, and a key is dropped as soon as its last task settles. The queue is in process memory,
-    which matches the single-instance assumption below; several instances would need a shared lock
-    or per-dev versions on the events.
+    other, and a key is dropped as soon as its last task settles. The queue is in memory, per
+    server instance (the server context, above); several instances need the shared per-account
+    lock of a later phase (PR3).
   - **Push amplification limits** (QA-AUTH5 review): each change is pushed to every matching
     socket, so `PUT`/`DELETE /devs/me` are rate limited **per GitHub account** (`github_id`; not
     per IP, so an account cannot spread changes over addresses and users behind one NAT do not
@@ -555,9 +567,10 @@ existed) is found (Q5, US-8).
   redirects, and startup logs a warning that does not print the value. It must equal the
   mobile app's scheme (see Mobile, "App scheme").
 - **Single-instance limitation:** the `state` store, the one-time code store
-  (`utils/oneTimeStore.js`), the rate-limit counters and the per-account write queue
-  (`utils/keyedQueue.js`) live in process memory. Running more
-  than one backend instance needs sticky sessions or a shared store (e.g. Redis) first.
+  (`utils/oneTimeStore.js`), the rate-limit counters, the per-account write queue
+  (`utils/keyedQueue.js`) and the socket subscriptions live in memory, per server instance (the
+  server context, see "App assembly and errors"). Running more than one backend instance needs
+  the shared state of the later phases (PR1 to PR3) first.
 
 ## Web (`web/`)
 

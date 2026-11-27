@@ -2,7 +2,7 @@ const Dev = require('../models/Dev');
 const { hydrateStored } = require('../models/utils/hydrateStored');
 const parseStringAsArray = require('../utils/parseStringAsArray');
 const validateDevInput = require('../utils/validateDevInput');
-const { EVENT, announce, announceStored } = require('../services/devEvents');
+const { EVENT } = require('../services/devEvents');
 const {
   OWNERSHIP,
   RETRY,
@@ -13,10 +13,6 @@ const {
   refreshLogin,
   updateOwnDev,
   deleteOwnDev,
-  inAccountOrder,
-  inLoginOrder,
-  displaceStaleHolder,
-  pendingWrites,
 } = require('../services/devOwnership');
 
 /**
@@ -108,7 +104,17 @@ async function createOwnDev(user, fields) {
 // _id, name, avatar_url or bio in the body is ignored (auth spec Q9). Which dev is the user's is
 // decided by services/devOwnership.js (by github_id; legacy devs by login, claimed on the first
 // write). The /devs/me routes take no username or id, so nobody can touch another user's dev.
-module.exports = {
+// Built per server instance (serverContext.js): its write queue (through `ownership`) and its
+// announcer (`events`).
+/**
+ * @param {{ ownership: ReturnType<typeof import('../services/devOwnership').createDevOwnership>,
+ *   events: import('../services/devEvents').DevEvents }} instance
+ */
+function createDevController({ ownership, events }) {
+  const { inAccountOrder, inLoginOrder, displaceStaleHolder } = ownership;
+  const { announce, announceStored } = events;
+
+  return {
     // Read lean and hydrated here, so a hand-edited non-ObjectId _id is listed under that _id
     // (QA-PB-4); a normal dev is answered exactly as Dev.find() would.
     async index(req, res) {
@@ -251,8 +257,7 @@ module.exports = {
 
       return res.status(204).end();
     },
-};
+  };
+}
 
-module.exports.EVENT = EVENT;
-// For tests: accounts with a write queued or running (idle accounts are dropped).
-module.exports.pendingWrites = pendingWrites;
+module.exports = { createDevController, EVENT };

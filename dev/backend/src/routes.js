@@ -1,34 +1,44 @@
 const { Router } = require('express');
 
-const DevController = require('./controllers/DevController');
 const SearchController = require('./controllers/SearchController');
-const AuthController = require('./controllers/AuthController');
 const { requireAuth } = require('./middleware/auth');
-const { signInRateLimiter, sessionRateLimiter, profileRateLimiter } = require('./middleware/rateLimit');
 
-const routes = Router();
+/**
+ * The API routes of one server instance, wired to that instance's controllers and rate limiters
+ * (serverContext.js).
+ * @param {import('./serverContext').ServerContext} context
+ * @returns {import('express').Router}
+ */
+function createRoutes(context) {
+  const { auth: AuthController, devs: DevController } = context.controllers;
+  const { signInRateLimiter, sessionRateLimiter, profileRateLimiter } = context.rateLimits;
 
-// Everything that shows or changes devs needs a session token (dev/docs/03-auth-spec.md, Q1 and
-// the access matrix). Registration uses the signed-in GitHub account (US-3, Q10). The Socket.io
-// subscription is authenticated at handshake in websocket.js.
-routes.get('/devs', requireAuth, DevController.index);
-routes.post('/devs', requireAuth, DevController.store);
+  const routes = Router();
 
-// The signed-in user's own dev (US-4, BUG-008): the dev of the token's GitHub account (by id; a
-// legacy dev by login, services/devOwnership.js), so these take no username or id and cannot
-// reach anyone else's profile. No profile: 404 dev_not_found.
-// Registered before any future `/devs/:param` route so "me" can never be read as an id.
-routes.get('/devs/me', requireAuth, DevController.show);
-// Changes are rate limited per GitHub account (each one is pushed to every matching socket).
-routes.put('/devs/me', requireAuth, profileRateLimiter, DevController.update);
-routes.delete('/devs/me', requireAuth, profileRateLimiter, DevController.destroy);
+  // Everything that shows or changes devs needs a session token (dev/docs/03-auth-spec.md, Q1 and
+  // the access matrix). Registration uses the signed-in GitHub account (US-3, Q10). The Socket.io
+  // subscription is authenticated at handshake in websocket.js.
+  routes.get('/devs', requireAuth, DevController.index);
+  routes.post('/devs', requireAuth, DevController.store);
 
-routes.get('/search', requireAuth, SearchController.index);
+  // The signed-in user's own dev (US-4, BUG-008): the dev of the token's GitHub account (by id; a
+  // legacy dev by login, services/devOwnership.js), so these take no username or id and cannot
+  // reach anyone else's profile. No profile: 404 dev_not_found.
+  // Registered before any future `/devs/:param` route so "me" can never be read as an id.
+  routes.get('/devs/me', requireAuth, DevController.show);
+  // Changes are rate limited per GitHub account (each one is pushed to every matching socket).
+  routes.put('/devs/me', requireAuth, profileRateLimiter, DevController.update);
+  routes.delete('/devs/me', requireAuth, profileRateLimiter, DevController.destroy);
 
-// GitHub sign-in (dev/docs/03-auth-spec.md). Public (the only public routes) and rate limited.
-routes.get('/auth/github', signInRateLimiter, AuthController.start);
-routes.get('/auth/github/callback', signInRateLimiter, AuthController.callback);
-routes.post('/auth/token', signInRateLimiter, AuthController.token);
-routes.get('/auth/me', sessionRateLimiter, requireAuth, AuthController.me);
+  routes.get('/search', requireAuth, SearchController.index);
 
-module.exports = routes;
+  // GitHub sign-in (dev/docs/03-auth-spec.md). Public (the only public routes) and rate limited.
+  routes.get('/auth/github', signInRateLimiter, AuthController.start);
+  routes.get('/auth/github/callback', signInRateLimiter, AuthController.callback);
+  routes.post('/auth/token', signInRateLimiter, AuthController.token);
+  routes.get('/auth/me', sessionRateLimiter, requireAuth, AuthController.me);
+
+  return routes;
+}
+
+module.exports = { createRoutes };

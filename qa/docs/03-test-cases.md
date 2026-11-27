@@ -289,6 +289,19 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
   - QA-PB-3 to QA-PB-6 fixes (`profile-busy.feature`, `unit/{storedOwnership,githubAvatarId}.test.js`): one ownership rule for a stored `github_id` (`storedGithubId`, API and CLI): any numeric BSON type or the canonical string "222" is account 222's; missing, null, "", "0222", "not-a-number", 0, negatives, non-integers are legacy. Account 222 reads, updates and deletes its profile stored as String, Decimal128, Int32, Long or Double; after its update a String or Decimal128 is stored as Int32 222 (Int32, Long, Double stay as they are). `GET /search` answers a hand-edited string `_id` as stored. Placeholders: `_stale_<24 hex>` for ObjectIds, `_stale_s_<hex>`/`_stale_x_<hex>` otherwise, distinct case-insensitively and printable.
 - **Automated:** `qa/backend-tests/features/profile-busy.feature`, `profile-busy-review.feature` (QA), `claim-guard-review.feature` (endless stream); `qa/web-tests/features/profile-busy-review.feature` (QA); `qa/backend-tests/unit/{errorHandler,storedOwnership,githubAvatarId}.test.js`; `dev/web/src/services/{requestErrors,api}.test.js`; `dev/tests/mobile/{services/authErrors,pages/Main}.test.js`.
 
+## TC-038 — Two backend instances keep their runtime state to themselves (multi-instance PR0)
+- **Requirement:** FR-4.2, FR-4.3 (connections and pushes per instance), US-1 (sign-in flow and its rate limits, `dev/docs/03-auth-spec.md`), US-4 write ordering (per-account queue). No multi-instance requirement exists yet: PR0 is a refactor that pins today's behaviour.
+- **Type:** Integration / Regression | **P2**
+- **Preconditions:** Two backend instances in one test process, "A" (the scenario's own) and "B" (`support/testApp.js` `startTestInstance`), both on 127.0.0.1, sharing the database and the GitHub mock; each has its own server context (`dev/backend/src/serverContext.js`).
+- **Steps / expected result:**
+  - OAuth state: a state from `GET /auth/github` on A is 400 `state_invalid` at B's callback, and still accepted at A's (302 to the client with a one-time code).
+  - One-time code: a code issued by A is 400 `code_invalid` at B's `POST /auth/token`, and still redeemable on A (200, session token for the user).
+  - Rate limits: with a sign-in limit of 2, two starts on A then one on B is 302; a third start on A is 429 `rate_limited`.
+  - Sockets: a watcher on each instance; each instance lists exactly its own socket; a registration on A pushes `new-dev` to A's watcher and nothing to B's within 1 s.
+  - Write queues: A's `DELETE /devs/me` held at the database leaves 1 account queued on A and 0 on B; the same account's `DELETE` on B answers 204 meanwhile; released, A's answers 404 `dev_not_found` and A's queue is empty.
+  - Later phases invert these on purpose: PR1 (state, codes, rate limits in MongoDB) the first three, PR2 (cross-instance push) the push to B's watcher, PR3 (per-account lease lock) makes B's delete wait for A's.
+- **Automated:** `qa/backend-tests/features/multi-instance.feature` (`@multi-instance @regression`, 5 scenarios).
+
 ## TC-017 (Mobile) — Map centers on current location
 - **Requirement:** FR-6.1
 - **Type:** Functional | **P2**
@@ -343,16 +356,17 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 |---|---|
 | FR-1 | TC-001, TC-002, TC-003, TC-004, TC-011, TC-012, TC-013, TC-031, TC-032, TC-037 |
 | US-3 (auth) | TC-001, TC-002, TC-011, TC-012, TC-025 |
-| US-4 (auth) | TC-031, TC-032, TC-033, TC-037 |
+| US-4 (auth) | TC-031, TC-032, TC-033, TC-037, TC-038 |
 | US-6 (auth) | TC-015, TC-016, TC-023, TC-024, TC-025, TC-026, TC-029, TC-033 |
 | US-5 (auth) | TC-027, TC-028 |
 | US-7 (auth) | TC-019, TC-030, TC-034 |
 | US-8, Q10 (auth) | TC-002, TC-031, TC-032, TC-034, TC-035, TC-036 |
 | FR-2 | TC-007, TC-027 |
 | FR-3 | TC-008, TC-009, TC-010, TC-027 |
-| FR-4 | TC-004, TC-005, TC-006, TC-019, TC-028, TC-031, TC-032 |
+| FR-4 | TC-004, TC-005, TC-006, TC-019, TC-028, TC-031, TC-032, TC-038 |
 | FR-5 | TC-014, TC-015, TC-016, TC-029, TC-033, TC-037 |
 | FR-6 | TC-017, TC-018, TC-019, TC-020, TC-021, TC-030, TC-037 |
 | FR-7 | TC-012, TC-034, TC-035, TC-036 |
 | NFR-1/2 | TC-010 |
 | NFR-7 | TC-022 |
+| US-1 (auth sign-in, rate limits) | TC-038 |

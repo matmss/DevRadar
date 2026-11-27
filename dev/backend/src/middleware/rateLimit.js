@@ -11,7 +11,9 @@
 //     spread its changes over many addresses, and users behind one NAT do not share a budget.
 //     Not on the login: a rename would otherwise start a fresh budget.
 // The client IP is req.ip, so behind a reverse proxy set TRUST_PROXY (config/proxy.js) or every
-// client shares the proxy's key. Counters are in memory, per process (like the OAuth state).
+// client shares the proxy's key. Counters are in memory, per server instance (createRateLimiters,
+// one set per serverContext.js context, like the OAuth state); shared counters arrive in a later
+// phase.
 const { rateLimit, MemoryStore } = require('express-rate-limit');
 
 const WINDOW_MS = 15 * 60 * 1000;
@@ -68,34 +70,43 @@ function createLimiter(max, what, store, keyGenerator) {
   });
 }
 
-const signInStore = new MemoryStore();
-const sessionStore = new MemoryStore();
-
-const signInRateLimiter = createLimiter(authRateLimitMax, 'sign-in requests', signInStore);
-const sessionRateLimiter = createLimiter(authSessionRateLimitMax, 'session checks', sessionStore);
-
-const profileStore = new MemoryStore();
-// Must run after requireAuth (routes.js), which sets req.user.
-const profileRateLimiter = createLimiter(
-  profileRateLimitMax,
-  'profile changes',
-  profileStore,
-  (req) => `github_id:${req.user.github_id}`
-);
-
 /**
- * Clears all rate-limit counters (auth and profile). For test harnesses that reuse one process.
- * @returns {Promise<void>}
+ * One server instance's three limiters, each with its own fresh counters.
+ * @returns {{
+ *   signInRateLimiter: import('express').RequestHandler,
+ *   sessionRateLimiter: import('express').RequestHandler,
+ *   profileRateLimiter: import('express').RequestHandler,
+ *   reset: () => Promise<void>,
+ * }}
  */
-async function resetAuthRateLimit() {
-  await Promise.all([signInStore.resetAll(), sessionStore.resetAll(), profileStore.resetAll()]);
+function createRateLimiters() {
+  const signInStore = new MemoryStore();
+  const sessionStore = new MemoryStore();
+  const profileStore = new MemoryStore();
+
+  return {
+    signInRateLimiter: createLimiter(authRateLimitMax, 'sign-in requests', signInStore),
+    sessionRateLimiter: createLimiter(authSessionRateLimitMax, 'session checks', sessionStore),
+    // Must run after requireAuth (routes.js), which sets req.user.
+    profileRateLimiter: createLimiter(
+      profileRateLimitMax,
+      'profile changes',
+      profileStore,
+      (req) => `github_id:${req.user.github_id}`
+    ),
+
+    /**
+     * Clears this instance's counters (auth and profile). For test harnesses that reuse one server.
+     * @returns {Promise<void>}
+     */
+    async reset() {
+      await Promise.all([signInStore.resetAll(), sessionStore.resetAll(), profileStore.resetAll()]);
+    },
+  };
 }
 
 module.exports = {
-  signInRateLimiter,
-  sessionRateLimiter,
-  profileRateLimiter,
-  resetAuthRateLimit,
+  createRateLimiters,
   authRateLimitMax,
   authSessionRateLimitMax,
   profileRateLimitMax,

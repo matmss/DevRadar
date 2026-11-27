@@ -195,9 +195,10 @@ Given('the backend runs with the default MOBILE_APP_SCHEME', function () {
 // TRUST_PROXY is applied when the app is built, so rebuild it (no server is listening yet).
 Given('the backend runs with TRUST_PROXY {string}', function (value) {
   process.env.TRUST_PROXY = value; // reset by applyTestAuthEnv() in hooks.js
-  const { app, server } = createTestApp();
+  const { app, server, context } = createTestApp();
   this.app = app;
   this.server = server;
+  this.context = context;
 });
 
 // --- When ------------------------------------------------------------------------------------

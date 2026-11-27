@@ -5,9 +5,10 @@
 // reply is slow can no longer announce dev-updated after a later DELETE announced dev-deleted
 // (which re-added a deleted marker on mobile). Different logins never wait for each other.
 //
-// In process memory, like the rate-limit counters and the OAuth state: correct for the single
-// backend instance this project assumes (dev/docs/00-architecture.md). Several instances would
-// need a shared lock (or per-dev versions on the events) instead.
+// In memory, per server instance (serverContext.js `writesByAccount`), like the rate-limit
+// counters and the OAuth state: it orders the writes of one instance only. Shared state arrives in
+// later phases (a lock per account shared by every instance, under this local queue;
+// dev/docs/00-architecture.md).
 //
 // A key is forgotten as soon as its last task settles, so idle logins cost nothing. A failing
 // task rejects its own caller only; the next task for the key still runs.

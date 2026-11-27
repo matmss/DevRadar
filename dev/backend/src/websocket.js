@@ -35,6 +35,11 @@
 // token expires (Q6). The next connect with that token is rejected as token_expired. A token
 // issued before GitHub ids were captured is token_invalid (utils/sessionToken.js).
 // socket.data.user is { github_id, github_username, profile }, like req.user.
+//
+// State: each server instance (app.js createServer, serverContext.js) has its own realtime hub
+// (createRealtime): its own Socket.io server and its own `connections`. Two instances in one
+// process share nothing, and a push only reaches the sockets connected to the instance that sent
+// it (per server instance; a cross-instance push arrives in a later phase).
 const socketio = require('socket.io');
 const parseStringAsArray = require('./utils/parseStringAsArray');
 const { isNearby } = require('./utils/nearby');
@@ -71,10 +76,10 @@ const HANDSHAKE_ERRORS = {
 // `connectTimeout` (default 45 s). Lowered so a client that ignores connect_error does not keep
 // a refused connection open for long. A legitimate handshake takes well under a second.
 const HANDSHAKE_TIMEOUT_MS = 10000;
+// One object shared by every Socket.io server in the process (each createRealtime().attach passes
+// it as is, and Socket.io writes `path` onto it). Keep it to options that are the same for every
+// instance: per-instance options (e.g. a PR2 adapter) go in a copy made in attach, never here.
 const SOCKET_OPTIONS = { ...socketCorsOptions, connectTimeout: HANDSHAKE_TIMEOUT_MS };
-
-let io;
-const connections = [];
 
 /**
  * @param {string} code - a key of HANDSHAKE_ERRORS
@@ -122,21 +127,72 @@ function authenticateHandshake(socket, next) {
   next();
 }
 
-exports.setupWebsocket = (server) => {
-  io = socketio(server, SOCKET_OPTIONS);
+/**
+ * @typedef {{ id: string, coordinates: { latitude: number, longitude: number }, techs: string[] }} Connection
+ * @typedef {{
+ *   attach: (server: import('http').Server) => import('socket.io').Server,
+ *   findConnections: (coordinates: { latitude: number, longitude: number }, techs: string[]) => Connection[],
+ *   sendMessage: (to: Connection[], message: string, data: unknown) => void,
+ *   connectionCount: () => number,
+ * }} Realtime
+ */
 
-  io.use(authenticateHandshake);
+/**
+ * One server instance's realtime hub: its Socket.io server (once attached) and the subscriptions
+ * of the sockets connected to it.
+ * @returns {Realtime}
+ */
+function createRealtime() {
+  /** @type {import('socket.io').Server | null} */
+  let io = null;
+  /** @type {Connection[]} */
+  const connections = [];
 
-  io.on('connection', socket => {
-    connections.push({ id: socket.id, ...socket.data.subscription });
+  return {
+    /**
+     * Attaches Socket.io to `server` (once per hub).
+     * @param {import('http').Server} server
+     * @returns {import('socket.io').Server}
+     */
+    attach(server) {
+      if (io) throw new Error('This realtime hub is already attached to a server');
+      io = socketio(server, SOCKET_OPTIONS);
 
-    // Without this, every closed socket stays in `connections` forever (BUG-010).
-    socket.on('disconnect', () => {
-      const index = connections.findIndex(connection => connection.id === socket.id);
-      if (index !== -1) connections.splice(index, 1);
-    });
-  });
-};
+      io.use(authenticateHandshake);
+
+      io.on('connection', socket => {
+        connections.push({ id: socket.id, ...socket.data.subscription });
+
+        // Without this, every closed socket stays in `connections` forever (BUG-010).
+        socket.on('disconnect', () => {
+          const index = connections.findIndex(connection => connection.id === socket.id);
+          if (index !== -1) connections.splice(index, 1);
+        });
+      });
+      return io;
+    },
+
+    findConnections(coordinates, techs) {
+      return connections.filter(connection => {
+        return isNearby(coordinates, connection.coordinates)
+        && connection.techs.some(item => techs.includes(item))
+      })
+    },
+
+    sendMessage(to, message, data) {
+      // Not attached (createApp without createServer): no socket can be connected, nothing to send.
+      if (!io) return;
+      to.forEach(connection => {
+        io.to(connection.id).emit(message, data);
+      })
+    },
+
+    /** @returns {number} sockets connected to this instance (for tests) */
+    connectionCount() {
+      return connections.length;
+    },
+  };
+}
 
 /**
  * Parses the socket handshake query into a subscription, or returns null if invalid.
@@ -157,19 +213,7 @@ function parseHandshake(query = {}) {
   return valid ? { coordinates: { latitude, longitude }, techs } : null;
 }
 
-exports.findConnections = (coordinates, techs) => {
-  return connections.filter(connection => {
-    return isNearby(coordinates, connection.coordinates)
-    && connection.techs.some(item => techs.includes(item))
-  })
-}
-
-exports.sendMessage = (to, message, data) => {
-  to.forEach(connection => {
-    io.to(connection.id).emit(message, data);
-  })
-}
-
+exports.createRealtime = createRealtime;
 exports.SUBSCRIPTION_INVALID = SUBSCRIPTION_INVALID;
 exports.SOCKET_OPTIONS = SOCKET_OPTIONS;
 exports.authenticateHandshake = authenticateHandshake;
