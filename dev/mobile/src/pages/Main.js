@@ -16,6 +16,7 @@ import {
   requestForegroundPermissionsAsync,
   getForegroundPermissionsAsync,
   getCurrentPositionAsync,
+  Accuracy,
 } from 'expo-location';
 import { MaterialIcons } from '@expo/vector-icons';
 
@@ -58,6 +59,12 @@ const LOCATION_STATUS_MESSAGE = {
 // between (QA-LS-2, see loadInitialPosition).
 export const LOCATION_TIMEOUT_MS = 15000;
 
+// Balanced (about 100 m: Wi-Fi and cell, little GPS) is plenty for a 10 km search radius and answers
+// quickly indoors. expo-location's default is Balanced too; the old `enableHighAccuracy: true` is a
+// browser geolocation option that expo-location ignores, so this changes no behaviour, it only says
+// what the app asks for. High would mean GPS, more battery, and more reads hitting the timeout.
+export const LOCATION_ACCURACY = Accuracy.Balanced;
+
 /**
  * The current position, or a rejection after `ms`. On timeout the error carries the read itself
  * as `lateRead`, which the caller may keep listening to.
@@ -65,7 +72,7 @@ export const LOCATION_TIMEOUT_MS = 15000;
  * @param {{ current: any }} timerRef - holds the timer, so unmounting can clear it
  */
 function currentPositionWithin(ms, timerRef) {
-  const read = Promise.resolve().then(() => getCurrentPositionAsync({ enableHighAccuracy: true }));
+  const read = Promise.resolve().then(() => getCurrentPositionAsync({ accuracy: LOCATION_ACCURACY }));
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       const timeout = new Error(`No position within ${ms} ms`);

@@ -36,6 +36,8 @@ jest.mock('expo-location', () => ({
   // Main reads it (never prompts) on returning to the app while a permission message is shown.
   getForegroundPermissionsAsync: jest.fn(async () => ({ granted: true, status: 'granted', canAskAgain: true })),
   getCurrentPositionAsync: jest.fn(async () => ({ coords: { latitude: -23.5505, longitude: -46.6333 } })),
+  // expo-location's LocationAccuracy values (Main asks for Balanced).
+  Accuracy: { Lowest: 1, Low: 2, Balanced: 3, High: 4, Highest: 5, BestForNavigation: 6 },
 }));
 jest.mock('react-native-maps', () => {
   const { View } = require('react-native');
