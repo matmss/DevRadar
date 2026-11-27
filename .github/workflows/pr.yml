@@ -100,7 +100,7 @@ jobs:
           retention-days: 14
 
   web-unit:
-    name: Web unit (Jest, react-scripts)
+    name: Web unit (Vitest)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -118,9 +118,9 @@ jobs:
         working-directory: dev/web
         run: npm ci
 
-      # The job name above is a required status check in branch protection: it stays as is,
-      # although the runner is now Vitest (dev/web moved from react-scripts to Vite on
-      # 2026-11-23). `vitest` watches unless CI is set; --run makes the single run explicit,
+      # The job name above is a required status check in branch protection: rename it only
+      # together with the required checks of `main` (it was "Web unit (Jest, react-scripts)" until
+      # 2026-11-27). `vitest` watches unless CI is set; --run makes the single run explicit,
       # so the step always terminates, and a failing test exits non-zero.
       - name: Run web unit tests (src/services + src/components)
         working-directory: dev/web
