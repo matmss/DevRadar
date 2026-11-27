@@ -5,7 +5,6 @@ const { Given, When, Then, After } = require('@cucumber/cucumber');
 const { expect } = require('chai');
 const request = require('supertest');
 const Dev = require('../../../../dev/backend/src/models/Dev');
-const DevController = require('../../../../dev/backend/src/controllers/DevController');
 const { withSession } = require('../support/session');
 const { githubIdFor } = require('../support/github-mock');
 
@@ -220,7 +219,8 @@ Then('client {string} should have received {string} before {string}', async func
 
 // Writes are queued per GitHub account since auth slice 6 (the step name predates it).
 Then('no write should be queued for any login', function () {
-  expect(DevController.pendingWrites()).to.equal(0);
+  // The scenario's server instance's write queue (dev/backend/src/serverContext.js).
+  expect(this.context.ownership.pendingWrites()).to.equal(0);
 });
 
 Then('the delete should be answered {int}', function (status) {

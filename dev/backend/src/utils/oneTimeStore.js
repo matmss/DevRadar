@@ -1,9 +1,10 @@
 // In-memory store of random, single-use, expiring keys. Used for the OAuth `state` (~10 min)
 // and the post-login one-time code (~1 min).
 //
-// Limitation: entries live in this process's memory. With more than one backend instance
-// (or after a restart) a key issued by one instance is unknown to another, so sign-in needs
-// sticky sessions or a shared store (e.g. Redis) before the backend is scaled out.
+// Limitation: entries live in memory, per server instance (each serverContext.js context makes
+// its own stores). A key issued by one instance (or before a restart) is unknown to another, so
+// until shared state arrives in a later phase, sign-in needs sticky sessions with more than one
+// instance.
 const crypto = require('crypto');
 
 const KEY_BYTES = 32;

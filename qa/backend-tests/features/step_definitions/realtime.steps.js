@@ -1,7 +1,6 @@
 const { Given, When, Then } = require('@cucumber/cucumber');
 const { expect } = require('chai');
 const io = require('socket.io-client');
-const { findConnections } = require('../../../../dev/backend/src/websocket');
 const { testSessionToken, expiredSessionToken, forgedSessionToken } = require('../support/session');
 // Note: the "When I submit a registration with ..." step used by these scenarios is
 // defined once in registration.steps.js and reused here — Cucumber.js errors on duplicate
@@ -194,16 +193,18 @@ async function waitUntil(predicate, timeoutMs = 2000) {
   return true;
 }
 
-function subscriptionCount(latitude, longitude, techs) {
-  return findConnections({ latitude: Number(latitude), longitude: Number(longitude) }, techs.split(',')).length;
+// Subscriptions of the scenario's server instance (its realtime hub, dev/backend/src/websocket.js).
+function subscriptionCount(world, latitude, longitude, techs) {
+  const coordinates = { latitude: Number(latitude), longitude: Number(longitude) };
+  return world.context.realtime.findConnections(coordinates, techs.split(',')).length;
 }
 
 Then(
   /^there should be (\d+) live subscriptions? near latitude "([^"]*)", longitude "([^"]*)" for techs "([^"]*)"$/,
   async function (count, latitude, longitude, techs) {
     // Disconnect handling is async on the server side, so poll briefly before asserting.
-    await waitUntil(() => subscriptionCount(latitude, longitude, techs) === Number(count));
-    expect(subscriptionCount(latitude, longitude, techs)).to.equal(Number(count));
+    await waitUntil(() => subscriptionCount(this, latitude, longitude, techs) === Number(count));
+    expect(subscriptionCount(this, latitude, longitude, techs)).to.equal(Number(count));
   }
 );
 

@@ -46,7 +46,9 @@
 //
 // Concurrency: every write runs in the per-account queue of each account whose dev it touches
 // (utils/keyedQueue.js, keyed by github_id), together with its socket announcement, so the live
-// events follow the database order. Taking a login (inLoginOrder) may touch the holder's dev, so
+// events follow the database order. The queue and the announcer are the server instance's
+// (serverContext.js, handed in through createDevOwnership): per server instance; a shared
+// (cross-instance) lock arrives in a later phase. Taking a login (inLoginOrder) may touch the holder's dev, so
 // it looks the holder up first and holds both accounts' keys, taken in sorted order: no two
 // tasks can wait for each other, so swaps cannot deadlock. Under the keys it re-checks the
 // holder and starts over (at most three times) if it changed. Legacy devs have no account key;
@@ -70,9 +72,8 @@ const { hydrateStored } = require('../models/utils/hydrateStored');
 const { GITHUB_USERNAME_COLLATION, STALE_LOGIN_PREFIX, staleLoginFor } = require('../utils/githubUsername');
 const { AVATAR_ID_STATUS, legacyAvatarEvidence } = require('../utils/githubAvatarId');
 const { storedGithubId, storedGithubIdForms } = require('../utils/githubId');
-const { createKeyedQueue } = require('../utils/keyedQueue');
 const { ProfileBusyError } = require('../utils/profileBusyError');
-const { EVENT, announceStored } = require('./devEvents');
+const { EVENT } = require('./devEvents');
 
 // MongoDB duplicate-key error: a unique index (github_id or github_username) refused a write.
 const DUPLICATE_KEY = 11000;
@@ -557,7 +558,8 @@ function deleteOwnDev(dev, user) {
   return deleteStored(ownedBy(dev, user));
 }
 
-const writesByAccount = createKeyedQueue();
+// The server instance's write queue (serverContext.js `writesByAccount`, utils/keyedQueue.js).
+/** @typedef {ReturnType<typeof import('../utils/keyedQueue').createKeyedQueue>} WriteQueue */
 
 /** @param {number} githubId @returns {string} */
 function accountKey(githubId) {
@@ -568,11 +570,12 @@ function accountKey(githubId) {
  * Runs `task` (database writes and their announcements) after every write already queued for the
  * same GitHub account. For writes that never change a login (DELETE).
  * @template T
+ * @param {WriteQueue} writesByAccount
  * @param {AccountIdentity} user
  * @param {() => Promise<T>} task
  * @returns {Promise<T>}
  */
-function inAccountOrder(user, task) {
+function inAccountOrder(writesByAccount, user, task) {
   return writesByAccount.run(accountKey(user.github_id), task);
 }
 
@@ -612,6 +615,7 @@ function sameStoredId(a, b) {
  * or the task returns RETRY, everything starts over (at most MAX_ATTEMPTS times); a task that
  * returns DISPLACED starts over without using up an attempt (at most MAX_ROUNDS rounds in all).
  * @template T
+ * @param {WriteQueue} writesByAccount
  * @param {AccountIdentity} user
  * @param {(holder: object | null) => Promise<T | typeof RETRY | typeof DISPLACED>} task -
  *   `holder`: the dev showing the user's login now (any owner, possibly the user's own, or
@@ -619,7 +623,7 @@ function sameStoredId(a, b) {
  * @returns {Promise<T>}
  * @throws {ProfileBusyError} after MAX_ATTEMPTS lost races or MAX_ROUNDS rounds
  */
-async function inLoginOrder(user, task) {
+async function inLoginOrder(writesByAccount, user, task) {
   let attempts = 0;
   for (let round = 0; round < MAX_ROUNDS && attempts < MAX_ATTEMPTS; round += 1) {
     const expected = await findDevByLogin(user.github_username);
@@ -643,13 +647,14 @@ async function inLoginOrder(user, task) {
  * placeholder and it is marked stale, only if it still shows that login and its login state is
  * older than `readAt`. A name that was only the old login is cleared (clients show a neutral
  * name). Nothing else changes. Announced as dev-updated.
+ * @param {import('./devEvents').DevEvents} events - the server instance's announcer
  * @param {object} holder - the dev showing the login
  * @param {Date} readAt - when GitHub said the login belongs to someone else
  * @param {object} [also] - more filter conditions (a guarded dev: its avatar as read)
  * @returns {Promise<boolean>} true if displaced
  * @throws {Error} if the stored holder can never match the update (missesForGood), a 500
  */
-async function displace(holder, readAt, also = {}) {
+async function displace(events, holder, readAt, also = {}) {
   const filter = {
     ...asStored(holder, ['_id', 'github_id', 'github_username']),
     ...olderThan(readAt),
@@ -667,7 +672,7 @@ async function displace(holder, readAt, also = {}) {
     if (await missesForGood(holder, filter)) throw cannotWrite(holder, 'displaced');
     return false;
   }
-  announceStored(EVENT.DEV_UPDATED, displaced);
+  events.announceStored(EVENT.DEV_UPDATED, displaced);
   return true;
 }
 
@@ -675,6 +680,7 @@ async function displace(holder, readAt, also = {}) {
  * Inside inLoginOrder: displaces `holder` if it is another account's dev (or a legacy dev, when
  * the user already owns one or it is guarded against the user) whose login state is older than
  * the user's GitHub read.
+ * @param {import('./devEvents').DevEvents} events - the server instance's announcer
  * @param {AccountIdentity & { login_read_at: number }} user
  * @param {object | null} holder - the dev showing the user's login (locked by inLoginOrder)
  * @param {object | null} own - the user's own dev, if any
@@ -682,7 +688,7 @@ async function displace(holder, readAt, also = {}) {
  *   (no holder, the user's own dev, or a legacy dev the user may claim); `newer`: the holder's
  *   state is at least as recent, left alone; `changed`: the conditional update missed (retry)
  */
-async function displaceStaleHolder(user, holder, own) {
+async function displaceStaleHolder(events, user, holder, own) {
   if (!holder || ownerId(holder) === user.github_id) return 'none';
   if (own && sameStoredId(own, holder)) return 'none';
   // A legacy dev with this login is this account's to claim, unless it already owns a dev or
@@ -693,7 +699,7 @@ async function displaceStaleHolder(user, holder, own) {
   const seenAt = holder.github_username_seen_at;
   if (seenAt && seenAt >= readAt) return 'newer';
   // A guarded dev is displaced only with the avatar the guard read.
-  const displaced = await displace(holder, readAt, avatarId === null ? {} : avatarAsRead(holder));
+  const displaced = await displace(events, holder, readAt, avatarId === null ? {} : avatarAsRead(holder));
   if (!displaced) return 'changed';
   if (avatarId !== null) logGuarded('displaced', holder, user, avatarId);
   return 'displaced';
@@ -705,26 +711,46 @@ async function displaceStaleHolder(user, holder, own) {
  * refresh the account's own dev to it. Legacy devs are not claimed here (only on their owner's
  * first write), and only displaced if the account owns a dev or they are guarded against it.
  * Best effort: a failure is logged and never fails the sign-in.
+ * @param {{ writesByAccount: WriteQueue, events: import('./devEvents').DevEvents }} instance
  * @param {AccountIdentity & { login_read_at: number }} user
  * @returns {Promise<void>}
  */
-async function refreshLoginAtSignIn(user) {
+async function refreshLoginAtSignIn({ writesByAccount, events }, user) {
   try {
-    await inLoginOrder(user, async (holder) => {
+    await inLoginOrder(writesByAccount, user, async (holder) => {
       const own = await findDevByAccount(user);
-      const displacement = await displaceStaleHolder(user, holder, own);
+      const displacement = await displaceStaleHolder(events, user, holder, own);
       if (displacement === 'changed') return RETRY;
       // An older read than the holder's state: this session is the stale one; change nothing.
       if (displacement === 'newer') return undefined;
       if (own) {
         const result = await refreshLogin(own, user);
-        if (result.renamed) announceStored(EVENT.DEV_UPDATED, result.dev);
+        if (result.renamed) events.announceStored(EVENT.DEV_UPDATED, result.dev);
       }
       return undefined;
     });
   } catch (err) {
     console.error('Could not refresh the developer login at sign-in:', err.message);
   }
+}
+
+/**
+ * The ownership operations that queue writes or announce them, bound to one server instance's
+ * write queue and announcer (serverContext.js). Everything else in this module is stateless and
+ * exported as is.
+ * @param {{ writesByAccount: WriteQueue, events: import('./devEvents').DevEvents }} instance
+ */
+function createDevOwnership({ writesByAccount, events }) {
+  return {
+    /** @type {<T>(user: AccountIdentity, task: () => Promise<T>) => Promise<T>} */
+    inAccountOrder: (user, task) => inAccountOrder(writesByAccount, user, task),
+    /** @type {<T>(user: AccountIdentity, task: (holder: object | null) => Promise<T | typeof RETRY | typeof DISPLACED>) => Promise<T>} */
+    inLoginOrder: (user, task) => inLoginOrder(writesByAccount, user, task),
+    displaceStaleHolder: (user, holder, own) => displaceStaleHolder(events, user, holder, own),
+    refreshLoginAtSignIn: (user) => refreshLoginAtSignIn({ writesByAccount, events }, user),
+    /** @returns {number} accounts with a write queued or running on this instance (for tests) */
+    pendingWrites: () => writesByAccount.size(),
+  };
 }
 
 module.exports = {
@@ -739,9 +765,6 @@ module.exports = {
   refreshLogin,
   updateOwnDev,
   deleteOwnDev,
-  inAccountOrder,
-  inLoginOrder,
-  displaceStaleHolder,
-  refreshLoginAtSignIn,
-  pendingWrites: () => writesByAccount.size(),
+  accountKey,
+  createDevOwnership,
 };

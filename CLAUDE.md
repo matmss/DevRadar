@@ -88,10 +88,16 @@ is opt-in since it needs a simulator/emulator or the Maestro CLI).
 ### Backend request/data flow
 `dev/backend/src/app.js` (`createApp` / `createServer`) assembles everything in one fixed order —
 trust proxy, CORS, JSON body parsing, routes, JSON 404, global error handler — and wraps it in a
-raw `http.Server` (not `app.listen`) so Socket.io (`setupWebsocket(server)`) shares the port.
+raw `http.Server` (not `app.listen`) so Socket.io (`context.realtime.attach(server)`) shares the port.
 `index.js` and **both test harnesses** (`qa/backend-tests/.../testApp.js`,
 `qa/web-tests/.../backend-server.js`) call it, so middleware order can't drift between prod and
-tests. Every error, including unknown routes, is JSON `{ error, code, details }`
+tests. **No runtime state is a module singleton:** each `createApp()`/`createServer()` call builds a
+fresh server context (`src/serverContext.js`: Socket.io + `connections`, the OAuth state and
+one-time code stores, the three rate limiters, the `writesByAccount` queue, and the announcer /
+`devOwnership` queue operations bound to them; `createServer()` returns `{ app, server, context }`,
+also `app.locals.context`). Controllers and routes are factories over it (`createRoutes`,
+`createDevController`, `createAuthController`). Per server instance; shared state (Mongo-backed
+stores, a cross-instance push bus, a per-account lease lock) arrives in later phases. Every error, including unknown routes, is JSON `{ error, code, details }`
 (`middleware/errorHandler.js`, BUG-012); it never returns stacks and never logs request bodies.
 Unknown errors are 500 `internal_error`, whatever `status` they carry; the only typed 5xx is
 `ProfileBusyError` (`utils/profileBusyError.js`) → 503 `profile_busy` + `Retry-After: 1`, one warn line.
@@ -102,7 +108,7 @@ Routes (`dev/backend/src/routes.js`):
   → `GET /auth/github/callback` → client gets a 60 s one-time code → `POST /auth/token`
   (`code` + `code_verifier`) → 7-day HS256 JWT. `GET /auth/me` is behind `requireAuth`
   (`middleware/auth.js`; 401 codes `token_missing`/`token_expired`/`token_invalid`). State,
-  codes and rate-limit counters are in memory (single instance). Env: see `dev/backend/.env.example`.
+  codes and rate-limit counters are in memory, per server instance (the server context). Env: see `dev/backend/.env.example`.
   **Every dev-facing surface requires a token: `POST /devs`, `GET /devs`, `GET /search`,
   `GET`/`PUT`/`DELETE /devs/me` and the Socket.io handshake** (only `/auth/*` is public). Backend and web tests
   must sign in first (use the harnesses' test sign-in helpers). The JWT carries a sanitized, size-capped `profile` claim
@@ -149,8 +155,8 @@ Routes (`dev/backend/src/routes.js`):
   `{ error, details[] }`). The dev is created with one atomic `findOneAndUpdate` upsert, backed by
   a **unique case-insensitive index on `github_username`** and a partial unique index on `github_id` (`models/Dev.js`, collation
   `{locale:'en', strength:2}`); a lost race (E11000) returns the existing dev, and only the
-  request that created the dev pushes `new-dev` (`websocket.findConnections()` + `sendMessage()`)
-  to nearby, tech-matching sockets. An already registered user gets their dev back unchanged.
+  request that created the dev pushes `new-dev` (the context's announcer,
+  `services/devEvents.js`, over `realtime.findConnections()` + `sendMessage()`) to nearby, tech-matching sockets. An already registered user gets their dev back unchanged.
   If legacy case-duplicates block the index build, `index.js` logs it and keeps running.
 - `GET /devs/me`, `PUT /devs/me`, `DELETE /devs/me` (`DevController`, BUG-008 fixed) — the signed-in
   user's own profile; there is no `/devs/:username` route, so nobody can touch another profile.
@@ -161,8 +167,8 @@ Routes (`dev/backend/src/routes.js`):
   is a hard delete → 204 (404 `dev_not_found` without a profile) and pushes **`dev-deleted`**
   `{ _id, github_id, github_username }` to sockets matching the old location/techs. PUT/DELETE are rate
   limited per account id (`PROFILE_RATE_LIMIT_MAX`, default 30/15 min, 429 `rate_limited`).
-  **Writes for one account (POST, PUT, DELETE; key `github_id:<id>`) are serialized** by `utils/keyedQueue.js` so the DB
-  write and its live event happen in arrival order — route new per-user writes through it.
+  **Writes for one account (POST, PUT, DELETE; key `github_id:<id>`) are serialized** by `utils/keyedQueue.js` (the context's
+  `writesByAccount`, per instance) so the DB write and its live event happen in arrival order — route new per-user writes through it.
   `validateDevInput` caps techs at 30 entries of 50 characters (POST and PUT).
 - `GET /devs` and `GET /search` are behind `requireAuth` (auth is checked before query params, so
   anonymous calls get 401, not 400).
@@ -251,6 +257,12 @@ rather than a single cross-language framework:
   `support/loopback.js`; the web harness backend uses `127.0.0.1:3334` and the Vite dev server `127.0.0.1:3000`
   (`dev/web/vite.config.js`, `strictPort`).
   Cucumber runs with `forceExit`.
+- **Second backend instance** (multi-instance work): `startTestInstance(world)` in
+  `qa/backend-tests/features/support/testApp.js` starts another `createServer()` in-process on
+  127.0.0.1, sharing the MongoMemoryServer and the nock GitHub mock (closed by `hooks.js`). Each
+  scenario's own instance is `this.app`/`this.server`/`this.context`. `multi-instance.feature`
+  (`@multi-instance @regression`) documents that today two instances share no sockets, one-time
+  stores, rate-limit counters or write queues; PR1/PR2/PR3 invert those scenarios on purpose.
 - `qa/mobile-tests/` — Detox + `jest-cucumber` is the intended primary suite
   (`.detoxrc.js` targets `Pixel_6a_API_34` emulator / `iPhone 15` simulator), but per
   BUG-009 the Detox run currently times out on `device.launchApp` (suspected host resource

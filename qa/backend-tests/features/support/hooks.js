@@ -10,7 +10,6 @@ const { createTestApp } = require('./testApp');
 const { applyTestAuthEnv } = require('./auth-config');
 const { watchGithubUsersApi } = require('./github-mock');
 const Dev = require('../../../../dev/backend/src/models/Dev');
-const { resetAuthRateLimit } = require('../../../../dev/backend/src/middleware/rateLimit');
 
 let mongod;
 
@@ -29,17 +28,19 @@ AfterAll({ timeout: 30000 }, async function () {
 });
 
 Before(async function () {
-  // Auth env is reset per scenario (a scenario may lower a rate limit or set TRUST_PROXY), and
-  // the /auth rate limiters are module-level singletons, so their counts would otherwise carry
-  // over. Done before building the app, which reads TRUST_PROXY.
+  // Auth env is reset per scenario (a scenario may lower a rate limit or set TRUST_PROXY). Done
+  // before building the app, which reads TRUST_PROXY.
   applyTestAuthEnv();
-  await resetAuthRateLimit();
 
-  // Fresh app + server per scenario. Note: websocket.js's `connections` array is module-level,
-  // so it is shared across scenarios; entries are removed when sockets disconnect (After hook).
-  const { app, server } = createTestApp();
+  // Fresh app + server per scenario, with a fresh server context (dev/backend/src/serverContext.js):
+  // its own socket `connections`, sign-in stores, rate-limit counters and write queue, so nothing
+  // carries over from the previous scenario (no rate-limit reset needed).
+  const { app, server, context } = createTestApp();
   this.app = app;
   this.server = server;
+  this.context = context;
+  // More instances a multi-instance scenario starts (testApp.js startTestInstance), closed below.
+  this.extraInstances = [];
 
   // Empty the DB between scenarios (Background steps like
   // "Given the developer database is empty" rely on this already being true).
@@ -100,6 +101,10 @@ After(async function () {
   if (this.server && this.server.listening) {
     await closeServer(this.server);
   }
+  for (const { server } of this.extraInstances || []) {
+    if (server.listening) await closeServer(server);
+  }
+  this.extraInstances = [];
 
   nock.cleanAll();
   nock.enableNetConnect();
