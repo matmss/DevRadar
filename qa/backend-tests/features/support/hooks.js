@@ -10,6 +10,8 @@ const { createTestApp } = require('./testApp');
 const { applyTestAuthEnv } = require('./auth-config');
 const { watchGithubUsersApi } = require('./github-mock');
 const Dev = require('../../../../dev/backend/src/models/Dev');
+const AuthOneTime = require('../../../../dev/backend/src/models/AuthOneTime');
+const RateLimit = require('../../../../dev/backend/src/models/RateLimit');
 
 let mongod;
 
@@ -17,9 +19,10 @@ BeforeAll({ timeout: 60000 }, async function () {
   mongod = await MongoMemoryServer.create();
   const uri = mongod.getUri();
   await mongoose.connect(uri);
-  // Build the Dev indexes (unique case-insensitive github_username) before any scenario, as
-  // index.js does at startup. Scenarios empty collections with deleteMany, so indexes persist.
-  await Dev.init();
+  // Build the Dev indexes (unique case-insensitive github_username) and the TTL indexes of the
+  // shared sign-in and rate-limit collections before any scenario, as index.js does at startup.
+  // Scenarios empty collections with deleteMany, so indexes persist.
+  await Promise.all([Dev.init(), AuthOneTime.init(), RateLimit.init()]);
 });
 
 AfterAll({ timeout: 30000 }, async function () {
@@ -33,8 +36,9 @@ Before(async function () {
   applyTestAuthEnv();
 
   // Fresh app + server per scenario, with a fresh server context (dev/backend/src/serverContext.js):
-  // its own socket `connections`, sign-in stores, rate-limit counters and write queue, so nothing
-  // carries over from the previous scenario (no rate-limit reset needed).
+  // its own socket `connections` and write queue. The OAuth states, sign-in codes and rate-limit
+  // counters are shared through MongoDB (auth_one_time, rate_limits) and emptied below with the
+  // rest of the database, so nothing carries over from the previous scenario.
   const { app, server, context } = createTestApp();
   this.app = app;
   this.server = server;
@@ -43,11 +47,14 @@ Before(async function () {
   this.extraInstances = [];
 
   // Empty the DB between scenarios (Background steps like
-  // "Given the developer database is empty" rely on this already being true).
+  // "Given the developer database is empty" rely on this already being true). Every model's
+  // collection, so also auth_one_time and rate_limits (their models are loaded with the app).
   const collections = mongoose.connection.collections;
   for (const key of Object.keys(collections)) {
     await collections[key].deleteMany({});
   }
+  // Belt and braces for the shared stores (the same documents; also what other harnesses call).
+  await Promise.all([this.context.rateLimits.reset(), this.context.signInStores.clear()]);
 
   nock.cleanAll();
   nock.disableNetConnect();

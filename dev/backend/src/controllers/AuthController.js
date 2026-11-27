@@ -17,8 +17,12 @@
 // account's dev its current login, displacing any other dev that still shows it
 // (services/devOwnership.js).
 //
+// The state and the one-time code are shared by every backend instance (MongoDB, multi-instance
+// PR1, utils/sharedOneTimeStore.js): a sign-in may start on one instance, come back from GitHub to
+// another and be redeemed on a third. Each value is single use across all of them.
+//
 // JSON error bodies: { error, code, details }. See dev/docs/00-architecture.md for every code.
-const { createOneTimeStore } = require('../utils/oneTimeStore');
+const { createSharedOneTimeStore } = require('../utils/sharedOneTimeStore');
 const { isRedirectAllowed, buildRedirectUrl } = require('../utils/redirectAllowList');
 const { signSessionToken } = require('../utils/sessionToken');
 const { PKCE_METHOD, isValidCodeChallenge, verifyCodeVerifier } = require('../utils/pkce');
@@ -36,16 +40,23 @@ const SIGN_IN_CANCELLED = 'sign_in_cancelled';
 const SIGN_IN_FAILED = 'sign_in_failed';
 
 /**
- * The two one-time stores sign-in uses, in memory, per server instance (serverContext.js; see the
- * multi-instance note in utils/oneTimeStore.js). Shared stores arrive in a later phase.
+ * The two one-time stores sign-in uses, shared by every instance through the `auth_one_time`
+ * collection (kinds 'state' and 'code'). Payloads (never the GitHub access token):
  *   stateStore payload:      { redirect, codeChallenge }
  *   signInCodeStore payload: { githubId, githubUsername, loginReadAt, profile: { name, avatar_url, bio }, codeChallenge }
- * @returns {{ stateStore: ReturnType<typeof createOneTimeStore>, signInCodeStore: ReturnType<typeof createOneTimeStore> }}
+ * @returns {{ stateStore: ReturnType<typeof createSharedOneTimeStore>,
+ *   signInCodeStore: ReturnType<typeof createSharedOneTimeStore>, clear: () => Promise<void> }}
+ *   `clear` empties both, for every instance (test harnesses).
  */
 function createSignInStores() {
+  const stateStore = createSharedOneTimeStore({ kind: 'state', ttlMs: STATE_TTL_MS });
+  const signInCodeStore = createSharedOneTimeStore({ kind: 'code', ttlMs: SIGN_IN_CODE_TTL_MS });
   return {
-    stateStore: createOneTimeStore({ ttlMs: STATE_TTL_MS }),
-    signInCodeStore: createOneTimeStore({ ttlMs: SIGN_IN_CODE_TTL_MS }),
+    stateStore,
+    signInCodeStore,
+    async clear() {
+      await Promise.all([stateStore.clear(), signInCodeStore.clear()]);
+    },
   };
 }
 
@@ -105,8 +116,8 @@ function isNonEmptyString(value) {
 }
 
 /**
- * The sign-in handlers of one server instance (serverContext.js): its one-time stores, and its
- * write queue and announcer for the login refresh at sign-in.
+ * The sign-in handlers of one server instance (serverContext.js): the shared one-time stores, and
+ * its write queue and announcer for the login refresh at sign-in.
  * @param {{ signInStores: ReturnType<typeof createSignInStores>,
  *   ownership: ReturnType<typeof import('../services/devOwnership').createDevOwnership> }} instance
  */
@@ -140,7 +151,7 @@ function createAuthController({ signInStores, ownership }) {
         ]);
       }
 
-      const state = stateStore.issue({ redirect, codeChallenge });
+      const state = await stateStore.issue({ redirect, codeChallenge });
       noStore(res);
       return res.redirect(302, buildAuthorizeUrl(state));
     },
@@ -152,7 +163,7 @@ function createAuthController({ signInStores, ownership }) {
       if (!isNonEmptyString(state)) {
         return sendError(res, 400, 'state_missing', 'Invalid sign-in state', ['state is required']);
       }
-      const attempt = stateStore.consume(state);
+      const attempt = await stateStore.consume(state);
       if (!attempt) {
         return sendError(res, 400, 'state_invalid', 'Invalid sign-in state', [
           'state is unknown, expired or already used; start the sign-in again',
@@ -181,7 +192,7 @@ function createAuthController({ signInStores, ownership }) {
       if (!identity.user) return redirectFailure(res, attempt.redirect, githubFailureReason(identity));
 
       const { id, login, profile } = identity.user;
-      const signInCode = signInCodeStore.issue({
+      const signInCode = await signInCodeStore.issue({
         githubId: id,
         githubUsername: login,
         // When GitHub said this login is this account's: orders login refreshes (QA-AUTH6-3).
@@ -199,9 +210,9 @@ function createAuthController({ signInStores, ownership }) {
       if (!isNonEmptyString(code)) {
         return sendError(res, 400, 'code_missing', 'Invalid sign-in code', ['code is required']);
       }
-      // Consumed before the verifier is checked: a wrong or missing verifier burns the code,
-      // so it cannot be retried or brute-forced.
-      const pending = signInCodeStore.consume(code);
+      // Consumed before the verifier is checked: a wrong or missing verifier burns the code (on
+      // every instance), so it cannot be retried or brute-forced.
+      const pending = await signInCodeStore.consume(code);
       if (!pending) {
         return sendError(res, 400, 'code_invalid', 'Invalid sign-in code', [
           'code is unknown, expired or already used; sign in again',

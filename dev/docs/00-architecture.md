@@ -39,6 +39,16 @@ Three layers, one shared backend:
   displaced from a login GitHub gave to someone else (its login is then a
   `_stale_<_id>` placeholder). Plus an internal `github_username_seen_at` that the
   API never returns. See Authentication, "Profile ownership".
+- **Shared state collections** (multi-instance PR1), read and written by every backend instance:
+  `auth_one_time` (`backend/src/models/AuthOneTime.js`: `_id` = sha256 of an OAuth `state` or
+  one-time sign-in code, `kind` `state`/`code`, `payload`, `expiresAt`) and `rate_limits`
+  (`backend/src/models/RateLimit.js`: `_id` = `<limiter prefix><key>`, e.g.
+  `sign_in:203.0.113.7` or `profile:github_id:810438`, `hits`, `resetTime`). Each has a TTL index
+  (`expiresAt` / `resetTime`, `expireAfterSeconds: 0`) for cleanup only; `index.js` builds them at
+  startup next to the Dev indexes (idempotent, so instances can start together; a failure is
+  logged and the server keeps running). Both use only single-document atomic operations with
+  `$$NOW` (update pipelines, an expression projection): a standalone mongod 4.4+ is enough, no
+  replica set or transactions. See Authentication, "Shared sign-in state and rate limits".
 - **Routes** (`backend/src/routes.js`). Everything that shows or changes devs needs a session
   token (see Authentication); only `/auth/*` is public.
   - `GET /devs` — list all devs (`DevController.index`, session token required)
@@ -88,11 +98,16 @@ Three layers, one shared backend:
   `writesByAccount` and the `devOwnership` operations bound to it (`createDevOwnership`:
   `inAccountOrder`, `inLoginOrder`, displacements, the sign-in login refresh). Routes and
   controllers are built over it. `createServer()` returns `{ app, server, context }`.
-  Multi-instance phases: PR0 (this split, no behaviour change); PR1 moves the stores and rate
-  limits to MongoDB; PR2 adds a cross-instance push bus (each instance still matches its own
+  Multi-instance phases: PR0 (this split, no behaviour change); PR1 (done) keeps the one-time
+  stores' and the rate limiters' data in MongoDB (the context's objects are per instance, their
+  data is shared); PR2 adds a cross-instance push bus (each instance still matches its own
   sockets with `isNearby`); PR3 adds a MongoDB lease lock per account under the local queue.
-  `qa/backend-tests/features/multi-instance.feature` pins today's isolation and is inverted by
-  those phases.
+  `qa/backend-tests/features/multi-instance.feature` pins what is shared and what is not; each
+  phase inverts its scenarios.
+  **Interim, with PR1 only:** a live push (`new-dev`, `dev-updated`, `dev-deleted`) still reaches
+  only the sockets connected to the instance that made the write, and two writes of one account on
+  different instances are not ordered against each other, until PR2 and PR3. Run one instance (or
+  sticky sockets) for live updates until then; sign-in no longer needs sticky sessions.
 - **Error handler** (`middleware/errorHandler.js`, BUG-012): every route answers errors as
   `{ error, code, details }`, never Express's HTML page with a stack trace.
   `body_invalid` (400, malformed JSON), `body_too_large` (413, over 100 kb),
@@ -209,6 +224,32 @@ existed) is found (Q5, US-8).
   4. `GET /auth/me` (Bearer token): `{ github_id, github_username, name, avatar_url }`, answered
      from the token alone (no database or GitHub call). Clients call it on load to show who is
      signed in.
+- **Shared sign-in state and rate limits** (multi-instance PR1). Each step above may run on a
+  different instance.
+  - `state` and one-time code (`utils/sharedOneTimeStore.js`, collection `auth_one_time`): issued
+    as 32 random bytes (base64url) and stored under their sha256 (`_id`), never raw; the payload is
+    `{ redirect, codeChallenge }` for a state and `{ githubId, githubUsername, loginReadAt,
+    profile, codeChallenge }` for a code (never the GitHub access token). `expiresAt` is MongoDB's
+    clock + 10 min / 60 s (`$$NOW` in an update-pipeline upsert that never overwrites a stored key).
+    Consuming is one `findOneAndDelete({ _id, kind })` whose projection also computes
+    `expiresAt > $$NOW`: exactly one of any concurrent consumers gets the document, and it is
+    deleted whether or not it had expired (a presented value is spent, as before). Expiry never
+    waits for the TTL monitor (about once a minute), which only removes unconsumed documents.
+    The old in-memory store's 10 000-entry cap is gone: the shared per-IP sign-in rate limit and
+    the TTL cleanup bound the collection.
+  - Rate limits (`middleware/mongoRateLimitStore.js`, collection `rate_limits`): an
+    express-rate-limit v8 Store (`localKeys: false`, `init`/`get`/`increment`/`decrement`/
+    `resetKey`/`resetAll`). One atomic upsert per hit; the window opens at the first hit, ends at
+    `$$NOW` + 15 min, and a hit after it starts a new window (both decided by MongoDB's clock).
+    Only the `RateLimit`/`Retry-After` header values use the instance's clock. Same 429 body and
+    draft-7 headers as before. `context.rateLimits.reset()` clears every instance's counters.
+  - Failures: MongoDB errors become a `SharedStateError` (`utils/sharedStateError.js`) whose
+    message names the operation and the driver error's class and code, never the driver message
+    (it can quote the key: an IP, an account id, a hash). Fail closed: 500 `internal_error` from
+    the error handler (`passOnStoreError: false` for the limiters), so a store outage blocks
+    sign-in and profile changes instead of lifting the limits.
+  - Clocks: expiry and windows follow MongoDB's clock. `loginReadAt` in the code payload (when the
+    callback read GitHub) is still the instance's `Date.now()`, as before.
 - **Session token** (`utils/sessionToken.js`, `utils/githubId.js`): HS256 JWT signed with
   `JWT_SECRET`, `iss` = `devradar`, `exp` = 7 days, no refresh token. Claims, all required:
   - `sub` = the GitHub account id as a decimal string (`"810438"`). Only the canonical form is
@@ -449,8 +490,8 @@ existed) is found (Q5, US-8).
     back to the login when the dev is created.
   - **Why claims in the token rather than a server-side record:** the token is already signed
     and verified on every request, so the profile reaches registration with no extra storage,
-    no new collection and no cleanup, and it works across backend instances (unlike the
-    in-memory state/code stores). It adds at most about 1 KB to a token that is only sent to
+    no extra collection or cleanup, and it works across backend instances (as the state/code
+    stores do since PR1, through `auth_one_time`). It adds at most about 1 KB to a token that is only sent to
     our own API. The profile is public GitHub data, so it being readable in the JWT exposes
     nothing new. The GitHub access token is still never stored or put in the token.
   - **Snapshot as of sign-in:** a name, avatar or bio changed on GitHub after sign-in only shows
@@ -544,7 +585,8 @@ existed) is found (Q5, US-8).
 
   Plus the app-wide `body_invalid`, `body_too_large`, `request_invalid`, `internal_error`, and
   503 `profile_busy` on the profile writes (`POST /devs`, `PUT`/`DELETE /devs/me`).
-- **Rate limits** (`middleware/rateLimit.js`, `express-rate-limit`), per client IP
+- **Rate limits** (`middleware/rateLimit.js`, `express-rate-limit`, counters shared by every
+  instance in MongoDB `rate_limits`, see above), per client IP
   (`req.ip`, see `TRUST_PROXY`) per 15 minutes, two independent limiters:
   sign-in (`GET /auth/github`, the callback, `POST /auth/token`): `AUTH_RATE_LIMIT_MAX`,
   default 60 (a sign-in uses 3); session checks (`GET /auth/me`, called on every client
@@ -566,11 +608,12 @@ existed) is found (Q5, US-8).
   `intent://` opens arbitrary https URLs). A refused or invalid value disables mobile
   redirects, and startup logs a warning that does not print the value. It must equal the
   mobile app's scheme (see Mobile, "App scheme").
-- **Single-instance limitation:** the `state` store, the one-time code store
-  (`utils/oneTimeStore.js`), the rate-limit counters, the per-account write queue
-  (`utils/keyedQueue.js`) and the socket subscriptions live in memory, per server instance (the
-  server context, see "App assembly and errors"). Running more than one backend instance needs
-  the shared state of the later phases (PR1 to PR3) first.
+- **Multi-instance status:** the `state` store, the one-time code store and the rate-limit
+  counters are shared through MongoDB since PR1 (above). The per-account write queue
+  (`utils/keyedQueue.js`) and the socket subscriptions still live in memory, per server instance
+  (the server context, see "App assembly and errors"): with more than one instance, live pushes
+  reach only the writing instance's sockets and one account's writes on different instances are
+  not serialized until PR2 and PR3.
 
 ## Web (`web/`)
 

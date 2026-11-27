@@ -29,6 +29,8 @@ const { MongoMemoryServer } = require('mongodb-memory-server');
 const mongoose = require('../../../../dev/backend/node_modules/mongoose');
 const { createServer } = require('../../../../dev/backend/src/app');
 const Dev = require('../../../../dev/backend/src/models/Dev');
+const AuthOneTime = require('../../../../dev/backend/src/models/AuthOneTime');
+const RateLimit = require('../../../../dev/backend/src/models/RateLimit');
 const {
   TEST_JWT_SECRET,
   FAKE_CODE_PREFIX,
@@ -157,8 +159,12 @@ function testRoutes() {
 async function startBackend(port) {
   mongod = await MongoMemoryServer.create();
   await mongoose.connect(mongod.getUri());
-  // Unique case-insensitive github_username index, as index.js builds it at startup.
-  await Dev.init();
+  // Unique case-insensitive github_username index, and the TTL indexes of the shared sign-in and
+  // rate-limit collections (auth_one_time, rate_limits), as index.js builds them at startup.
+  // Those two collections are not emptied per scenario (POST /__test__/reset empties devs only),
+  // as their in-memory predecessors were not: the limits are raised far out of reach below, and
+  // states and codes are single use and expire.
+  await Promise.all([Dev.init(), AuthOneTime.init(), RateLimit.init()]);
   applyTestAuthEnv(port);
   stubGithubApi();
 
