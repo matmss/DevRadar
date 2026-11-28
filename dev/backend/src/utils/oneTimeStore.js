@@ -1,10 +1,9 @@
-// In-memory store of random, single-use, expiring keys. Used for the OAuth `state` (~10 min)
-// and the post-login one-time code (~1 min).
-//
-// Limitation: entries live in memory, per server instance (each serverContext.js context makes
-// its own stores). A key issued by one instance (or before a restart) is unknown to another, so
-// until shared state arrives in a later phase, sign-in needs sticky sessions with more than one
-// instance.
+// In-memory store of random, single-use, expiring keys: the original OAuth `state` / one-time
+// code store. The server no longer uses it: since multi-instance PR1 sign-in uses
+// utils/sharedOneTimeStore.js (MongoDB, shared by every instance), which keeps this contract
+// (async). Kept as the reference implementation of that contract and for its unit tests
+// (qa/backend-tests/unit/oneTimeStore.test.js). Entries here live in one process only, and
+// `maxEntries` bounds them; the shared store relies on the per-IP sign-in rate limit instead.
 const crypto = require('crypto');
 
 const KEY_BYTES = 32;

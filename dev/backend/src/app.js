@@ -3,10 +3,11 @@
 // so middleware order cannot drift between production and tests.
 //
 // Each createApp()/createServer() call builds its own server context (serverContext.js): its own
-// sockets, OAuth state and sign-in codes, rate-limit counters and write queue. Two servers in one
-// process share only MongoDB (per server instance; shared state arrives in later phases), plus
-// config/auth.js's per-process fallback JWT secret when JWT_SECRET is unset outside production
-// (the deliberate exception; separate processes need one JWT_SECRET).
+// sockets and write queue. Two servers in one process share only MongoDB, which since
+// multi-instance PR1 holds the OAuth state, the sign-in codes and the rate-limit counters (so
+// every instance sees the same ones), plus config/auth.js's per-process fallback JWT secret when
+// JWT_SECRET is unset outside production (the deliberate exception; separate processes need one
+// JWT_SECRET).
 const express = require('express');
 const cors = require('cors');
 const http = require('http');

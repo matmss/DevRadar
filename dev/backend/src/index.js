@@ -5,6 +5,8 @@ const mongoose = require('mongoose');
 const { createServer } = require('./app');
 const { assertAuthConfig } = require('./config/auth');
 const Dev = require('./models/Dev');
+const AuthOneTime = require('./models/AuthOneTime');
+const RateLimit = require('./models/RateLimit');
 
 if (!process.env.MONGO_URI) {
   throw new Error('Missing MONGO_URI environment variable. Copy .env.example to .env and fill it in.');
@@ -31,6 +33,14 @@ Dev.init().catch((err) => {
     + 'whose github_username differs only in letter case, then restart:',
     err.message
   );
+});
+
+// The shared sign-in and rate-limit collections (multi-instance PR1): only their TTL indexes, which
+// clean up expired documents (expiry itself is checked on every read, so correctness never waits
+// for them). createIndex is idempotent, so any number of instances can start at once. A failure
+// only means expired documents are not removed: logged, the server keeps running.
+Promise.all([AuthOneTime.init(), RateLimit.init()]).catch((err) => {
+  console.error('Could not build the auth_one_time / rate_limits TTL indexes:', err.message);
 });
 
 const PORT = process.env.PORT || 3333;

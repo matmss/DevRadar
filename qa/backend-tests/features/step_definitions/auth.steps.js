@@ -19,19 +19,24 @@ const {
   githubUserFixture,
   githubIdFor,
 } = require('../support/github-mock');
+const { ageSharedState } = require('../support/shared-state');
 
 const GITHUB_ACCESS_TOKEN = 'gho_test_access_token_must_never_leak';
 const AUTHORIZE_URL = 'https://github.com/login/oauth/authorize';
 
 // --- Clock control ---------------------------------------------------------------------------
-// The state store, the one-time code store and jsonwebtoken all read Date.now() at call time,
-// so shifting it simulates time passing without waiting. Restored after every scenario.
+// jsonwebtoken and the backend read Date.now() at call time, so shifting it simulates time
+// passing without waiting. Restored after every scenario. The OAuth state, the one-time codes and
+// the rate-limit windows expire by MongoDB's clock instead (shared by every instance since
+// multi-instance PR1), which cannot be shifted: their stored expiry moves back by the same amount
+// (support/shared-state.js ageSharedState).
 const realDateNow = Date.now;
 let clockOffsetMs = 0;
 
-function shiftClock(ms) {
+async function shiftClock(ms) {
   clockOffsetMs += ms;
   Date.now = () => realDateNow() + clockOffsetMs;
+  await ageSharedState(ms);
 }
 
 After(function () {
@@ -39,12 +44,12 @@ After(function () {
   clockOffsetMs = 0;
 });
 
-When('{int} seconds pass', function (seconds) {
-  shiftClock(seconds * 1000);
+When('{int} seconds pass', async function (seconds) {
+  await shiftClock(seconds * 1000);
 });
 
-When('{int} days pass', function (days) {
-  shiftClock(days * 24 * 60 * 60 * 1000);
+When('{int} days pass', async function (days) {
+  await shiftClock(days * 24 * 60 * 60 * 1000);
 });
 
 // --- Helpers ---------------------------------------------------------------------------------

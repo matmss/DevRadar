@@ -1,49 +1,30 @@
-// Steps for multi-instance.feature: two backend instances in this process, sharing the database
-// and the GitHub mock, each with its own server context (dev/backend/src/serverContext.js). "A" is
-// the scenario's own instance (hooks.js), "B" one started by support/testApp.js startTestInstance.
-// Both listen on 127.0.0.1 and every request and socket dials 127.0.0.1 (BUG-013).
-const crypto = require('crypto');
+// Steps for multi-instance.feature (also used by shared-auth.feature): two backend instances in
+// this process, sharing the database and the GitHub mock, each with its own server context
+// (dev/backend/src/serverContext.js). "A" is the scenario's own instance (hooks.js), "B" one
+// started by support/testApp.js startTestInstance. Both listen on 127.0.0.1 and every request
+// and socket dials 127.0.0.1 (BUG-013). Helpers: support/instances.js.
 const { Given, When, Then, After } = require('@cucumber/cucumber');
 const { expect } = require('chai');
 const request = require('supertest');
 const io = require('socket.io-client');
 const Dev = require('../../../../dev/backend/src/models/Dev');
 const { startTestInstance } = require('../support/testApp');
-const { LOOPBACK } = require('../support/loopback');
 const { testSessionToken } = require('../support/session');
-const { mockGithubOAuthTokenExchange, mockGithubAuthenticatedUser } = require('../support/github-mock');
+const {
+  CLIENT_REDIRECT,
+  listenOnLoopback,
+  instanceNamed,
+  startSignIn,
+  callBack,
+  mockNextGithubSignIn,
+  noteResponseSecrets,
+  redeemRequest,
+} = require('../support/instances');
 
-const CLIENT_REDIRECT = 'http://localhost:3000/';
-const AUTHORIZE_URL = 'https://github.com/login/oauth/authorize';
 const SOCKET_VIEWER = 'socket-viewer';
 const HELD_DELETE_TIMEOUT_MS = 2000;
 
 // --- Instances --------------------------------------------------------------------------------
-
-/**
- * @param {import('http').Server} server
- * @returns {Promise<string>} its base URL, once listening on 127.0.0.1
- */
-async function listenOnLoopback(server) {
-  if (!server.listening) {
-    await new Promise((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(0, LOOPBACK, resolve);
-    });
-  }
-  return `http://${LOOPBACK}:${server.address().port}`;
-}
-
-/**
- * @param {object} world
- * @param {string} name
- * @returns {{ url: string, context: import('../../../../dev/backend/src/serverContext').ServerContext }}
- */
-function instanceNamed(world, name) {
-  const instance = world.instancesByName && world.instancesByName[name];
-  if (!instance) throw new Error(`No backend instance "${name}" in this scenario`);
-  return instance;
-}
 
 Given('backend instances {string} and {string} share the database', async function (first, second) {
   this.instancesByName = {
@@ -55,52 +36,6 @@ Given('backend instances {string} and {string} share the database', async functi
 });
 
 // --- Sign-in ----------------------------------------------------------------------------------
-
-/** RFC 7636 S256: BASE64URL(SHA256(ascii(code_verifier))). */
-function s256(verifier) {
-  return crypto.createHash('sha256').update(verifier, 'ascii').digest('base64url');
-}
-
-/**
- * GET /auth/github on `name` with a fresh PKCE verifier; keeps the state when GitHub is next.
- * @param {object} world
- * @param {string} name
- */
-async function startSignIn(world, name) {
-  world.pkceVerifier = crypto.randomBytes(32).toString('base64url');
-  world.response = await request(instanceNamed(world, name).url)
-    .get('/auth/github')
-    .query({ redirect: CLIENT_REDIRECT, code_challenge: s256(world.pkceVerifier), code_challenge_method: 'S256' });
-  const { location } = world.response.headers;
-  if (location && location.startsWith(AUTHORIZE_URL)) {
-    world.authState = new URL(location).searchParams.get('state');
-  }
-}
-
-/**
- * GET /auth/github/callback on `name` with the kept state and GitHub's code.
- * @param {object} world
- * @param {string} name
- */
-async function callBack(world, name) {
-  world.response = await request(instanceNamed(world, name).url)
-    .get('/auth/github/callback')
-    .query({ state: world.authState, code: world.githubCode });
-}
-
-/**
- * Mocks GitHub (process-wide nock, so for every instance) to sign in `username` for the next
- * callback, with its own GitHub code and access token.
- * @param {object} world
- * @param {string} username
- */
-function mockNextGithubSignIn(world, username) {
-  world.miSignIns = (world.miSignIns || 0) + 1;
-  world.githubCode = `mi-github-code-${world.miSignIns}`;
-  const accessToken = `gho_mi_access_token_${world.miSignIns}`;
-  mockGithubOAuthTokenExchange(world.githubCode, accessToken);
-  mockGithubAuthenticatedUser(accessToken, username);
-}
 
 Given('GitHub will sign in {string} at the next callback', function (username) {
   mockNextGithubSignIn(this, username);
@@ -141,9 +76,10 @@ Given('{string} got a one-time sign-in code from instance {string}', async funct
 });
 
 When('the one-time code is redeemed on instance {string}', async function (name) {
-  this.response = await request(instanceNamed(this, name).url)
-    .post('/auth/token')
-    .send({ code: this.oneTimeCode, code_verifier: this.pkceVerifier });
+  this.response = noteResponseSecrets(
+    this,
+    await redeemRequest(this, name, { code: this.oneTimeCode, code_verifier: this.pkceVerifier })
+  );
 });
 
 Then('the response should carry a session token for {string}', function (username) {

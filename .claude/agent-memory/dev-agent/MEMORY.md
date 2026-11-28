@@ -7,7 +7,8 @@
 - [PR full vs nightly @regression](project_ci_subset_order.md) - nightly runs only @regression, neighbours differ; run both; check web.json order first
 - [Test loopback + timing](project_backend_suite_timing.md) - foreign answers = "::" vs 127.0.0.1 (BUG-013); forceExit; --tags; mobile Main.test.js times out under load
 - [npm overrides](project_npm_overrides_peer_scope.md) - root-only (qa/package.json, never members); scoped ones hit peers; key by version; stream-json 3 is ESM
-- [Mutation backups](feedback_mutation_backups.md) - undo mutations by Edit or fresh backup; an older copy restore drops later edits
+- [Mutation backups](feedback_mutation_backups.md) - undo by Edit or fresh backup; replace(from, () => to), $$ and $' corrupt mutants
 - [Race hooks stub the model](project_backend_race_hooks.md) - tests patch Dev.findOneAndUpdate by filter shape; keep ownership writes on the model
-- [Multi-instance PR0-PR3](project_multi_instance_phases.md) - serverContext per server; invert multi-instance.feature per phase
+- [Multi-instance PR0-PR3](project_multi_instance_phases.md) - serverContext per server; PR1 Mongo $$NOW stores, time steps age docs; invert per phase
+- [Jest can't reach Mongo](project_jest_mongodb_driver.md) - unit/ Jest + driver 7 handshake fails; DB-backed checks go in Cucumber
 - [One backend feature](project_cucumber_single_feature.md) - CLI paths merge with cucumber.js; use npm test -- --config <relative scratch config>

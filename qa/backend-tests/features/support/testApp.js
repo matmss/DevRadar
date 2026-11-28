@@ -5,9 +5,9 @@
  *
  * It uses the same createServer() that dev/backend/src/index.js uses (dev/backend/src/app.js),
  * so middleware order (trust proxy, CORS, JSON body, routes, error handler) and the Socket.io
- * wiring cannot drift from production. Each call is a fresh, independent backend instance: its
- * own server context (dev/backend/src/serverContext.js: sockets, OAuth state and sign-in codes,
- * rate-limit counters, write queue).
+ * wiring cannot drift from production. Each call is a fresh backend instance: its own server
+ * context (dev/backend/src/serverContext.js: sockets, write queue), over the MongoDB state every
+ * instance shares (OAuth states, sign-in codes, rate-limit counters; multi-instance PR1).
  *
  * index.js's boot-time assertAuthConfig() is deliberately not called: it is a no-op outside
  * NODE_ENV=production, and features/support/auth-config.js sets the auth env for scenarios.
@@ -31,8 +31,8 @@ function createTestApp() {
  * Starts ANOTHER backend instance in this process (multi-instance scenarios), listening on
  * 127.0.0.1 (BUG-013, support/loopback.js). It has its own server context and shares with the
  * scenario's instance exactly what separate production instances share: the database (the
- * MongoMemoryServer behind mongoose's one connection, hooks.js) and the outside world (the nock
- * GitHub mock is process-wide). hooks.js closes it after the scenario (`world.extraInstances`).
+ * MongoMemoryServer behind mongoose's one connection, hooks.js, so also the shared sign-in values
+ * and rate-limit counters) and the outside world (the nock GitHub mock is process-wide). hooks.js closes it after the scenario (`world.extraInstances`).
  * @param {object} world - the scenario's world
  * @returns {Promise<TestInstance & { port: number, url: string }>}
  */

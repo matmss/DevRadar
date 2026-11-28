@@ -11,10 +11,16 @@
 //     spread its changes over many addresses, and users behind one NAT do not share a budget.
 //     Not on the login: a rename would otherwise start a fresh budget.
 // The client IP is req.ip, so behind a reverse proxy set TRUST_PROXY (config/proxy.js) or every
-// client shares the proxy's key. Counters are in memory, per server instance (createRateLimiters,
-// one set per serverContext.js context, like the OAuth state); shared counters arrive in a later
-// phase.
-const { rateLimit, MemoryStore } = require('express-rate-limit');
+// client shares the proxy's key.
+//
+// Counters are shared by every backend instance (multi-instance PR1): each limiter counts in the
+// `rate_limits` MongoDB collection (middleware/mongoRateLimitStore.js) under its own key prefix,
+// so N requests spread over any instances count as N. Each serverContext.js context still builds
+// its own limiter objects (createRateLimiters); they are views of the same shared counters.
+// If MongoDB fails, the request fails closed (passOnStoreError stays false): 500 internal_error
+// from the error handler, logged without the key. Same 429 body and draft-7 headers as before.
+const { rateLimit } = require('express-rate-limit');
+const { MongoRateLimitStore } = require('./mongoRateLimitStore');
 
 const WINDOW_MS = 15 * 60 * 1000;
 const DEFAULT_AUTH_RATE_LIMIT_MAX = 60;
@@ -49,7 +55,7 @@ function profileRateLimitMax() {
 /**
  * @param {() => number} max - read per request, so env changes apply without a restart
  * @param {string} what - for the error details
- * @param {MemoryStore} store
+ * @param {MongoRateLimitStore} store
  * @param {(req: import('express').Request) => string} [keyGenerator] - default: the client IP
  */
 function createLimiter(max, what, store, keyGenerator) {
@@ -59,6 +65,8 @@ function createLimiter(max, what, store, keyGenerator) {
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     store,
+    // Fail closed on a store error (also express-rate-limit's default): never unlimited.
+    passOnStoreError: false,
     ...(keyGenerator ? { keyGenerator } : {}),
     handler(req, res, next, options) {
       res.status(options.statusCode).json({
@@ -70,8 +78,11 @@ function createLimiter(max, what, store, keyGenerator) {
   });
 }
 
+// Key prefixes in the shared `rate_limits` collection, one per limiter.
+const STORE_PREFIXES = Object.freeze({ signIn: 'sign_in:', session: 'session:', profile: 'profile:' });
+
 /**
- * One server instance's three limiters, each with its own fresh counters.
+ * One server instance's three limiters, over the counters every instance shares.
  * @returns {{
  *   signInRateLimiter: import('express').RequestHandler,
  *   sessionRateLimiter: import('express').RequestHandler,
@@ -80,9 +91,9 @@ function createLimiter(max, what, store, keyGenerator) {
  * }}
  */
 function createRateLimiters() {
-  const signInStore = new MemoryStore();
-  const sessionStore = new MemoryStore();
-  const profileStore = new MemoryStore();
+  const signInStore = new MongoRateLimitStore({ prefix: STORE_PREFIXES.signIn, windowMs: WINDOW_MS });
+  const sessionStore = new MongoRateLimitStore({ prefix: STORE_PREFIXES.session, windowMs: WINDOW_MS });
+  const profileStore = new MongoRateLimitStore({ prefix: STORE_PREFIXES.profile, windowMs: WINDOW_MS });
 
   return {
     signInRateLimiter: createLimiter(authRateLimitMax, 'sign-in requests', signInStore),
@@ -96,7 +107,8 @@ function createRateLimiters() {
     ),
 
     /**
-     * Clears this instance's counters (auth and profile). For test harnesses that reuse one server.
+     * Clears the shared counters of all three limiters (auth and profile), for every instance.
+     * For test harnesses.
      * @returns {Promise<void>}
      */
     async reset() {
@@ -107,6 +119,8 @@ function createRateLimiters() {
 
 module.exports = {
   createRateLimiters,
+  STORE_PREFIXES,
+  WINDOW_MS,
   authRateLimitMax,
   authSessionRateLimitMax,
   profileRateLimitMax,

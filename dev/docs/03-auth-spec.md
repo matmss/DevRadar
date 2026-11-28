@@ -241,11 +241,31 @@ Scenario: Old sessions
 ## Security and non-functional criteria
 - GitHub client secret and the token-signing secret live only in backend env (`.env.example` placeholders). Never in web/mobile bundles, logs, or responses. The server refuses to start in production without them.
 - OAuth `state`: random, single-use, ~10 min lifetime, verified on callback. PKCE for mobile.
+- Storage of the `state` and the one-time code (multi-instance PR1): both live in MongoDB's
+  `auth_one_time` collection, shared by every backend instance, so a sign-in may start, come back
+  from GitHub and be redeemed on different instances. Stored **hashed**: `_id` = sha256 of the raw
+  value, which is never stored or logged; the payload never holds the GitHub access token.
+  **Consumed atomically** (one `findOneAndDelete`): of concurrent uses on any instances exactly one
+  wins, and a presented value is spent whether or not it was still valid (a wrong `code_verifier`
+  burns the code on every instance). **Expiry is enforced on read**, against MongoDB's clock
+  (`$$NOW`, also used to set the expiry at issue), so instances with skewed clocks agree; the TTL
+  index on `expiresAt` is **cleanup only**. Works on a standalone mongod 4.4+ (no replica set).
+  If MongoDB fails, sign-in fails closed (500 `internal_error`, logged without the value), except
+  at the callback after the `state` was spent: the browser still goes back to the client with
+  `?error=sign_in_failed&reason=sign_in_unavailable` and no code (the clients show their generic
+  sign-in failure message).
 - Session tokens: signed, `exp` = 7 days (Q3).
 - GitHub access token is used once to read identity, then discarded.
 - Post-login redirect targets are allow-listed (reuse the `CORS_ORIGINS` approach plus the mobile app scheme).
 - Tokens never go in logged query strings: hand the client a short-lived one-time code (or URL fragment) that it exchanges for the token.
-- Auth endpoints are rate limited.
+- Auth endpoints are rate limited. The counters (sign-in per IP, session checks per IP, profile
+  changes per account) are **shared by every backend instance** (MongoDB `rate_limits`, fixed
+  15-minute windows by MongoDB's clock), so spreading requests over instances does not raise the
+  budget. The per-IP sign-in limit also bounds how many states one client can create (the old
+  in-memory store's entry cap is gone). If the counter store fails, the request fails closed (500
+  `internal_error`), never unlimited; this includes session checks (`GET /auth/me`), which now
+  make one MongoDB round trip for their limiter. The `RateLimit`/`Retry-After` headers count the
+  shared window down by MongoDB's clock, whatever an instance's clock says.
 - Registration identity comes from the OAuth identity, not the unauthenticated `GET /users/:username` lookup.
 - All errors use `{ error, details }`; no stack traces or token values.
 

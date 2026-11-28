@@ -5,13 +5,17 @@
 // outside production), which every server in the process signs with. Separate processes need one
 // JWT_SECRET, or a token from one is token_invalid on another.
 //
-// Per server instance; shared state arrives in later phases. Each piece is the seam for one:
-//   realtime         Socket.io server + its `connections` (websocket.js): a cross-instance push
-//                    bus delivers to every instance, and each one still matches its own sockets
-//                    with isNearby.
+// Each piece is the seam for one multi-instance phase:
+//   realtime         Socket.io server + its `connections` (websocket.js), per instance: a
+//                    cross-instance push bus (PR2) delivers to every instance, and each one still
+//                    matches its own sockets with isNearby.
 //   events           the announcer (services/devEvents.js) pushing through `realtime`.
-//   signInStores     the OAuth `state` and the one-time sign-in codes (utils/oneTimeStore.js).
-//   rateLimits       the three limiters and their counters (middleware/rateLimit.js).
+//   signInStores     the OAuth `state` and the one-time sign-in codes. Shared since PR1: the
+//                    objects are per instance, their data lives in MongoDB (`auth_one_time`,
+//                    utils/sharedOneTimeStore.js), so every instance sees the same values.
+//   rateLimits       the three limiters (middleware/rateLimit.js). Shared since PR1: their
+//                    counters live in MongoDB (`rate_limits`, middleware/mongoRateLimitStore.js);
+//                    reset() clears them for every instance.
 //   writesByAccount  the per-account write queue (utils/keyedQueue.js) behind
 //                    services/devOwnership.js inAccountOrder/inLoginOrder; a shared lease lock
 //                    per account goes under it.
@@ -41,7 +45,7 @@ const { createDevController } = require('./controllers/DevController');
  */
 
 /**
- * A fresh, independent context: new sockets list, stores, counters and queue.
+ * A fresh context: new sockets list and queue, and new views of the shared stores and counters.
  * @returns {ServerContext}
  */
 function createServerContext() {

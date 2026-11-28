@@ -289,18 +289,38 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
   - QA-PB-3 to QA-PB-6 fixes (`profile-busy.feature`, `unit/{storedOwnership,githubAvatarId}.test.js`): one ownership rule for a stored `github_id` (`storedGithubId`, API and CLI): any numeric BSON type or the canonical string "222" is account 222's; missing, null, "", "0222", "not-a-number", 0, negatives, non-integers are legacy. Account 222 reads, updates and deletes its profile stored as String, Decimal128, Int32, Long or Double; after its update a String or Decimal128 is stored as Int32 222 (Int32, Long, Double stay as they are). `GET /search` answers a hand-edited string `_id` as stored. Placeholders: `_stale_<24 hex>` for ObjectIds, `_stale_s_<hex>`/`_stale_x_<hex>` otherwise, distinct case-insensitively and printable.
 - **Automated:** `qa/backend-tests/features/profile-busy.feature`, `profile-busy-review.feature` (QA), `claim-guard-review.feature` (endless stream); `qa/web-tests/features/profile-busy-review.feature` (QA); `qa/backend-tests/unit/{errorHandler,storedOwnership,githubAvatarId}.test.js`; `dev/web/src/services/{requestErrors,api}.test.js`; `dev/tests/mobile/{services/authErrors,pages/Main}.test.js`.
 
-## TC-038 — Two backend instances keep their runtime state to themselves (multi-instance PR0)
-- **Requirement:** FR-4.2, FR-4.3 (connections and pushes per instance), US-1 (sign-in flow and its rate limits, `dev/docs/03-auth-spec.md`), US-4 write ordering (per-account queue). No multi-instance requirement exists yet: PR0 is a refactor that pins today's behaviour.
+## TC-038 — What two backend instances share and keep to themselves (multi-instance PR0, PR1)
+- **Requirement:** FR-4.2, FR-4.3 (connections and pushes per instance), US-1 (sign-in flow and its rate limits, `dev/docs/03-auth-spec.md`), US-4 write ordering (per-account queue). PR0 was a refactor that pinned the behaviour of the time (nothing shared); PR1 shares the sign-in state, codes and rate limits (TC-039).
 - **Type:** Integration / Regression | **P2**
 - **Preconditions:** Two backend instances in one test process, "A" (the scenario's own) and "B" (`support/testApp.js` `startTestInstance`), both on 127.0.0.1, sharing the database and the GitHub mock; each has its own server context (`dev/backend/src/serverContext.js`).
 - **Steps / expected result:**
-  - OAuth state: a state from `GET /auth/github` on A is 400 `state_invalid` at B's callback, and still accepted at A's (302 to the client with a one-time code).
-  - One-time code: a code issued by A is 400 `code_invalid` at B's `POST /auth/token`, and still redeemable on A (200, session token for the user).
-  - Rate limits: with a sign-in limit of 2, two starts on A then one on B is 302; a third start on A is 429 `rate_limited`.
+  - OAuth state (inverted by PR1): a state from `GET /auth/github` on A is accepted at B's callback (302 to the client with a one-time code), and then 400 `state_invalid` at A's.
+  - One-time code (inverted by PR1): a code issued by A is redeemed on B (200, session token for the user), and then 400 `code_invalid` on A.
+  - Rate limits (inverted by PR1): with a sign-in limit of 2, two starts on A then one on B is 429 `rate_limited`.
   - Sockets: a watcher on each instance; each instance lists exactly its own socket; a registration on A pushes `new-dev` to A's watcher and nothing to B's within 1 s.
   - Write queues: A's `DELETE /devs/me` held at the database leaves 1 account queued on A and 0 on B; the same account's `DELETE` on B answers 204 meanwhile; released, A's answers 404 `dev_not_found` and A's queue is empty.
-  - Later phases invert these on purpose: PR1 (state, codes, rate limits in MongoDB) the first three, PR2 (cross-instance push) the push to B's watcher, PR3 (per-account lease lock) makes B's delete wait for A's.
+  - Later phases invert these on purpose: PR1 (state, codes, rate limits in MongoDB) inverted the first three, PR2 (cross-instance push) the push to B's watcher, PR3 (per-account lease lock) makes B's delete wait for A's.
 - **Automated:** `qa/backend-tests/features/multi-instance.feature` (`@multi-instance @regression`, 5 scenarios).
+
+## TC-039 — Sign-in state, one-time codes and rate limits are shared by every instance (multi-instance PR1)
+- **Requirement:** US-1 (sign-in, rate limits) and the auth spec's security criteria (`dev/docs/03-auth-spec.md`: single-use `state`, short-lived one-time code, rate-limited auth endpoints, no secrets in logs), US-4 (profile change rate limit per account). PO acceptance criteria AC-1.1 to AC-1.7 and AC-2.1 to AC-2.3 of multi-instance PR1.
+- **Type:** Integration / Security / Regression | **P1** (P2 for the store-level checks)
+- **Preconditions:** As TC-038: instances "A" and "B" in one process, sharing the MongoMemoryServer and the GitHub mock. `auth_one_time` and `rate_limits` empty (hooks.js empties every collection before each scenario).
+- **Steps / expected result:**
+  - AC-1.1: start on A, callback on B with that state: 302 to the client with a one-time code (not `state_invalid`).
+  - AC-1.2: code from A's callback redeemed on B: 200 with a session token, which works on A's `GET /auth/me`. A full start-on-A, callback-on-B, redeem-on-B sign-in leaves no stored state or code.
+  - AC-1.3: single use across instances: after a use on one instance the other answers `state_invalid` / `code_invalid` (TC-038); 3 concurrent callbacks per instance with one state give exactly one 302 with a code and five 400 `state_invalid`; 3 concurrent redemptions per instance give exactly one 200 and five 400 `code_invalid`.
+  - AC-1.4: a wrong verifier on B is 400 `code_verifier_invalid` and deletes the stored code; the right verifier on A then gets 400 `code_invalid`.
+  - AC-1.5: with MongoDB's TTL monitor off, a state / code whose stored `expiresAt` is set 1 s in the past is still stored, is rejected on the other instance (`state_invalid` / `code_invalid`, no token), and is then gone. Lifetimes by MongoDB's clock: a stored code expires 60 s and a state 600 s after issue (within 5 s), also when the instance's clock is 5 minutes behind. The single-instance boundaries (accepted at 590 s / 55 s, rejected at 601 s / 61 s, `auth.feature`, `auth-review.feature`) still hold: `N seconds pass` moves both the instance clock and the stored expiries.
+  - AC-1.6: with one stored state and one stored code: each is stored under the sha256 of its raw value; no stored key or string contains a raw state, code, PKCE verifier or GitHub access token (nor any `gho_` value); the code's payload is exactly `codeChallenge, githubId, githubUsername, loginReadAt, profile { avatar_url, bio, name }`; `auth_one_time` has a TTL index `{ expiresAt: 1 }` and `rate_limits` `{ resetTime: 1 }`, both `expireAfterSeconds: 0`.
+  - AC-1.7: a captured log (console log/info/warn/error/debug) over cross-instance sign-ins with a wrong verifier, a full sign-in, an expired state and a failing store contains no state, code, verifier, session token, GitHub access token, nor the sha256 of any of them.
+  - Fail closed: a sign-in store failure at consume, and a rate-limit store failure at increment (driver messages that quote the key), answer 500 `internal_error` JSON; the log has one `... failed` line naming the operation and no key (neither the stored id nor the client IP).
+  - AC-2.1: with `AUTH_RATE_LIMIT_MAX=3`, 2 starts on A and 1 on B are 302, a 4th on B is 429 with the same body as before (`{ error: "Too many requests, try again later", code: "rate_limited", details: ["At most 3 sign-in requests per 15 minutes"] }`), `RateLimit-Policy: 3;w=900`, `RateLimit: limit=3, remaining=0, reset=<1..900>`, `Retry-After` 1..900, no `X-RateLimit-*`; the stored `sign_in:` counter is 4. Start, callback (on A) and token exchange (on B) count together. Session checks (`AUTH_SESSION_RATE_LIMIT_MAX=2`): A, B, then A is 429.
+  - AC-2.2: with `PROFILE_RATE_LIMIT_MAX=2`, PUT on A and PUT on B are 200, DELETE on A is 429 (`profile changes`); another account's PUT on B and DELETE on A are 200 and 204.
+  - AC-2.3: after a 429, `901 seconds pass` (the stored window moves back too): a start on B is 302 with the stored counter at 1, one more on A is 302, the next 429. `rateLimits.reset()` on B clears every counter (none stored), so A's exhausted sign-in and session limits start again.
+  - QA review (QA-MI1-1, QA-MI1-2, `mi-pr1-review.feature`): a one-time code store failure at the callback, after the state was spent, still redirects 302 to the client with `error=sign_in_failed` and a reason (`sign_in_unavailable`), no code, the state gone and nothing stored, and logs no state, verifier or GitHub token; the web app shows the generic "Não foi possível entrar com o GitHub, tente novamente" for `reason=sign_in_unavailable` (`qa/web-tests/features/auth.feature`, forged-callback outline). The 429 `RateLimit` reset and `Retry-After` count the shared window down by MongoDB's clock: about 900 s with an instance clock 300 s behind or 1000 s ahead of MongoDB's, and about 300 s after `600 seconds pass` in a 900 s window.
+  - Store level (`shared-stores.feature`): rate-limit store `get`/`increment`/`decrement` (never below 0, no change in a finished window)/`resetKey`/`resetAll` (only its own prefix, matched literally, e.g. `a.b:` vs `aXb:`), the limiter's window from `init`, 20 concurrent first hits count 1 to 20 in one window; one-time store payloads with `$`-strings stored as given, a state never accepted as a code (and not spent by trying), a duplicate stored id retried with a fresh key (insert-only filter, never overwriting), 3 collisions fail with `SharedStateError` `KeyCollision`, `clear()` per kind.
+- **Automated:** `qa/backend-tests/features/shared-auth.feature` (`@multi-instance @shared-auth`, 18 scenarios), QA's `qa/backend-tests/features/mi-pr1-review.feature` (`@mi-pr1-review`, 4 scenarios) and `qa/backend-tests/features/shared-stores.feature` (`@shared-auth`, 8 scenarios). Self-checked by mutation (17 mutants of the stores and limiters: ignoring expiry, not burning expired values, the instance clock for `expiresAt`, windows that never end, the raw driver error, a no-op reset, per-instance prefixes, a non-atomic consume, decrement/get/init/resetKey/clear/escape/overwrite variants), each failing at least one of these scenarios.
 
 ## TC-017 (Mobile) — Map centers on current location
 - **Requirement:** FR-6.1
@@ -356,7 +376,7 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 |---|---|
 | FR-1 | TC-001, TC-002, TC-003, TC-004, TC-011, TC-012, TC-013, TC-031, TC-032, TC-037 |
 | US-3 (auth) | TC-001, TC-002, TC-011, TC-012, TC-025 |
-| US-4 (auth) | TC-031, TC-032, TC-033, TC-037, TC-038 |
+| US-4 (auth) | TC-031, TC-032, TC-033, TC-037, TC-038, TC-039 |
 | US-6 (auth) | TC-015, TC-016, TC-023, TC-024, TC-025, TC-026, TC-029, TC-033 |
 | US-5 (auth) | TC-027, TC-028 |
 | US-7 (auth) | TC-019, TC-030, TC-034 |
@@ -369,4 +389,4 @@ Legend: **P** = Priority (P1 highest), **Type** = Functional / Regression / Inte
 | FR-7 | TC-012, TC-034, TC-035, TC-036 |
 | NFR-1/2 | TC-010 |
 | NFR-7 | TC-022 |
-| US-1 (auth sign-in, rate limits) | TC-038 |
+| US-1 (auth sign-in, rate limits) | TC-038, TC-039 |

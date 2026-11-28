@@ -96,8 +96,9 @@ fresh server context (`src/serverContext.js`: Socket.io + `connections`, the OAu
 one-time code stores, the three rate limiters, the `writesByAccount` queue, and the announcer /
 `devOwnership` queue operations bound to them; `createServer()` returns `{ app, server, context }`,
 also `app.locals.context`). Controllers and routes are factories over it (`createRoutes`,
-`createDevController`, `createAuthController`). Per server instance; shared state (Mongo-backed
-stores, a cross-instance push bus, a per-account lease lock) arrives in later phases. The one
+`createDevController`, `createAuthController`). Since multi-instance PR1 the stores and limiters
+keep their data in MongoDB, shared by every instance (see Auth); sockets and the write queue are
+still per instance until the cross-instance push bus (PR2) and the per-account lease lock (PR3). The one
 deliberate exception is `config/auth.js`'s `fallbackJwtSecret` (random per process when
 `JWT_SECRET` is unset outside production): separate processes need one `JWT_SECRET`, or a token
 from one is `token_invalid` on another. `websocket.js` `SOCKET_OPTIONS` is one object shared by
@@ -112,7 +113,19 @@ Routes (`dev/backend/src/routes.js`):
   → `GET /auth/github/callback` → client gets a 60 s one-time code → `POST /auth/token`
   (`code` + `code_verifier`) → 7-day HS256 JWT. `GET /auth/me` is behind `requireAuth`
   (`middleware/auth.js`; 401 codes `token_missing`/`token_expired`/`token_invalid`). State,
-  codes and rate-limit counters are in memory, per server instance (the server context). Env: see `dev/backend/.env.example`.
+  codes and rate-limit counters are **in MongoDB, shared by every instance** (multi-instance PR1;
+  standalone mongod 4.4+, no replica set): `auth_one_time` (`models/AuthOneTime.js`,
+  `utils/sharedOneTimeStore.js`: `_id` = sha256 of the raw state/code, never the raw value or the
+  GitHub token; consumed by one atomic `findOneAndDelete` that burns it whether expired or not and
+  checks expiry against MongoDB's clock, `$$NOW`) and `rate_limits` (`models/RateLimit.js`,
+  `middleware/mongoRateLimitStore.js`, an express-rate-limit Store; fixed windows by `$$NOW`; it
+  returns `resetTime` as `Date.now()` + the time left by `$$NOW`, so the headers are right under
+  clock skew). TTL indexes (built by `index.js`) only clean up. A store failure fails closed (500
+  `internal_error`, logged without keys, `utils/sharedStateError.js`), session checks included
+  (`GET /auth/me` makes one MongoDB round trip for its limiter); except that a code-store failure
+  at the callback, after the state was spent, still redirects to the client with
+  `error=sign_in_failed&reason=sign_in_unavailable` (no code). `utils/oneTimeStore.js` is
+  the old in-memory store, kept for its unit tests only. Env: see `dev/backend/.env.example`.
   **Every dev-facing surface requires a token: `POST /devs`, `GET /devs`, `GET /search`,
   `GET`/`PUT`/`DELETE /devs/me` and the Socket.io handshake** (only `/auth/*` is public). Backend and web tests
   must sign in first (use the harnesses' test sign-in helpers). The JWT carries a sanitized, size-capped `profile` claim
@@ -265,8 +278,14 @@ rather than a single cross-language framework:
   `qa/backend-tests/features/support/testApp.js` starts another `createServer()` in-process on
   127.0.0.1, sharing the MongoMemoryServer and the nock GitHub mock (closed by `hooks.js`). Each
   scenario's own instance is `this.app`/`this.server`/`this.context`. `multi-instance.feature`
-  (`@multi-instance @regression`) documents that today two instances share no sockets, one-time
-  stores, rate-limit counters or write queues; PR1/PR2/PR3 invert those scenarios on purpose.
+  (`@multi-instance @regression`): since PR1 two instances share states, one-time codes and
+  rate-limit counters (details in `shared-auth.feature`, store-level checks in
+  `shared-stores.feature`), but not sockets or write queues; PR2/PR3 invert those two scenarios.
+  `hooks.js` empties every collection before each scenario, `auth_one_time` and `rate_limits`
+  included (plus `context.rateLimits.reset()` / `signInStores.clear()`, which clear them for every
+  instance). Those expire by MongoDB's clock, so `N seconds pass` (auth.steps.js) also moves their
+  stored expiry back (`support/shared-state.js` `ageSharedState`). The web harness `/__test__/reset`
+  empties devs only, as before (its limits are 100000).
 - `qa/mobile-tests/` — Detox + `jest-cucumber` is the intended primary suite
   (`.detoxrc.js` targets `Pixel_6a_API_34` emulator / `iPhone 15` simulator), but per
   BUG-009 the Detox run currently times out on `device.launchApp` (suspected host resource
