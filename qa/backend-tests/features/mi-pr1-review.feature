@@ -59,3 +59,19 @@ Feature: QA review of multi-instance PR1 (shared sign-in state and rate limits i
     And sign-in is started on instance "B"
     Then the response status should be 429
     And the rate-limit headers should say the window ends in about 300 seconds
+
+  # QA-MI1-4 (test gap, re-check of 7489f27). Fixed windows: the window ends windowMs after its
+  # FIRST hit, and later hits never move that end. shared-stores.feature's "Concurrent first hits"
+  # used to catch a store that pushes resetTime out on every hit (all 20 hits had to share one
+  # resetTime); since QA-MI1-2 it compares the stored count only, so this checks it directly.
+  @edge @regression @P2
+  Scenario: QA-MI1-4 A hit late in the window does not extend it: the counter restarts 15 minutes after the first hit
+    Given the sign-in rate limit is 2 requests per window
+    When sign-in is started on instance "A"
+    And 600 seconds pass
+    And sign-in is started on instance "B"
+    Then the response status should be 302
+    When 301 seconds pass
+    And sign-in is started on instance "A"
+    Then the response status should be 302
+    And the stored "sign_in:" counter should be at 1
